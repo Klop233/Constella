@@ -1,0 +1,16 @@
+{
+  "name": "constella",
+  "private": true,
+  "description": "Self-hosted multi-agent platform: mobile app, on-demand desktops, self-learning, new-api integration",
+  "packageManager": "pnpm@12.11.2",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "typecheck": "pnpm -r --if-present typecheck",
+    "test": "pnpm -r --if-present test",
+    "build": "pnpm -r --if-present build"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.5",
+    "typescript": "7.0.2"
+  }
+}
