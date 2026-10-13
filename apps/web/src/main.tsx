@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
-import { Brain, CalendarClock, House, Monitor, Plus, Search, Settings as SettingsIcon, SlidersHorizontal } from "lucide-react";
+import { Brain, CalendarClock, House, Monitor, Plus, Search, Settings as SettingsIcon, SlidersHorizontal, Sparkles } from "lucide-react";
 import { lazy, StrictMode, Suspense, useEffect, useState, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter, NavLink, Route, Routes, useLocation } from "react-router";
@@ -21,6 +21,7 @@ const DesktopView = lazy(() => import("./pages/DesktopView"));
 const Tasks = lazy(() => import("./pages/Tasks"));
 const Learning = lazy(() => import("./pages/Learning"));
 const Settings = lazy(() => import("./pages/Settings"));
+const Reflect = lazy(() => import("./pages/Reflect"));
 
 const qc = new QueryClient({
   defaultOptions: {
@@ -61,7 +62,8 @@ const TABS = [
   { to: "/settings", label: "设置", icon: SettingsIcon },
 ];
 
-const NAV = TABS.filter((t) => t.to !== "/settings");
+// Desktop sidebar: the mobile tabs minus 设置 (it lives in the account row), plus pages without a mobile tab.
+const NAV = [...TABS.filter((t) => t.to !== "/settings"), { to: "/reflect", label: "回顾", icon: Sparkles, end: false }];
 
 /** Conversation bullet, like Claude Code's session dots: hollow when idle, colored while something is going on. */
 function StatusDot({ status }: { status?: string | null }) {
@@ -217,6 +219,7 @@ function App() {
                 <Route path="/tasks" element={<Tasks />} />
                 <Route path="/learning" element={<Learning />} />
                 <Route path="/settings" element={<Settings />} />
+                <Route path="/reflect" element={<Reflect />} />
                 <Route path="*" element={<Home />} />
               </Routes>
             </Suspense>

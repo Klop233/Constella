@@ -23,6 +23,7 @@ import { Notifier } from "./notify.ts";
 import { registerRoutes } from "./routes.ts";
 import { RunManager } from "./runs.ts";
 import { Scheduler } from "./scheduler.ts";
+import { Reflect } from "./reflect.ts";
 import { SecretBox, SecretStore } from "./secrets.ts";
 
 export interface Hub {
@@ -35,6 +36,7 @@ export interface Hub {
   runs: RunManager;
   knowledge: Knowledge;
   learning: Learning;
+  reflect: Reflect;
   desktops: Desktops;
   containers: Containers;
   scheduler: Scheduler;
@@ -193,6 +195,7 @@ export async function createHub(opts: { dbPath?: string; webDist?: string; logge
   });
   const desktops = new Desktops({ db, events, containers, runs });
   const learning = new Learning({ db, events, knowledge, newapi, model: () => settings.reflectModel() });
+  const reflect = new Reflect({ db, newapi, model: () => settings.reflectModel() });
   const scheduler = new Scheduler(db, events);
 
   runs.onFinished((run) => desktops.releaseRun(run.id));
@@ -258,6 +261,7 @@ export async function createHub(opts: { dbPath?: string; webDist?: string; logge
     runs,
     knowledge,
     learning,
+    reflect,
     desktops,
     containers,
     scheduler,

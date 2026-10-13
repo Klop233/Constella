@@ -1,8 +1,9 @@
 import { startRegistration } from "@simplewebauthn/browser";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bell, Database, Gauge, Fingerprint, KeyRound, LogOut, Server, Shield, Smartphone } from "lucide-react";
+import { Bell, ChevronRight, Database, Gauge, Sparkles, Fingerprint, KeyRound, LogOut, Server, Shield, Smartphone } from "lucide-react";
 import QRCode from "qrcode";
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router";
 import { ModelSelect } from "./AgentEdit";
 import { Badge, Button, Card, Field, Header, Loading, Row, Section, Segmented, Sheet, Toggle, cx, inputClass, toast } from "../components/ui";
 import { api } from "../lib/api";
@@ -32,6 +33,7 @@ interface Me {
 
 export default function Settings() {
   const qc = useQueryClient();
+  const nav = useNavigate();
   const settings = useQuery({ queryKey: ["settings"], queryFn: () => api.get<SettingsView>("/api/settings") });
   const me = useQuery({ queryKey: ["me"], queryFn: () => api.get<Me>("/api/me") });
   const save = async (patch: Record<string, string>, ok = "已保存") => {
@@ -49,6 +51,9 @@ export default function Settings() {
     <div>
       <Header title="设置" sub={`你好，${me.data.name}`} />
       <div className="px-4 space-y-5 pb-8 lg:max-w-3xl">
+        <Card className="overflow-hidden lg:hidden">
+          <Row icon={<Sparkles className="size-5 text-muted" />} title="回顾" sub="这段时间你和 agent 们都在忙什么" right={<ChevronRight className="size-4" />} onClick={() => nav("/reflect")} />
+        </Card>
         <AppearanceSection />
         <PushSection />
         <Section title="模型">

@@ -4,6 +4,7 @@ import path from "node:path";
 import { canTransition } from "@constella/protocol";
 import Fastify from "fastify";
 import { isTrusted, listenTrusted } from "../src/trusted.ts";
+import { reflectStats } from "../src/reflect.ts";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "constella-test-"));
@@ -221,6 +222,24 @@ describe("trusted entry", () => {
     expect(await get(main)).toBe(false);
     expect(await get(port)).toBe(true);
     await app.close();
+  });
+});
+
+describe("reflect stats", () => {
+  it("buckets runs by day in the hub timezone and finds the busiest weekday / hour", () => {
+    const now = new Date("2026-10-14T12:00:00Z"); // Wed 20:00 in Shanghai
+    const runs = [
+      { conversation_id: "a", created_at: "2026-10-14T00:30:00Z", finished_at: "2026-10-14T00:40:00Z" }, // Wed 08:30
+      { conversation_id: "a", created_at: "2026-10-14T01:00:00Z", finished_at: "2026-10-14T01:05:00Z" }, // Wed 09:00
+      { conversation_id: "b", created_at: "2026-10-13T00:10:00Z", finished_at: null }, // Tue 08:10
+      { conversation_id: "c", created_at: "2026-09-01T00:00:00Z", finished_at: null }, // outside the window
+    ];
+    const s = reflectStats(runs, 7, now, "Asia/Shanghai");
+    expect(s.series).toHaveLength(7);
+    expect(s.series.at(-1)).toEqual({ day: "2026-10-14", conversations: 1, runs: 2, minutes: 15 });
+    expect(s.conversations).toBe(2);
+    expect(s.topWeekday).toBe(3);
+    expect(s.topHour).toBe(8);
   });
 });
 

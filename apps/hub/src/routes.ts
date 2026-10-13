@@ -28,7 +28,7 @@ class HttpError extends Error {
 }
 
 export function registerRoutes(hub: Hub): void {
-  const { app, auth, agents, runs, events, desktops, knowledge, learning, scheduler, notifier, newapi, settings, containers, db } = hub;
+  const { app, auth, agents, runs, events, desktops, knowledge, learning, reflect, scheduler, notifier, newapi, settings, containers, db } = hub;
 
   app.setErrorHandler((err: any, _req, reply) => {
     const status = err instanceof HttpError ? err.status : err?.validation || err instanceof z.ZodError ? 400 : (err?.statusCode ?? 400);
@@ -325,6 +325,17 @@ export function registerRoutes(hub: Hub): void {
     const run = runs.setFeedback(id(req), b.value);
     if (run && ["done", "failed"].includes(run.status)) learning.maybeReflect(run);
     return { ok: true };
+  });
+
+  // ── reflect ──────────────────────────────────────────────
+  const ReflectQuery = z.object({ days: z.coerce.number().int().refine((d) => [7, 30, 90].includes(d)).default(30) });
+  app.get("/api/reflect", async (req) => {
+    const { days } = ReflectQuery.parse(req.query);
+    return { stats: reflect.stats(days), summary: reflect.cached(days) };
+  });
+  app.post("/api/reflect/summary", async (req) => {
+    const { days } = ReflectQuery.parse(req.query);
+    return { summary: await reflect.summarize(days) };
   });
 
   // ── approvals ────────────────────────────────────────────
