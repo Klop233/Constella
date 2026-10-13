@@ -7,7 +7,7 @@
 - [x] monorepo 骨架（pnpm workspace、TS 配置、protocol 包）
 
 ## 阶段 0：技术验证（记录写入 `spikes/`）
-- [ ] Codex app-server 在容器里经 new-api 运行：gpt-6-astra、anthropic/claude-opus-5.5、kimi-k3、glm-5.3、deepseek-v4-flash，同一个多步工具任务测成功率，形成模型兼容表
+- [x] Codex 在容器里经 new-api 运行（exec 模式已通过，见 spikes/models.md；app-server 协议留到阶段 1 对接）：gpt-6-astra、anthropic/claude-opus-5.5、kimi-k3、glm-5.3、deepseek-v4-flash，同一个多步工具任务测成功率，形成模型兼容表
 - [ ] 桌面容器：Xvnc + Xfce + Chromium(CDP) + cua-driver 在本机 Docker 中运行，noVNC 可查看，截图和点击正常
 - [ ] Playwright MCP 通过 CDP 操作桌面里的 Chromium
 - [ ] 根据结果确定后备方案（codex-sdk / xdotool）
