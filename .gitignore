@@ -9,3 +9,4 @@ data/
 .DS_Store
 docs/spikes/runs/
 deploy/docker-compose.override.yml
+AGENTS.md
