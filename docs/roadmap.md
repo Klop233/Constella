@@ -40,6 +40,6 @@
 - [x] new-api：模型列表与兼容标注、按 agent 统计 token（已测）；专属令牌、费用统计、每日预算限制已实现，需要你提供管理令牌后实测
 - [x] agent 模板、导出 / 导入，健康与监控页，自动备份
 - [x] Cloudflare Tunnel 公网入口：https://constella.example.com（2026-10-13 开通；由 App 自身登录保护，未另加 Cloudflare Access）
-- [~] （可选）Claude 引擎适配器：决定不做。new-api 没有 Anthropic 原生通道，Claude 模型已能通过 Codex 引擎经 new-api 使用；引擎接口已预留，有原生通道后再加
+- [~] （可选）Claude 引擎适配器：不做（2026-10-13 决定）。只支持通过 API（new-api）调用模型，Claude 模型也走这条路
 
 ## 阶段 5：清理 旧工具
