@@ -28,7 +28,7 @@ export default function AgentDetail() {
           </IconButton>
         }
       />
-      <div className="px-4 space-y-4">
+      <div className="px-4 space-y-4 lg:max-w-3xl">
         <div className="flex items-center gap-3">
           <AgentAvatar emoji={a.emoji} size="lg" />
           <div className="flex-1 min-w-0">

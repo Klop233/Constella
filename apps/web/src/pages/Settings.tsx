@@ -47,7 +47,7 @@ export default function Settings() {
   return (
     <div>
       <Header title="设置" sub={`你好，${me.data.name}`} />
-      <div className="px-4 space-y-6 pb-8">
+      <div className="px-4 space-y-6 pb-8 lg:max-w-3xl">
         <PushSection />
         <Section title="模型">
           <Card className="p-4 space-y-4">

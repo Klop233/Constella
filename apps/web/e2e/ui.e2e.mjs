@@ -34,12 +34,12 @@ try {
   await shot("01-login");
   await page.getByRole("button", { name: "登录", exact: true }).click();
   await page.getByText("我的 agent").waitFor({ timeout: 15000 });
-  await page.getByText("测试助理").first().waitFor();
+  await page.locator("main").getByText("测试助理").first().waitFor();
   await page.waitForTimeout(800);
   await shot("02-home");
 
   step("chat");
-  await page.getByText("测试助理").first().click();
+  await page.locator("main").getByText("测试助理").first().click();
   await page.getByRole("button", { name: "新对话" }).click();
   await page.getByPlaceholder("说点什么…").fill("只回复四个字：你好星座");
   await page.getByRole("button", { name: "发送" }).click();
@@ -50,15 +50,15 @@ try {
 
   step("tool cards render");
   await page.goto(`${BASE}/`, { waitUntil: "networkidle" });
-  await page.getByText("请做两件事").first().click().catch(async () => {
-    await page.getByText("测试助理").first().click();
+  await page.locator("main").getByText("请做两件事").first().click().catch(async () => {
+    await page.locator("main").getByText("测试助理").first().click();
   });
   await page.waitForTimeout(1500);
   await shot("04-chat-tools");
 
   step("agent knowledge");
   await page.goto(`${BASE}/`, { waitUntil: "networkidle" });
-  await page.getByText("测试助理").first().click();
+  await page.locator("main").getByText("测试助理").first().click();
   await page.getByRole("button", { name: "记忆与技能" }).click();
   await page.getByText("它的记忆").waitFor();
   await shot("05-knowledge");
@@ -88,7 +88,7 @@ try {
 
   step("tasks");
   await page.getByRole("link", { name: "任务" }).click();
-  await page.getByLabel("新建").click();
+  await page.getByLabel("新建", { exact: true }).click();
   await page.getByLabel("名称").fill("喝水提醒");
   await page.getByRole("button", { name: "每天 20:00", exact: true }).click();
   await page.getByLabel("提醒内容").fill("该喝水啦");
@@ -145,6 +145,24 @@ try {
   await page.goto(`${BASE}/agents/new`, { waitUntil: "networkidle" });
   await page.getByText("网页办事").waitFor();
   await shot("14-new-agent");
+
+  step("desktop layout (1440x900)");
+  const wide = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: "zh-CN", colorScheme: "dark", storageState: await context.storageState() });
+  const wp = await wide.newPage();
+  wp.on("pageerror", (e) => errors.push(e.message));
+  for (const [name, url] of [["d1-home", "/"], ["d2-desktops", "/desktops"], ["d3-settings", "/settings"], ["d4-learning", "/learning"]]) {
+    await wp.goto(BASE + url, { waitUntil: "networkidle" });
+    await wp.waitForTimeout(1200);
+    await wp.screenshot({ path: path.join(SHOTS, `${name}.png`) });
+  }
+  assert.ok(await wp.locator("aside").isVisible(), "sidebar visible on desktop");
+  await wp.locator("aside").getByText("测试助理").click();
+  await wp.getByRole("button", { name: "新对话" }).waitFor();
+  await wp.goto(BASE + "/", { waitUntil: "networkidle" });
+  await wp.getByText("只回复四个字").first().click();
+  await wp.waitForTimeout(1500);
+  await wp.screenshot({ path: path.join(SHOTS, "d5-chat.png") });
+  await wide.close();
 
   assert.deepEqual(errors, [], `page errors: ${errors.join(" | ")}`);
   console.log(`✅ ui walkthrough passed, screenshots in ${SHOTS}`);

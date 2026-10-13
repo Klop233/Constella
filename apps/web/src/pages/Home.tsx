@@ -72,7 +72,7 @@ export default function Home() {
                 <Empty title="还没有 agent" hint="从模板开始，几秒钟就能建好一个" action={<button className="text-accent font-medium" onClick={() => nav("/agents/new")}>新建 agent</button>} />
               </Card>
             ) : (
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-3">
                 {data.agents.map((a) => (
                   <Card key={a.id} className="p-3.5" onClick={() => nav(`/agents/${a.id}`)}>
                     <div className="flex items-start gap-2.5">
@@ -93,7 +93,7 @@ export default function Home() {
             <Section title="桌面" action={<button className="text-sm text-accent" onClick={() => nav("/desktops")}>全部</button>}>
               <div className="flex gap-3 overflow-x-auto no-scrollbar -mx-4 px-4">
                 {data.desktops.map((d) => (
-                  <Card key={d.id} className="w-44 shrink-0 overflow-hidden" onClick={() => nav(`/desktops/${d.id}`)}>
+                  <Card key={d.id} className="w-44 lg:w-64 shrink-0 overflow-hidden" onClick={() => nav(`/desktops/${d.id}`)}>
                     <div className="aspect-[16/10] bg-surface-2 grid place-items-center">
                       {d.state === "running" ? (
                         <img src={`/api/desktops/${d.id}/screenshot?width=360&t=${Math.floor(Date.now() / 30000)}`} alt="" className="w-full h-full object-cover" />

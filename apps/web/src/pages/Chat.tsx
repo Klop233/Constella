@@ -162,7 +162,7 @@ export default function Chat() {
         ) : !data ? (
           <Empty title={`给${a?.name ?? "agent"}派个活`} hint="例如：帮我查一下明天上海的天气，整理成三句话" />
         ) : (
-          <div className="space-y-6 py-4">
+          <div className="space-y-6 py-4 max-w-3xl mx-auto">
             {data.runs.map((r) => (
               <RunView key={r.id} run={r} approvals={data.approvals} onChanged={load} />
             ))}
@@ -172,7 +172,7 @@ export default function Chat() {
       </div>
       <div className="border-t border-line bg-surface safe-bottom">
         {files.length > 0 && (
-          <div className="flex gap-2 px-3 pt-2 overflow-x-auto no-scrollbar">
+          <div className="flex gap-2 px-3 pt-2 overflow-x-auto no-scrollbar max-w-3xl mx-auto">
             {files.map((f, i) => (
               <span key={f.path} className="flex items-center gap-1 text-xs bg-surface-2 rounded-lg pl-2 pr-1 py-1 shrink-0">
                 {f.image ? <ImagePlus className="size-3.5" /> : <Paperclip className="size-3.5" />}
@@ -184,7 +184,7 @@ export default function Chat() {
             ))}
           </div>
         )}
-        <div className="flex items-end gap-2 p-2.5">
+        <div className="flex items-end gap-2 p-2.5 max-w-3xl mx-auto">
           <input ref={fileInput} type="file" multiple hidden onChange={(e) => upload(e.target.files)} />
           <button aria-label="添加附件" className="size-10 grid place-items-center rounded-full text-muted active:bg-surface-2 shrink-0" onClick={() => fileInput.current?.click()} disabled={uploading}>
             <Paperclip className={cx("size-5", uploading && "animate-pulse")} />

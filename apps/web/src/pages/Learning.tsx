@@ -38,7 +38,7 @@ export default function Learning() {
   return (
     <div>
       <Header title="学习" sub="agent 自己记下的经验和技能，每一条都可以撤销" />
-      <div className="px-4 pb-6 space-y-4">
+      <div className="px-4 pb-6 space-y-4 lg:max-w-3xl">
         <div className="flex gap-2 overflow-x-auto no-scrollbar -mx-4 px-4">
           <Chip active={!agentId} onClick={() => setAgentId("")}>
             全部

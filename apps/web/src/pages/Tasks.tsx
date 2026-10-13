@@ -65,7 +65,7 @@ export default function Tasks() {
           </IconButton>
         }
       />
-      <div className="px-4 space-y-5 pb-6">
+      <div className="px-4 space-y-5 pb-6 lg:max-w-3xl">
         {list.isLoading ? (
           <Loading />
         ) : (

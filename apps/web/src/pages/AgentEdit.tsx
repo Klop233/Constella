@@ -114,9 +114,9 @@ export default function AgentEdit() {
   return (
     <div className="pb-28">
       <Header back title={editing ? "编辑 agent" : "新建 agent"} />
-      <div className="px-4 space-y-5">
+      <div className="px-4 space-y-5 lg:max-w-3xl">
         {!editing && (
-          <div className="grid grid-cols-2 gap-2.5">
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5">
             {templates.data?.map((t) => (
               <Card key={t.id} onClick={() => pick(t)} className={cx("p-3", template === t.id && "border-[var(--color-accent)] ring-1 ring-[var(--color-accent)]")}>
                 <div className="text-2xl">{t.emoji}</div>
@@ -204,7 +204,7 @@ export default function AgentEdit() {
           </div>
         )}
       </div>
-      <div className="fixed bottom-0 inset-x-0 bg-surface border-t border-line p-3 safe-bottom">
+      <div className="fixed bottom-0 inset-x-0 lg:left-60 bg-surface border-t border-line p-3 safe-bottom">
         <div className="max-w-2xl mx-auto">
           <Button variant="primary" size="lg" className="w-full" onClick={save} loading={saving} disabled={!name.trim() || !model}>
             {editing ? "保存" : "创建并开始对话"}
