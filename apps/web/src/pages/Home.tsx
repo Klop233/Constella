@@ -40,7 +40,7 @@ export default function Home() {
             }}
             className="relative"
           >
-            <Bell className="size-5" />
+            <Bell className="size-4" />
             {!!data?.unread && <span className="absolute top-2 right-2 size-2 rounded-full bg-[var(--danger)]" />}
           </IconButton>
         }
@@ -62,7 +62,7 @@ export default function Home() {
           <Section
             title="我的 agent"
             action={
-              <button className="text-sm text-accent flex items-center gap-0.5" onClick={() => nav("/agents/new")}>
+              <button className="text-xs text-muted hover:text-[var(--text)] flex items-center gap-0.5" onClick={() => nav("/agents/new")}>
                 <Plus className="size-4" /> 新建
               </button>
             }
@@ -90,7 +90,7 @@ export default function Home() {
           </Section>
 
           {data.desktops.length > 0 && (
-            <Section title="桌面" action={<button className="text-sm text-accent" onClick={() => nav("/desktops")}>全部</button>}>
+            <Section title="桌面" action={<button className="text-xs text-muted hover:text-[var(--text)]" onClick={() => nav("/desktops")}>全部</button>}>
               <div className="flex gap-3 overflow-x-auto no-scrollbar -mx-4 px-4">
                 {data.desktops.map((d) => (
                   <Card key={d.id} className="w-44 lg:w-64 shrink-0 overflow-hidden" onClick={() => nav(`/desktops/${d.id}`)}>

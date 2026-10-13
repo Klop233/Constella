@@ -48,3 +48,8 @@ export function fileToBase64(file: File): Promise<string> {
     r.readAsDataURL(file);
   });
 }
+
+/** End this session and let the auth gate show the login screen. */
+export function logout(qc: { invalidateQueries: () => Promise<unknown> }): void {
+  void api.post("/api/auth/logout").then(() => qc.invalidateQueries());
+}

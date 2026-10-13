@@ -2,7 +2,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { RefreshCw, Sparkles } from "lucide-react";
 import { useState } from "react";
 import { BarChart } from "../components/BarChart";
-import { Card, Empty, Header, Loading, Segmented, cx, toast } from "../components/ui";
+import { Card, Empty, Header, Loading, Segmented, cx, selectClass, toast } from "../components/ui";
 import { api } from "../lib/api";
 import { timeAgo } from "../lib/format";
 
@@ -66,7 +66,7 @@ export default function Reflect() {
         title="回顾"
         sub="根据你和 agent 们的对话"
         right={
-          <select aria-label="时间范围" value={days} onChange={(e) => setDays(e.target.value as typeof days)} className="h-8 px-2 rounded-md bg-transparent hover:bg-surface-2 text-[13px] outline-none">
+          <select aria-label="时间范围" value={days} onChange={(e) => setDays(e.target.value as typeof days)} className={selectClass}>
             {PERIODS.map((p) => (
               <option key={p.value} value={p.value}>
                 {p.label}

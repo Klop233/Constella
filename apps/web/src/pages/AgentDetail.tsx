@@ -24,7 +24,7 @@ export default function AgentDetail() {
         title={a.name}
         right={
           <IconButton label="编辑" onClick={() => nav(`/agents/${a.id}/edit`)}>
-            <Pencil className="size-5" />
+            <Pencil className="size-4" />
           </IconButton>
         }
       />
@@ -32,7 +32,7 @@ export default function AgentDetail() {
         <div className="flex items-center gap-3">
           <AgentAvatar emoji={a.emoji} size="lg" />
           <div className="flex-1 min-w-0">
-            <div className="text-xl font-semibold truncate">{a.name}</div>
+            <div className="text-base font-semibold truncate">{a.name}</div>
             <AgentStatus agent={a} />
             <div className="text-xs text-muted mt-1 truncate">
               {a.model} · 桌面{a.desktop_policy.mode === "none" ? "：不用" : a.desktop_policy.mode === "fixed" ? "：固定" : "：按需"}
@@ -40,8 +40,8 @@ export default function AgentDetail() {
             </div>
           </div>
         </div>
-        <Button variant="primary" size="lg" className="w-full" onClick={() => nav(`/agents/${a.id}/chat`)}>
-          <MessageSquarePlus className="size-5" /> 新对话
+        <Button variant="primary" className="w-full" onClick={() => nav(`/agents/${a.id}/chat`)}>
+          <MessageSquarePlus className="size-4" /> 新对话
         </Button>
         <Segmented
           value={tab}
@@ -113,7 +113,7 @@ function Knowledge({ agentId }: { agentId: string }) {
           title={scope === "agent" ? "它的记忆" : "关于你（所有 agent 共享）"}
           action={
             <button
-              className="text-sm text-accent"
+              className="text-xs text-muted hover:text-[var(--text)]"
               onClick={() => {
                 setDraft(q.data.memory[scope]);
                 setEditing(scope);
@@ -132,7 +132,7 @@ function Knowledge({ agentId }: { agentId: string }) {
         title={`技能 · ${q.data.skills.length}`}
         action={
           <button
-            className="text-sm text-accent flex items-center gap-1"
+            className="text-xs text-muted hover:text-[var(--text)] flex items-center gap-1"
             disabled={curating}
             onClick={async () => {
               setCurating(true);
@@ -241,7 +241,7 @@ function Manage({ agent }: { agent: Agent }) {
   };
   return (
     <div className="space-y-5 pb-8">
-      <Section title="密钥（以环境变量注入，不会出现在对话里）" action={<button className="text-sm text-accent" onClick={() => setSecretOpen(true)}>添加</button>}>
+      <Section title="密钥（以环境变量注入，不会出现在对话里）" action={<button className="text-xs text-muted hover:text-[var(--text)]" onClick={() => setSecretOpen(true)}>添加</button>}>
         <Card className="divide-y divide-[var(--border)] overflow-hidden">
           {agent.secrets.length === 0 ? (
             <div className="px-4 py-3 text-sm text-muted">无</div>

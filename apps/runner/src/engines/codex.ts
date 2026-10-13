@@ -22,8 +22,13 @@ interface ActiveRun {
   reasoning: Map<string, string>;
   /** When the current model request began: turn start, the last tool finishing, or the previous usage report. */
   requestStart: number;
+  /** Whether the model has done anything this turn; usage reported before that is a replay of the previous turn. */
+  active: boolean;
   lastError?: string;
 }
+
+/** Item types that are tool calls; when one completes, the model's next request begins. */
+const TOOL_ITEMS = new Set(["commandExecution", "fileChange", "mcpToolCall", "dynamicToolCall", "webSearch", "imageGeneration", "collabAgentToolCall", "sleep"]);
 
 interface PendingApproval {
   rpcId: number | string;
@@ -90,6 +95,7 @@ export class CodexEngine {
         outputBytes: new Map(),
         reasoning: new Map(),
         requestStart: Date.now(),
+        active: false,
       };
       this.#runs.set(cmd.runId, run);
       this.#runsByThread.set(threadId, run);
@@ -247,16 +253,18 @@ export class CodexEngine {
         break;
       }
       case "item/started":
+        if (p.item?.type !== "userMessage") run.active = true;
         this.#onItem(run, p.item, "started");
         break;
       case "item/completed":
         this.#onItem(run, p.item, "completed");
         // A finished tool call hands control back to the model: the next request starts now.
-        if (!["userMessage", "agentMessage", "reasoning"].includes(p.item?.type)) run.requestStart = Date.now();
+        if (TOOL_ITEMS.has(p.item?.type)) run.requestStart = Date.now();
         break;
       case "thread/tokenUsage/updated": {
         const last = p.tokenUsage?.last;
-        if (last) {
+        // Resuming a thread re-reports the previous turn's last request; counting it again would double usage.
+        if (last && run.active) {
           const now = Date.now();
           this.#sink.event({
             type: "usage",

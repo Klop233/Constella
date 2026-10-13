@@ -1,3 +1,4 @@
+import { z } from "zod";
 import type { AgentEvent } from "@constella/protocol";
 import { config } from "./config.ts";
 import type { Db } from "./db.ts";
@@ -24,6 +25,17 @@ const REFLECT_SYSTEM = `你是一个 AI 助手团队的"复盘员"。你会读�
 const CURATE_SYSTEM = `你是知识库整理员。下面是某个 agent 的记忆文件和技能列表。请输出 JSON：
 {"memory":[{"op":"update|delete","scope":"agent","text":"…","match":"…"}],"skills":[],"promote":[]}
 目标：合并重复条目、删除过时或矛盾的条目、把记忆压缩到 ${MEMORY_LIMIT} 字以内。不要新增事实。没有需要整理的就返回空数组。`;
+
+const INSTRUCT_SYSTEM = `你在帮用户直接修改 agent 的长期记忆。你会看到两份记忆（每行一条）和用户的修改要求。
+只输出一个 JSON 对象：
+{"reply":"一句话告诉用户你做了什么（或为什么没改）","memory":[{"op":"add|update|delete","scope":"agent|user","text":"新内容","match":"更新/删除时用于定位原条目的原文片段"}]}
+规则：
+- scope=user 是关于用户本人的信息（所有 agent 共享），scope=agent 是这个 agent 自己的工作经验。
+- update / delete 的 match 必须是原条目里连续出现的原文片段。
+- 每条不超过 100 字，用中文；不要写入密码、密钥、令牌。
+- 用户的要求含糊或和记忆无关时，memory 返回空数组，在 reply 里说明。`;
+
+const Instruct = z.object({ reply: z.string().min(1).max(300), memory: KnowledgeOps.shape.memory });
 
 /** Turns finished runs into memory/skill updates (post-run reflection) and keeps knowledge tidy (curation). */
 export class Learning {
@@ -76,6 +88,22 @@ export class Learning {
     const proven = new Set(skillList.filter((s) => s.scope === "agent" && s.uses >= 2).map((s) => s.name));
     const ops = { ...parsed.data, promote: parsed.data.promote.filter((n) => proven.has(n)) };
     return this.#knowledge.apply(run.agent_id, ops, { runId, reason: "reflection" });
+  }
+
+  /** Apply a change the user described in words ("记住我不喝咖啡", "删掉关于旧服务器的那条"). */
+  async instruct(agentId: string, request: string): Promise<{ reply: string; events: LearningEvent[] }> {
+    const memory = this.#knowledge.memory(agentId);
+    const user = [
+      `## 关于用户（所有 agent 共享）\n${memory.user.trim() || "（空）"}`,
+      `## 这个 agent 的记忆\n${memory.agent.trim() || "（空）"}`,
+      `## 用户的要求\n${request}`,
+    ].join("\n\n");
+    const parsed = Instruct.safeParse(await this.#newapi.chatJson(this.#model(), INSTRUCT_SYSTEM, user));
+    if (!parsed.success) throw new Error("没理解这个要求，换个说法再试试");
+    const events = parsed.data.memory.length
+      ? this.#knowledge.apply(agentId, { memory: parsed.data.memory, skills: [], promote: [] }, { runId: null, reason: "用户要求" })
+      : [];
+    return { reply: events.length || !parsed.data.memory.length ? parsed.data.reply : "没有找到要改的那条记忆，换个说法再试试", events };
   }
 
   async curate(agentId: string): Promise<LearningEvent[]> {

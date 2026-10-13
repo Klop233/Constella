@@ -29,13 +29,15 @@
 | `--border` / `border-line` | 所有边框和分隔线 |
 | `--text`，`--muted` / `text-muted` | 主文字、次要文字 |
 | `--color-accent` / `bg-accent`、`text-accent` | 主色：选中、链接、数据 |
-| `bg-accent-grad` | 主色渐变（主色 → `--accent-2`）：主按钮、发送按钮、开关打开 |
+| `bg-accent-grad` | 主色渐变（主色 → `--accent-2`）：只用于 `Button variant="primary"`；开关、发送按钮用纯色 `bg-accent` |
 | `--color-accent-soft` / `bg-accent-soft` | 主色淡底：图标底、徽标 |
 | `--ok` / `--warn` / `--danger` | 状态色，只表示状态，不拿来区分数据系列 |
+| `--series-1`…`--series-6` | 图表分类色，固定顺序（蓝、橙、青、黄、粉、绿），明暗各一套，已用 dataviz 校验脚本验证 |
 
 - 选中态、悬停态用文字色混透明：`bg-[color-mix(in_oklab,var(--text)_9%,transparent)]`（选中），`_5%`（悬停）。这样三套配色、明暗都自动成立。
 - 新增配色：在 `index.css` 里加 `:root[data-palette="x"]` 和 `:root[data-palette="x"][data-mode="dark"]` 两段，覆盖上表的变量，再在设置页的 `PALETTES` 里登记。
-- 唯一例外：远程桌面查看页固定深色背景（`#0b0d18`），因为画面本身是桌面截图。
+- 例外：远程桌面查看页固定深色背景（`#0b0d18`），因为画面本身是桌面截图；设置页的配色预览色块写死各配色的主色。
+- **滚动条**：全局细滚动条（8px，透明轨道，圆角拇指，用文字色 18%，悬停加深），在 `index.css` 统一设置，页面里不要单独改。
 
 ## 3. 字体与字号
 
@@ -47,7 +49,7 @@
 | 大数字 | `font-display text-2xl font-medium` | 统计卡片、回顾页指标 |
 | 页面主标题 | `font-display text-xl font-semibold` | 回顾页标题这类内容型标题 |
 | 顶栏标题 | `font-display text-[15px] font-semibold` | `Header` |
-| 对话正文 | `text-[15px]`，行高 1.7 | 用户消息、agent 回复 |
+| 对话正文 | `text-sm`（14px），`.prose-chat` 行高 1.65 | 用户消息、agent 回复、输入框、过程行 |
 | 正文 / 控件 | `14px`（body 默认）、`text-[13.5px]` | 列表、按钮、输入框、侧边栏 |
 | 辅助 | `text-[13px]`、`text-xs` | 字段标签、分组标题、说明 |
 | 最小 | `text-[11px]`–`text-[11.5px]` | 坐标轴、用量行、时间戳、徽标 |
@@ -56,10 +58,10 @@
 
 ## 4. 尺寸、间距、圆角
 
-- **高度**：顶栏 48px（`h-12`）；按钮、输入框、侧边栏条目、弹出触发器 32px（`h-8`）；小按钮 28px（`h-7`）；分组标题 28px（`h-7`）。
-- **图标**：lucide，条目内 16px（`size-4`），密集行内 14px（`size-3.5`），`strokeWidth={1.8}`。
+- **高度**：顶栏 48px（`h-12`）；按钮、输入框、下拉框、设置导航项、菜单项 32px（`h-8`）；侧边栏条目、侧边栏搜索框、分组标题、工具栏和浮层触发器、小按钮 28px（`h-7`）；分段控件容器 28px、选项 24px；chip 和行内小按钮 20–24px。
+- **图标**：lucide，`strokeWidth={1.8}`。条目、顶栏、关闭按钮、`IconButton` 里都是 16px（`size-4`），密集行内 14px（`size-3.5`），空状态 24px；不用 `size-5` 及以上（手机底部标签除外）。
 - **间距**：页面左右 `px-4`；区块之间 `space-y-5`；区块标题和内容 `space-y-1.5`；卡片内 `p-3`–`p-3.5`；列表行 `px-3.5 py-2.5`。
-- **圆角**：控件 `rounded-md`（6px），卡片和输入框 `rounded-xl`，浮层 `rounded-xl`，对话框 `rounded-2xl`，状态点、头像 `rounded-full`。不要更圆。
+- **圆角**：照 Claude Code 收得很小，档位在 `index.css` 的 `@theme` 里统一调小了：`rounded`（3px）用于徽标，`rounded-md`（4px）用于按钮和条目，`rounded-lg`（6px）用于气泡和代码块，`rounded-xl`（8px）用于卡片、输入框、浮层，`rounded-2xl`（10px）用于对话框；状态点和头像用 `rounded-full`。不要绕过档位写任意值（比如 `rounded-[12px]`）。
 - **宽度**：桌面侧边栏 256px（`w-64`），主内容 `max-w-4xl`，对话和表单 `max-w-3xl`。
 
 ## 5. 布局
@@ -79,29 +81,36 @@
 
 | 组件 | 要点 |
 |---|---|
-| `Button` | `primary`（渐变主色）、`secondary`（白底细边框）、`ghost`、`danger`；尺寸 `sm` 28px / `md` 32px / `lg` 40px |
-| `inputClass` | 白底细边框，悬停加深边框，聚焦主色边框，`py-1.5 text-[13.5px]` |
-| `Toggle` | 36×20，打开时渐变主色 |
-| `Segmented` | 指标切换、二三选一：`bg-surface-2` 底，选中项 `bg-surface` 加小阴影 |
+| `Button` | `primary`（渐变主色）、`secondary`（白底细边框）、`soft`（`bg-surface-2` 无边框：设置行、浮层、卡片里的次要操作）、`ghost`、`danger`；尺寸 `sm` 28px / `md` 32px / `lg` 40px（`lg` 只给手机底部主操作） |
+| `inputClass` / `selectClass` | 白底细边框、`rounded-lg`，悬停加深边框，聚焦主色边框，`text-[13.5px]` / `text-[13px]` |
+| `Toggle` | 36×20，打开时纯色 `bg-accent` |
+| `Segmented` | 指标切换、二三选一：容器 `h-7 p-0.5 bg-surface-2`，选项 `h-6`，选中项 `bg-surface border border-line`，不加阴影 |
 | `Card` | `rounded-xl border bg-surface`，可点击时悬停加深边框 |
-| `Section` | 标题 `text-xs font-medium text-muted`，右侧放一个文字操作 |
-| `Row` | 设置列表行：图标、标题和副标题、右侧控件；在 `Card` 里用 `divide-y` 分隔 |
+| `Section` | 标题 `text-xs font-medium text-muted`，右侧文字操作用 `text-xs text-muted hover:text-[var(--text)]`，不用主色 |
+| `Row` | 可点击的列表行：图标、标题和副标题、右侧内容；在 `Card` 里用 `divide-y` 分隔。设置项不用它，用 `SettingRow` |
+| `SettingGroup` / `SettingRow` | 设置页：组标题 `text-base font-semibold`，组间 `space-y-8`；行 `py-3.5`，左边标题 `text-sm font-medium` + 描述 `text-[13px] text-muted`（可换行），右边控件；行间 `divide-y`，不套卡片、不放图标；控件宽的行加 `wide`，窄屏时换到下一行 |
+| `navItemClass(active)` | 侧边栏和设置导航的条目：选中是文字色 9% 的中性底，悬停 5%；不要再手写这串 color-mix |
+| `Tabs` | 下划线标签：同一份数据的不同视角；选中项加粗加 2px 主色下划线，右侧可放一句 muted 说明 |
+| `StatTile` | 统计卡片：上面是 `text-xs text-muted` 标签，下面是数字（`lg` 是 `text-2xl`，`sm` 是 `text-base`），`tabular-nums` |
 | `Badge` | `rounded px-1.5 text-[11.5px]`，tone 只用 muted / ok / warn / danger / accent |
 | 状态点 | 8px 圆点：空闲是空心描边，进行中是主色并闪烁，等审批是 warn，失败是 danger |
-| `Popover`（`ChatControls.tsx`） | 触发器 `h-8 px-2 text-xs text-muted`，面板 `rounded-xl border bg-surface shadow-xl`，面板内分节用 `divide-y` |
+| `Popover` | 浮层：触发器默认 `h-7 px-1.5 text-[13px] text-muted`，展开时 `bg-surface-2`；面板 `rounded-xl border bg-surface shadow-xl`，`side` 定上下、`align` 定左右。面板内 `p-3`，分节线左右内缩（不通栏），每行左标签、右 `text-muted tabular-nums` 数值；进度条 `h-1.5 rounded-full`，轨道用文字色 12% |
+| `MenuItem` / `MenuDivider` | 菜单（如账户菜单）：面板 `w-60 p-1.5`，首行可放 `text-xs text-muted` 的身份信息；项 `h-8 px-2.5 gap-2.5 rounded-md`，16px muted 图标，右侧提示用 `text-xs text-muted`（快捷键、›、↗）；用分隔线分组，退出登录放最后一组。红色只给删除数据的操作 |
 
 ## 7. 对话
 
-- **用户消息**：靠右，`bg-surface-2 rounded-lg px-3.5 py-2`，下方小字时间。
-- **agent 回复**：无气泡，`font-display text-[15px]`，Markdown 排版（`.prose-chat`）。
+- **新对话**：问候和输入框居中放在一起，像 Claude 首页：「{agent 表情} 早上好 / 中午好 / 下午好 / 晚上好 / 夜深了，{名字}」（`font-display`，约 30px），输入框提示语「今天想让{agent}做点什么？」。不放示例、不写「派活」这类说法。
+- **用户消息**：靠右，`bg-surface-2 rounded-xl px-3 py-2 text-sm`，下方小字时间。
+- **agent 回复**：无气泡，`font-display text-sm`，Markdown 排版（`.prose-chat`）。
+- **自动继续**：hub 在任务中断后自动接着做的那一轮，不显示成用户气泡，显示一行灰字「↻ 中断后自动继续 · 时间」。
 - **工具调用**：连续的步骤收成一行灰字，例如「运行了 2 条命令，调用了 1 个工具 ›」，有失败时后面跟「· 1 个失败」（danger）。点开后左侧一条竖线（`border-l`），每步一行等宽字；再点单步看输入输出。进行中这一行显示转圈和当前命令。
-- **审批卡片**是唯一打断过程的卡片，不折叠。
+- **审批卡片**是唯一打断过程的卡片，不折叠。不在这个对话页时，待审批会以浮窗出现（桌面右下角、手机顶部），可直接批准或拒绝，也可以先关掉；有待审批时页面标题前加「(N) 待审批」。自动批准的显示为「已自动批准」。
 - **用量行**：回复下方 `text-[11px] text-muted`，用 `·` 分隔：模型 · 上下文 · 输入（缓存）· 输出 · tok/s · 耗时；外观设置里可关。
-- **输入区**：圆角框里放输入框和右下角发送按钮（32px，渐变主色，发送中转圈；任务进行中且输入为空时换成停止按钮）。框下面一行工具栏：左边「+」附件，右边依次是上下文进度环、模型、推理强度。Enter 发送，Ctrl/⌘/Shift+Enter 换行，输入法选词时不发送，触屏键盘上 Enter 换行。
+- **输入区**：`rounded-2xl` 框里放输入框（14px）和右下角发送按钮（28px `rounded-lg`：有内容时 `bg-accent`，空着时 `bg-surface-2 text-muted`，发送中转圈；任务进行中且输入为空时换成深色停止按钮）。上一轮任务异常中断时，发送按钮保持可点，空着发送就是「继续」，提示语也要说明这一点。框下面一行工具栏：左边「+」附件，右边依次是上下文进度环、模型、推理强度。Enter 发送，Ctrl/⌘/Shift+Enter 换行，输入法选词时不发送，触屏键盘上 Enter 换行。
 
 ## 8. 数据展示（统计、用量类页面）
 
-- **统计卡片**：一行 2–4 个，`Card p-3`。小标签（`text-xs text-muted`）在上，数字（`text-2xl` 或次级 `text-base font-semibold`，`tabular-nums`）在下。主次两行时，次要指标卡片更矮。
+- **统计卡片**：一行 2–4 个，用 `StatTile`。小标签（`text-xs text-muted`）在上，数字（`text-2xl` 或次级 `text-base font-semibold`，`tabular-nums`）在下。主次两行时，次要指标卡片更矮。
 - **筛选**：放在一行里，靠右；时间范围用下拉（`h-8`），维度用 `Segmented` 或图标分段。
 - **表格**：
   - 表头 `text-xs text-muted font-medium`，行高约 44px，行之间 `border-b border-line`，不加竖线和斑马纹。
@@ -115,7 +124,8 @@
 
 遵循 dataviz 规范，复用 `components/BarChart.tsx`：
 
-- **单一序列用主色**，标题已经说明画的是什么，就不加图例。两个及以上序列才加图例，颜色按固定顺序分配，并用校验脚本验证。
+- **单一序列用主色**，标题已经说明画的是什么，就不加图例。两个及以上序列才加图例，颜色按 `--series-1…6` 的固定顺序分配。浅色下青、黄、粉对比度略低于 3:1，所以每个分类都要在图例里直接标数值。
+- 堆叠条（如上下文窗口构成）：段与段之间留 2px 间隙，剩余部分用中性轨道。估算出来的数字要注明是估算。
 - 柱宽不超过 24px，顶端 4px 圆角、底部直角，从同一条基线长出来；折线 2px；数据点直径至少 8px。
 - 网格线 1px 实线、`--border` 色，不用虚线；坐标轴文字 11px muted，刻度取整数或整十整百。
 - 只用一条纵轴，不做双轴图。

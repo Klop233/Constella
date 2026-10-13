@@ -1,15 +1,16 @@
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
-import { Brain, CalendarClock, House, Monitor, Plus, Search, Settings as SettingsIcon, SlidersHorizontal, Sparkles } from "lucide-react";
+import { Brain, CalendarClock, ChevronsUpDown, Gauge, House, LogOut, Monitor, Palette, Plus, Search, Settings as SettingsIcon, Shield, SlidersHorizontal, Sparkles, ExternalLink, X } from "lucide-react";
 import { lazy, StrictMode, Suspense, useEffect, useState, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
-import { BrowserRouter, NavLink, Route, Routes, useLocation } from "react-router";
+import { BrowserRouter, NavLink, Route, Routes, useLocation, useNavigate } from "react-router";
 import { registerSW } from "virtual:pwa-register";
-import { cx, Loading } from "./components/ui";
+import { cx, Loading, MenuDivider, MenuItem, navItemClass, Popover } from "./components/ui";
 import "./index.css";
 import "./lib/appearance";
-import { api, ApiError } from "./lib/api";
+import { api, ApiError, logout } from "./lib/api";
 import { startLive } from "./lib/live";
-import type { Overview } from "./lib/types";
+import type { Approval, Overview } from "./lib/types";
+import { ApprovalCard } from "./components/ApprovalCard";
 import Home from "./pages/Home";
 import Login from "./pages/Login";
 
@@ -22,6 +23,7 @@ const Tasks = lazy(() => import("./pages/Tasks"));
 const Learning = lazy(() => import("./pages/Learning"));
 const Settings = lazy(() => import("./pages/Settings"));
 const Reflect = lazy(() => import("./pages/Reflect"));
+const Usage = lazy(() => import("./pages/Usage"));
 
 const qc = new QueryClient({
   defaultOptions: {
@@ -63,7 +65,7 @@ const TABS = [
 ];
 
 // Desktop sidebar: the mobile tabs minus 设置 (it lives in the account row), plus pages without a mobile tab.
-const NAV = [...TABS.filter((t) => t.to !== "/settings"), { to: "/reflect", label: "回顾", icon: Sparkles, end: false }];
+const NAV = [...TABS.filter((t) => t.to !== "/settings"), { to: "/usage", label: "用量", icon: Gauge, end: false }, { to: "/reflect", label: "回顾", icon: Sparkles, end: false }];
 
 /** Conversation bullet, like Claude Code's session dots: hollow when idle, colored while something is going on. */
 function StatusDot({ status }: { status?: string | null }) {
@@ -73,15 +75,59 @@ function StatusDot({ status }: { status?: string | null }) {
   return <span className="size-2 rounded-full border border-[var(--muted)] opacity-60 shrink-0" />;
 }
 
+/** Account row at the bottom of the sidebar; opens a Claude Code-style menu upward. */
+function AccountMenu({ name }: { name: string }) {
+  const nav = useNavigate();
+  return (
+    <Popover
+      label="账户菜单"
+      side="top"
+      align="left"
+      className="w-60 p-1.5"
+      triggerClassName="w-full flex items-center gap-2.5 h-9 px-2.5 rounded-md text-[13.5px] hover:bg-[color-mix(in_oklab,var(--text)_5%,transparent)] aria-expanded:bg-[color-mix(in_oklab,var(--text)_9%,transparent)]"
+      trigger={
+        <>
+          <span className="size-5 rounded-full bg-[color-mix(in_oklab,var(--text)_14%,transparent)] grid place-items-center text-[11px] font-medium uppercase">{name.slice(0, 1)}</span>
+          <span className="flex-1 truncate text-left">{name}</span>
+          <ChevronsUpDown className="size-3.5 text-muted" />
+        </>
+      }
+    >
+      {(close) => {
+        const go = (to: string) => () => {
+          close();
+          nav(to);
+        };
+        return (
+          <>
+            <div className="px-2.5 pt-1 pb-1.5 text-xs text-muted truncate">{name}</div>
+            <MenuItem icon={<SettingsIcon />} label="设置" hint="Ctrl+," onClick={go("/settings")} />
+            <MenuItem icon={<Gauge />} label="用量" onClick={go("/usage")} />
+            <MenuItem icon={<Sparkles />} label="回顾" onClick={go("/reflect")} />
+            <MenuDivider />
+            <MenuItem icon={<Palette />} label="外观" onClick={go("/settings?s=appearance")} />
+            <MenuItem icon={<Shield />} label="安全与登录设备" onClick={go("/settings?s=security")} />
+            <MenuDivider />
+            <MenuItem
+              icon={<LogOut />}
+              label="退出登录"
+              onClick={() => {
+                close();
+                logout(qc);
+              }}
+            />
+          </>
+        );
+      }}
+    </Popover>
+  );
+}
+
 function Sidebar() {
   const overview = useQuery({ queryKey: ["overview"], queryFn: () => api.get<Overview>("/api/overview"), refetchInterval: 30_000 });
   const me = useQuery({ queryKey: ["me"], queryFn: () => api.get<{ name: string }>("/api/me"), staleTime: 300_000 });
   const [q, setQ] = useState("");
-  const item = ({ isActive }: { isActive: boolean }) =>
-    cx(
-      "flex items-center gap-2.5 h-8 px-2.5 rounded-md text-[13.5px] transition-colors",
-      isActive ? "bg-[color-mix(in_oklab,var(--text)_9%,transparent)] text-[var(--text)]" : "text-[color-mix(in_oklab,var(--text)_80%,transparent)] hover:bg-[color-mix(in_oklab,var(--text)_5%,transparent)]",
-    );
+  const item = ({ isActive }: { isActive: boolean }) => cx(navItemClass(isActive), "h-7 text-[13px]");
   const needle = q.trim().toLowerCase();
   const groups = (overview.data?.agents ?? []).map((a) => ({
     agent: a,
@@ -91,7 +137,7 @@ function Sidebar() {
   return (
     <aside className="hidden lg:flex fixed inset-y-0 left-0 z-30 w-64 flex-col border-r border-line bg-sidebar">
       <div className="px-2.5 pt-3 pb-1.5">
-        <label className="flex items-center gap-2 h-8 px-2.5 rounded-md border border-line bg-surface text-[13px] focus-within:border-[var(--color-accent)]">
+        <label className="flex items-center gap-2 h-7 px-2.5 rounded-lg border border-line bg-surface text-[13px] focus-within:border-[var(--color-accent)]">
           <Search className="size-3.5 text-muted shrink-0" />
           <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="搜索对话" className="flex-1 min-w-0 bg-transparent outline-none placeholder:text-muted" />
         </label>
@@ -141,11 +187,7 @@ function Sidebar() {
         )}
       </div>
       <div className="border-t border-line p-2">
-        <NavLink to="/settings" className={item}>
-          <span className="size-5 rounded-full bg-[color-mix(in_oklab,var(--text)_14%,transparent)] grid place-items-center text-[11px] font-medium uppercase">{name.slice(0, 1)}</span>
-          <span className="flex-1 truncate">{name}</span>
-          <SettingsIcon className="size-4 text-muted" strokeWidth={1.8} />
-        </NavLink>
+        <AccountMenu name={name} />
       </div>
     </aside>
   );
@@ -153,6 +195,17 @@ function Sidebar() {
 
 function Shell({ children }: { children: ReactNode }) {
   const loc = useLocation();
+  const nav = useNavigate();
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === ",") {
+        e.preventDefault();
+        nav("/settings");
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [nav]);
   const hideNav = /^\/(c\/|agents\/[^/]+\/(chat|edit)|agents\/new|desktops\/.)/.test(loc.pathname);
   return (
     <div className="min-h-full">
@@ -172,6 +225,48 @@ function Shell({ children }: { children: ReactNode }) {
           </div>
         </nav>
       )}
+    </div>
+  );
+}
+
+/**
+ * Pending approvals float in from the corner on every page (push doesn't work on plain-HTTP entries),
+ * except on the conversation that raised them, which shows the card inline.
+ */
+function ApprovalPopups() {
+  const loc = useLocation();
+  const nav = useNavigate();
+  const pending = useQuery({ queryKey: ["approvals"], queryFn: () => api.get<Approval[]>("/api/approvals"), refetchInterval: 60_000 });
+  const [hidden, setHidden] = useState<Set<string>>(new Set());
+  const list = (pending.data ?? []).filter((a) => !hidden.has(a.id) && loc.pathname !== `/c/${a.conversation_id}`);
+  const total = pending.data?.length ?? 0;
+  useEffect(() => {
+    const base = "Constella";
+    document.title = total ? `(${total}) 待审批 · ${base}` : base;
+  }, [total]);
+  if (!list.length) return null;
+  return (
+    <div className="fixed z-[55] inset-x-3 top-3 sm:inset-x-auto sm:top-auto sm:right-4 sm:bottom-4 sm:w-96 space-y-2 safe-top">
+      {list.slice(0, 3).map((a) => (
+        <ApprovalCard
+          key={a.id}
+          approval={a}
+          className="shadow-xl"
+          extra={
+            <span className="flex items-center gap-0.5 -mr-1.5">
+              {a.conversation_id && (
+                <button aria-label="查看对话" title="查看对话" onClick={() => nav(`/c/${a.conversation_id}`)} className="p-1 rounded-md text-muted hover:text-[var(--text)] hover:bg-surface-2">
+                  <ExternalLink className="size-3.5" />
+                </button>
+              )}
+              <button aria-label="稍后处理" title="稍后处理" onClick={() => setHidden((s) => new Set(s).add(a.id))} className="p-1 rounded-md text-muted hover:text-[var(--text)] hover:bg-surface-2">
+                <X className="size-3.5" />
+              </button>
+            </span>
+          }
+        />
+      ))}
+      {list.length > 3 && <div className="text-xs text-muted text-right">还有 {list.length - 3} 个待审批</div>}
     </div>
   );
 }
@@ -205,6 +300,7 @@ function App() {
       <BrowserRouter>
         <Toasts />
         <Gate>
+          <ApprovalPopups />
           <Shell>
             <Suspense fallback={<Loading />}>
               <Routes>
@@ -220,6 +316,7 @@ function App() {
                 <Route path="/learning" element={<Learning />} />
                 <Route path="/settings" element={<Settings />} />
                 <Route path="/reflect" element={<Reflect />} />
+                <Route path="/usage" element={<Usage />} />
                 <Route path="*" element={<Home />} />
               </Routes>
             </Suspense>

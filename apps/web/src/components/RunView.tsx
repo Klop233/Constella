@@ -1,4 +1,4 @@
-import { Brain, ChevronRight, CircleAlert, FileEdit, Globe, Loader2, Monitor, Terminal, ThumbsDown, ThumbsUp, Wrench, X } from "lucide-react";
+import { Brain, ChevronRight, CircleAlert, RotateCw, FileEdit, Globe, Loader2, Monitor, Terminal, ThumbsDown, ThumbsUp, Wrench, X } from "lucide-react";
 import { memo, useMemo, useState } from "react";
 import { Link } from "react-router";
 import { api } from "../lib/api";
@@ -13,10 +13,14 @@ type Item =
   | { kind: "message"; id: string; text: string; streaming: boolean; user: boolean }
   | { kind: "reasoning"; id: string; text: string }
   | { kind: "tool"; id: string; name: string; input: unknown; output: string; done: boolean; ok: boolean; error?: string; result?: unknown }
-  | { kind: "approval"; id: string; approvalId: string; summary: string; resolved?: "approve" | "deny" }
+  | { kind: "approval"; id: string; approvalId: string; summary: string; resolved?: "approve" | "deny"; by?: "user" | "policy" }
   | { kind: "desktop"; id: string; desktopId: string; action: string };
 
 const STEER_PREFIX = "［追加指示］";
+/** Same as MIN_TIMED_MS in apps/hub/src/usage.ts: shorter requests are timing artifacts and don't count toward speed. */
+const MIN_TIMED_MS = 250;
+/** Matches RESUME_PREFIX in apps/hub/src/runs.ts: runs the hub started itself after a restart. */
+const RESUME_PREFIX = "［自动继续］";
 
 /** Folds a run's event stream into display items (streaming text, tool cards, approvals). */
 export interface Usage {
@@ -86,7 +90,7 @@ export function buildItems(events: AgentEvent[]): { items: Item[]; usage: Usage 
       }
       case "approval.resolved": {
         const a = byId.get(`ap:${ev.approvalId}`) as Extract<Item, { kind: "approval" }> | undefined;
-        if (a) a.resolved = ev.decision;
+        if (a) Object.assign(a, { resolved: ev.decision, by: ev.by });
         break;
       }
       case "desktop.action":
@@ -96,7 +100,7 @@ export function buildItems(events: AgentEvent[]): { items: Item[]; usage: Usage 
         usage.input += ev.inputTokens;
         usage.output += ev.outputTokens;
         usage.cached += ev.cachedInputTokens ?? 0;
-        if (ev.durationMs) {
+        if (ev.durationMs && ev.durationMs >= MIN_TIMED_MS) {
           usage.timedOutput += ev.outputTokens;
           usage.timedMs += ev.durationMs;
         }
@@ -197,7 +201,7 @@ function StepGroup({ steps, live }: { steps: Step[]; live: boolean }) {
   const failed = steps.filter((s) => s.kind === "tool" && s.done && !s.ok).length;
   return (
     <div>
-      <button className="group flex items-center gap-1.5 max-w-full text-left text-[13.5px] text-muted hover:text-[var(--text)]" onClick={() => setOpen(!open)}>
+      <button className="group flex items-center gap-1.5 max-w-full text-left text-sm text-muted hover:text-[var(--text)]" onClick={() => setOpen(!open)}>
         {live && <Loader2 className="size-3.5 animate-spin text-accent shrink-0" />}
         <span className={cx("truncate", live && "font-mono text-[12.5px]")}>{live ? stepLabel(steps.at(-1)!) : stepsSummary(steps)}</span>
         {failed > 0 && <span className="text-danger shrink-0">· {failed} 个失败</span>}
@@ -217,7 +221,7 @@ function StepGroup({ steps, live }: { steps: Step[]; live: boolean }) {
 export function UserBubble({ text, time }: { text: string; time?: string }) {
   return (
     <div className="flex flex-col items-end">
-      <div className="max-w-[85%] bg-surface-2 rounded-lg px-3.5 py-2 whitespace-pre-wrap break-words text-[15px]">{text}</div>
+      <div className="max-w-[85%] bg-surface-2 rounded-xl px-3 py-2 whitespace-pre-wrap break-words text-sm">{text}</div>
       {time && <div className="text-[11px] text-muted mt-1">{time}</div>}
     </div>
   );
@@ -244,7 +248,7 @@ export function latestStats(runs: Run[]): LatestStats | null {
         cached: ev.cachedInputTokens ?? 0,
         output: ev.outputTokens,
         reasoning: ev.reasoningTokens ?? 0,
-        tps: ev.durationMs && ev.outputTokens ? ev.outputTokens / (ev.durationMs / 1000) : null,
+        tps: ev.durationMs && ev.durationMs >= MIN_TIMED_MS && ev.outputTokens ? ev.outputTokens / (ev.durationMs / 1000) : null,
       };
     }
   }
@@ -299,14 +303,20 @@ export function RunView({ run, approvals, onChanged }: { run: Run; approvals: Ap
   };
   return (
     <div className="space-y-3">
-      <UserBubble text={run.prompt} time={clock(run.created_at)} />
+      {run.prompt.startsWith(RESUME_PREFIX) ? (
+        <div className="flex items-center gap-1.5 text-[12.5px] text-muted">
+          <RotateCw className="size-3.5" /> 中断后自动继续 · {clock(run.created_at)}
+        </div>
+      ) : (
+        <UserBubble text={run.prompt} time={clock(run.created_at)} />
+      )}
       {blocks.map((it, i) => {
         switch (it.kind) {
           case "message":
             return it.user ? (
               <UserBubble key={it.id} text={it.text} />
             ) : (
-              <div key={it.id} className="text-[15px]">
+              <div key={it.id} className="text-sm">
                 <Markdown text={it.text} className="font-display" />
                 {it.streaming && !finished && <span className="inline-block size-2.5 ml-1 rounded-full bg-accent align-middle pulse-dot" />}
               </div>
@@ -318,7 +328,7 @@ export function RunView({ run, approvals, onChanged }: { run: Run; approvals: Ap
             if (a) return <ApprovalCard key={it.id} approval={a} showAgent={false} onResolved={onChanged} />;
             return (
               <div key={it.id} className="text-xs text-muted flex items-center gap-1.5">
-                <CircleAlert className="size-3.5" /> 审批「{it.summary.slice(0, 40)}」{it.resolved === "approve" ? "已批准" : it.resolved === "deny" ? "已拒绝" : "已失效"}
+                <CircleAlert className="size-3.5" /> 审批「{it.summary.slice(0, 40)}」{it.resolved === "approve" ? (it.by === "policy" ? "已自动批准" : "已批准") : it.resolved === "deny" ? "已拒绝" : "已失效"}
               </div>
             );
           }

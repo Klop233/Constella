@@ -5,13 +5,15 @@ import { useNavigate, useParams } from "react-router";
 import { AgentDot } from "../components/AgentBits";
 import { ContextMeter, EffortPicker, ModelPicker } from "../components/ChatControls";
 import { latestStats, RunView } from "../components/RunView";
-import { Header, Loading, cx, toast } from "../components/ui";
-import { api, fileToBase64 } from "../lib/api";
+import { Button, Empty, Header, Loading, cx, toast } from "../components/ui";
+import { api, ApiError, fileToBase64 } from "../lib/api";
 import { useAppearance } from "../lib/appearance";
 import { useAgentEvents } from "../lib/live";
 import type { Agent, AgentEvent, Approval, Conversation, Effort, Run } from "../lib/types";
 
 const coarsePointer = window.matchMedia("(pointer: coarse)").matches;
+/** Sent for an empty message after a task ended abnormally. */
+const CONTINUE_TEXT = "继续完成上次中断的任务。";
 
 interface ConvData {
   conversation: Conversation;
@@ -25,6 +27,7 @@ export default function Chat() {
   const qc = useQueryClient();
   const [data, setData] = useState<ConvData | null>(null);
   const [loading, setLoading] = useState(!!conversationId);
+  const [missing, setMissing] = useState(false);
   const [text, setText] = useState("");
   const [files, setFiles] = useState<{ name: string; path: string; image: boolean }[]>([]);
   const [sending, setSending] = useState(false);
@@ -38,6 +41,7 @@ export default function Chat() {
   const fileInput = useRef<HTMLInputElement>(null);
 
   const agentId = data?.conversation.agent_id ?? newAgentId;
+  const me = useQuery({ queryKey: ["me"], queryFn: () => api.get<{ name: string }>("/api/me"), staleTime: 300_000 });
   const agent = useQuery({ queryKey: ["agent", agentId], queryFn: () => api.get<Agent>(`/api/agents/${agentId}`), enabled: !!agentId });
 
   const load = useCallback(async () => {
@@ -45,7 +49,8 @@ export default function Chat() {
     try {
       setData(await api.get<ConvData>(`/api/conversations/${conversationId}`));
     } catch (err) {
-      toast(err instanceof Error ? err.message : String(err), "danger");
+      if (err instanceof ApiError && err.status === 404) setMissing(true);
+      else toast(err instanceof Error ? err.message : String(err), "danger");
     } finally {
       setLoading(false);
     }
@@ -69,6 +74,7 @@ export default function Chat() {
 
   useEffect(() => {
     setData(null);
+    setMissing(false);
     setLoading(!!conversationId);
     stick.current = true;
     void load();
@@ -110,9 +116,11 @@ export default function Chat() {
   const { usage: showUsage } = useAppearance();
   const stats = showUsage && data ? latestStats(data.runs) : null;
   const active = data?.runs.find((r) => !["done", "failed", "cancelled"].includes(r.status));
+  // The last task ended abnormally: an empty send (or just clicking send) continues it.
+  const interrupted = !active && data?.runs.at(-1)?.status === "failed";
 
   const send = async () => {
-    const body = text.trim();
+    const body = text.trim() || (interrupted && !files.length ? CONTINUE_TEXT : "");
     if (!body || !agentId) return;
     setSending(true);
     try {
@@ -160,6 +168,69 @@ export default function Chat() {
   };
 
   const a = agent.data;
+  const isNew = !conversationId && !loading;
+  const composer = (
+    <div className="w-full max-w-3xl mx-auto">
+      <div className="rounded-2xl border border-line bg-surface focus-within:border-[color-mix(in_oklab,var(--text)_30%,transparent)] transition-colors">
+        {files.length > 0 && (
+          <div className="flex gap-1.5 px-2.5 pt-2.5 overflow-x-auto no-scrollbar">
+            {files.map((f, i) => (
+              <span key={f.path} className="flex items-center gap-1 text-xs bg-surface-2 border border-line rounded-md pl-2 pr-1 py-0.5 shrink-0">
+                {f.image ? <ImagePlus className="size-3.5" /> : <Paperclip className="size-3.5" />}
+                <span className="max-w-32 truncate">{f.name}</span>
+                <button aria-label="移除" onClick={() => setFiles((x) => x.filter((_, j) => j !== i))}>
+                  <X className="size-3.5" />
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+        <div className="flex items-end gap-1 p-1.5 pl-2">
+        <textarea
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => {
+            // Enter sends; Ctrl/⌘/Shift+Enter inserts a newline. Ignore Enter while an IME is composing,
+            // and on touch keyboards (no modifier keys) leave Enter as a newline.
+            if (e.key !== "Enter" || e.nativeEvent.isComposing || e.keyCode === 229) return;
+            if (e.ctrlKey || e.metaKey) {
+              e.preventDefault();
+              const el = e.currentTarget;
+              el.setRangeText("\n", el.selectionStart, el.selectionEnd, "end");
+              setText(el.value);
+            } else if (!e.shiftKey && !coarsePointer) {
+              e.preventDefault();
+              void send();
+            }
+          }}
+          enterKeyHint={coarsePointer ? "enter" : "send"}
+          rows={1}
+          placeholder={active ? "追加指示（任务进行中）" : interrupted ? "任务中断了，直接发送即可继续，也可以补充说明…" : !conversationId ? `今天想让${a?.name ?? "agent"}做点什么？` : "回复…"}
+          className="flex-1 min-w-0 resize-none max-h-48 min-h-8 bg-transparent px-1.5 py-1.5 text-sm outline-none field-sizing-content placeholder:text-muted"
+        />
+          {active && !text.trim() ? (
+            <button aria-label="停止" onClick={stop} className="size-7 mb-0.5 grid place-items-center rounded-lg bg-[var(--text)] text-[var(--bg)] shrink-0">
+              <Square className="size-3 fill-current" />
+            </button>
+          ) : (
+            <button aria-label={!text.trim() && interrupted ? "继续" : "发送"} title={!text.trim() && interrupted ? "继续中断的任务" : undefined} aria-busy={sending} onClick={send} disabled={(!text.trim() && !interrupted) || sending} className={cx("size-7 mb-0.5 grid place-items-center rounded-lg shrink-0 transition-colors", text.trim() || interrupted || sending ? "bg-accent text-white hover:brightness-95" : "bg-surface-2 text-muted")}>
+              {sending ? <Loader2 className="size-4 animate-spin" /> : <ArrowUp className="size-4" strokeWidth={2.4} />}
+            </button>
+          )}
+        </div>
+      </div>
+      <div className="flex items-center gap-0.5 pt-1 min-w-0">
+        <input ref={fileInput} type="file" multiple hidden onChange={(e) => upload(e.target.files)} />
+        <button aria-label="添加附件" title="添加附件" className="size-7 grid place-items-center rounded-md text-muted hover:text-[var(--text)] hover:bg-surface-2 shrink-0" onClick={() => fileInput.current?.click()} disabled={uploading}>
+          {uploading ? <Loader2 className="size-4 animate-spin" /> : <Plus className="size-4" />}
+        </button>
+        <div className="flex-1 min-w-0" />
+        {stats && agentId && conversationId && <ContextMeter stats={stats} runs={data!.runs} agentId={agentId} conversationId={conversationId} />}
+        {a && <ModelPicker value={model} agentModel={a.model} onChange={(m) => void changeModel({ model: m })} />}
+        {a && <EffortPicker value={effort} agentEffort={a.effort} onChange={(e) => void changeModel({ effort: e })} />}
+      </div>
+    </div>
+  );
   return (
     <div className="flex flex-col h-dvh">
       <Header
@@ -188,13 +259,19 @@ export default function Chat() {
       >
         {loading ? (
           <Loading />
-        ) : !data ? (
-          <div className="flex flex-col items-center text-center px-6 pt-[24dvh] gap-2">
-            {a && <span className="text-3xl">{a.emoji}</span>}
-            <h1 className="font-display text-2xl font-medium leading-tight">给{a?.name ?? "agent"}派个活</h1>
-            <p className="text-sm text-muted">例如：帮我查一下明天上海的天气，整理成三句话</p>
+        ) : missing ? (
+          <Empty title="这个对话不存在或已删除" hint="从左侧选一个对话，或者开始新对话" action={a && <Button size="sm" onClick={() => nav(`/agents/${a.id}/chat`)}>开始新对话</Button>} />
+        ) : isNew ? (
+          // New conversation: a greeting with the composer right under it, Claude-style.
+          <div className="min-h-full flex flex-col justify-center pb-[12dvh]">
+            <h1 className="flex items-center justify-center gap-3 mb-6 font-display text-[26px] sm:text-3xl font-medium text-center">
+              <span className="text-2xl sm:text-3xl">{a?.emoji ?? "✨"}</span>
+              {greeting()}
+              {me.data?.name ? `，${me.data.name}` : ""}
+            </h1>
+            {composer}
           </div>
-        ) : (
+        ) : !data ? null : (
           <div className="space-y-5 py-3 max-w-3xl mx-auto">
             {data.runs.map((r) => (
               <RunView key={r.id} run={r} approvals={data.approvals} onChanged={load} />
@@ -203,68 +280,14 @@ export default function Chat() {
         )}
         <div ref={bottom} className="h-2" />
       </div>
-      <div className="bg-app px-3 pb-2 pt-1 safe-bottom">
-        <div className="max-w-3xl mx-auto">
-          <div className="rounded-xl border border-line bg-surface focus-within:border-[color-mix(in_oklab,var(--text)_30%,transparent)] transition-colors">
-            {files.length > 0 && (
-              <div className="flex gap-1.5 px-2.5 pt-2.5 overflow-x-auto no-scrollbar">
-                {files.map((f, i) => (
-                  <span key={f.path} className="flex items-center gap-1 text-xs bg-surface-2 border border-line rounded-md pl-2 pr-1 py-0.5 shrink-0">
-                    {f.image ? <ImagePlus className="size-3.5" /> : <Paperclip className="size-3.5" />}
-                    <span className="max-w-32 truncate">{f.name}</span>
-                    <button aria-label="移除" onClick={() => setFiles((x) => x.filter((_, j) => j !== i))}>
-                      <X className="size-3.5" />
-                    </button>
-                  </span>
-                ))}
-              </div>
-            )}
-            <div className="flex items-end gap-1 p-1.5 pl-2">
-            <textarea
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-              onKeyDown={(e) => {
-                // Enter sends; Ctrl/⌘/Shift+Enter inserts a newline. Ignore Enter while an IME is composing,
-                // and on touch keyboards (no modifier keys) leave Enter as a newline.
-                if (e.key !== "Enter" || e.nativeEvent.isComposing || e.keyCode === 229) return;
-                if (e.ctrlKey || e.metaKey) {
-                  e.preventDefault();
-                  const el = e.currentTarget;
-                  el.setRangeText("\n", el.selectionStart, el.selectionEnd, "end");
-                  setText(el.value);
-                } else if (!e.shiftKey && !coarsePointer) {
-                  e.preventDefault();
-                  void send();
-                }
-              }}
-              enterKeyHint={coarsePointer ? "enter" : "send"}
-              rows={1}
-              placeholder={active ? "追加指示（任务进行中）" : "说点什么…"}
-              className="flex-1 min-w-0 resize-none max-h-48 min-h-9 bg-transparent px-1.5 py-1.5 text-[15px] outline-none field-sizing-content placeholder:text-muted"
-            />
-              {active && !text.trim() ? (
-                <button aria-label="停止" onClick={stop} className="size-8 grid place-items-center rounded-md bg-[var(--text)] text-[var(--bg)] shrink-0">
-                  <Square className="size-3 fill-current" />
-                </button>
-              ) : (
-                <button aria-label="发送" aria-busy={sending} onClick={send} disabled={!text.trim() || sending} className={cx("size-8 grid place-items-center rounded-md bg-accent-grad text-white hover:brightness-95 shrink-0", !sending && "disabled:opacity-35")}>
-                  {sending ? <Loader2 className="size-4 animate-spin" /> : <ArrowUp className="size-4" strokeWidth={2.4} />}
-                </button>
-              )}
-            </div>
-          </div>
-          <div className="flex items-center gap-0.5 pt-1 min-w-0">
-            <input ref={fileInput} type="file" multiple hidden onChange={(e) => upload(e.target.files)} />
-            <button aria-label="添加附件" title="添加附件" className="size-8 grid place-items-center rounded-md text-muted hover:text-[var(--text)] hover:bg-surface-2 shrink-0" onClick={() => fileInput.current?.click()} disabled={uploading}>
-              {uploading ? <Loader2 className="size-4 animate-spin" /> : <Plus className="size-4" />}
-            </button>
-            <div className="flex-1 min-w-0" />
-            {stats && agentId && <ContextMeter stats={stats} runs={data!.runs} agentId={agentId} />}
-            {a && <ModelPicker value={model} agentModel={a.model} onChange={(m) => void changeModel({ model: m })} />}
-            {a && <EffortPicker value={effort} agentEffort={a.effort} onChange={(e) => void changeModel({ effort: e })} />}
-          </div>
-        </div>
-      </div>
+      {!isNew && <div className="bg-app px-3 pb-2 pt-1 safe-bottom">{composer}</div>}
     </div>
   );
 }
+
+/** Time-of-day greeting for the empty new-conversation screen. */
+function greeting(now = new Date()): string {
+  const h = now.getHours();
+  return h < 5 ? "夜深了" : h < 11 ? "早上好" : h < 13 ? "中午好" : h < 18 ? "下午好" : "晚上好";
+}
+

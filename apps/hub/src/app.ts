@@ -24,6 +24,7 @@ import { registerRoutes } from "./routes.ts";
 import { RunManager } from "./runs.ts";
 import { Scheduler } from "./scheduler.ts";
 import { Reflect } from "./reflect.ts";
+import type { ApprovalMode } from "./safety.ts";
 import { SecretBox, SecretStore } from "./secrets.ts";
 
 export interface Hub {
@@ -46,6 +47,8 @@ export interface Hub {
   settings: Settings;
   backup(): Promise<string>;
   close(): Promise<void>;
+  /** Restart the runner of an agent that still has unfinished runs (no-op when auto-resume is off). */
+  reviveIfStranded(agentId: string, delayMs: number): void;
 }
 
 /** Live runner connections, one per agent container. */
@@ -117,6 +120,18 @@ export class Settings {
     return defaultReflectModel(this.#db);
   }
 
+  /** Continue runs a restart cut off (on unless turned off). */
+  autoResume(): boolean {
+    return kvGet(this.#db, "settings.autoResume") !== "false";
+  }
+
+  /** How approvals are decided; "smart" (ask only for destructive actions) unless chosen otherwise. */
+  approvalMode(): ApprovalMode {
+    const v = kvGet(this.#db, "settings.approvalMode");
+    if (v === "ask" || v === "smart" || v === "auto") return v;
+    return kvGet(this.#db, "settings.autoApprove") === "true" ? "auto" : "smart";
+  }
+
   newapiAdmin(): { token: string; userId: string } | null {
     const token = this.#secrets.get("settings", "newapiAdminToken") || config.newapi.adminToken;
     if (!token) return null;
@@ -134,6 +149,8 @@ export class Settings {
     return {
       defaultModel: this.defaultModel(),
       reflectModel: this.reflectModel(),
+      autoResume: this.autoResume(),
+      approvalMode: this.approvalMode(),
       newapiBaseUrl: config.newapi.baseUrl,
       newapiAdminConfigured: !!admin,
       newapiAdminUserId: admin?.userId ?? config.newapi.adminUserId,
@@ -165,16 +182,28 @@ export async function createHub(opts: { dbPath?: string; webDist?: string; logge
   knowledge.ensureShared();
   agents = new Agents({ db, secrets, knowledge, defaultModel: () => settings.defaultModel() });
 
+  const ensureRunner = async (agentId: string) => {
+    const agent = agents.get(agentId);
+    agents.writeEngineConfig(agent, newapi.baseUrl);
+    await containers.ensureAgent({ agentId, env: agents.containerEnv(agentId, config.newapi.apiKey), hostAccess: !!agent.host_access });
+    runners.lastSeen.set(agentId, Date.now());
+    await runners.waitFor(agentId, 90_000);
+  };
+  /**
+   * A runner went away while it still had runs (container crashed, removed, or never came back
+   * after a hub restart): bring it back so its hello lets the run manager continue them.
+   */
+  const reviveIfStranded = (agentId: string, delayMs: number) =>
+    setTimeout(() => {
+      if (!settings.autoResume() || runners.connected(agentId)) return;
+      const stranded = db.prepare("SELECT 1 FROM runs WHERE agent_id = ? AND status IN ('running','waiting_approval','paused_by_user') LIMIT 1").get(agentId);
+      if (stranded) void ensureRunner(agentId).catch((err) => console.error("revive runner", agentId, err));
+    }, delayMs).unref();
+
   const runs = new RunManager({
     db,
     events,
-    ensureRunner: async (agentId) => {
-      const agent = agents.get(agentId);
-      agents.writeEngineConfig(agent, newapi.baseUrl);
-      await containers.ensureAgent({ agentId, env: agents.containerEnv(agentId, config.newapi.apiKey), hostAccess: !!agent.host_access });
-      runners.lastSeen.set(agentId, Date.now());
-      await runners.waitFor(agentId, 90_000);
-    },
+    ensureRunner,
     sendToRunner: (agentId, msg) => runners.send(agentId, msg),
     startPayload: (agentId) => {
       const a = agents.get(agentId);
@@ -192,6 +221,8 @@ export async function createHub(opts: { dbPath?: string; webDist?: string; logge
       };
     },
     notify: (title, body, url) => void notifier.send(title, body, url),
+    autoResume: () => settings.autoResume(),
+    approvalMode: () => settings.approvalMode(),
   });
   const desktops = new Desktops({ db, events, containers, runs });
   const learning = new Learning({ db, events, knowledge, newapi, model: () => settings.reflectModel() });
@@ -270,6 +301,7 @@ export async function createHub(opts: { dbPath?: string; webDist?: string; logge
     runners,
     settings,
     backup,
+    reviveIfStranded: (agentId, delayMs) => void reviveIfStranded(agentId, delayMs),
     close: async () => {
       scheduler.stop();
       runs.stopWatchdog();
@@ -310,7 +342,7 @@ export async function createHub(opts: { dbPath?: string; webDist?: string; logge
           break;
         case "turn_done": {
           const run = runs.get(msg.runId);
-          if (run && run.agent_id === agent.id) runs.finish(msg.runId, msg.status, msg.error);
+          if (run && run.agent_id === agent.id) runs.engineDone(msg.runId, msg.status, msg.error);
           break;
         }
       }
@@ -318,6 +350,7 @@ export async function createHub(opts: { dbPath?: string; webDist?: string; logge
     socket.on("close", () => {
       runners.detach(agent.id, socket);
       events.publish("agent", { id: agent.id, connected: false });
+      reviveIfStranded(agent.id, 5_000);
     });
   });
 
@@ -367,11 +400,14 @@ export async function bootHub(hub: Hub): Promise<void> {
   hub.runs.startWatchdog();
   hub.desktops.startReaper();
   hub.scheduler.start();
+  // Runners that don't reconnect by themselves after a hub restart (container gone) get brought back.
+  const pending = hub.db.prepare("SELECT DISTINCT agent_id FROM runs WHERE status IN ('running','waiting_approval','paused_by_user')").all() as { agent_id: string }[];
+  for (const { agent_id } of pending) hub.reviveIfStranded(agent_id, 20_000);
   // Runs whose runner never comes back after a hub restart can't finish on their own.
   setTimeout(() => {
     const rows = hub.db
       .prepare("SELECT id, agent_id FROM runs WHERE status IN ('running','waiting_approval','paused_by_user')")
       .all() as { id: string; agent_id: string }[];
-    for (const r of rows) if (!hub.runners.connected(r.agent_id)) hub.runs.finish(r.id, "failed", "agent 未能重新连接，任务中断");
+    for (const r of rows) if (!hub.runners.connected(r.agent_id)) hub.runs.cutOff(r.id, "agent 未能重新连接，任务中断");
   }, 180_000).unref();
 }

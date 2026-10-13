@@ -8,6 +8,8 @@ import { config, nowIso } from "./config.ts";
 import { audit, kvSet } from "./db.ts";
 import type { DesktopAction } from "./desktops.ts";
 import { isTrusted } from "./trusted.ts";
+import { loadUsage, rangeStart, usageStats } from "./usage.ts";
+import { contextBreakdown } from "./context.ts";
 import { ScheduleInput } from "./scheduler.ts";
 
 declare module "fastify" {
@@ -292,6 +294,25 @@ export function registerRoutes(hub: Hub): void {
       approvals: db.prepare("SELECT * FROM approvals WHERE run_id IN (SELECT id FROM runs WHERE conversation_id = ?) AND status = 'pending'").all(conv.id),
     };
   });
+  app.get("/api/conversations/:id/context", async (req) => {
+    const conv = runs.conversation(id(req));
+    if (!conv) throw new HttpError(404, "conversation not found");
+    const a = agents.get(conv.agent_id);
+    const memory = knowledge.memory(a.id);
+    const memoryText = [memory.user, memory.agent].join("\n");
+    const runRows = db.prepare("SELECT id, prompt FROM runs WHERE conversation_id = ? ORDER BY created_at").all(conv.id) as { id: string; prompt: string }[];
+    return (
+      contextBreakdown({
+        persona: agents.instructions(a, { desktopNote: "" }).replace(memory.user.trim(), "").replace(memory.agent.trim(), ""),
+        memory: memoryText,
+        skills: knowledge
+          .skills(a.id)
+          .map((s) => `${s.name}: ${s.description}`)
+          .join("\n"),
+        runs: runRows.map((r) => ({ prompt: r.prompt, events: events.forRun(r.id) })),
+      }) ?? { used: 0, window: null, parts: [], measured: false }
+    );
+  });
   app.patch("/api/conversations/:id", async (req) => {
     const b = z.object({ title: z.string().min(1).max(60).optional(), ...ModelPatch }).parse(req.body);
     if (b.title) db.prepare("UPDATE conversations SET title = ? WHERE id = ?").run(b.title, id(req));
@@ -457,6 +478,15 @@ export function registerRoutes(hub: Hub): void {
     return { ok: true };
   });
   app.post("/api/agents/:id/curate", async (req) => ({ events: await learning.curate(id(req)) }));
+  app.post("/api/agents/:id/memory/instruct", async (req) => {
+    const b = z.object({ text: z.string().min(1).max(1000) }).parse(req.body);
+    agents.get(id(req));
+    return learning.instruct(id(req), b.text);
+  });
+  app.post("/api/agents/:id/memory/delete", async (req) => {
+    const b = z.object({ scope: z.enum(["agent", "user"]), item: z.string().min(1).max(400) }).parse(req.body);
+    return { events: knowledge.apply(id(req), { memory: [{ op: "delete", scope: b.scope, match: b.item.slice(0, 200) }] }, { runId: null, reason: "用户删除" }) };
+  });
   app.post("/api/runs/:id/reflect", async (req) => {
     db.prepare("UPDATE runs SET reflected = 0 WHERE id = ?").run(id(req));
     return { events: await learning.reflect(id(req)) };
@@ -495,6 +525,27 @@ export function registerRoutes(hub: Hub): void {
       : null;
     return { rows, spendUsd: perAgent, adminEnabled: newapi.adminEnabled() };
   });
+  app.get("/api/usage/stats", async (req) => {
+    const q = z
+      .object({ range: z.enum(["today", "7d", "30d"]).default("today"), agent: z.string().optional(), model: z.string().optional() })
+      .parse(req.query);
+    const since = rangeStart(q.range);
+    const { events: all, runs: runInfo } = loadUsage(db, since, { agentId: q.agent });
+    const events = q.model ? all.filter((e) => e.model === q.model) : all;
+    const stats = usageStats(events, runInfo, q.range);
+    let spend: Record<string, number> | null = null;
+    if (newapi.adminEnabled()) spend = await newapi.spendByToken(Math.floor(Date.parse(since) / 1000)).catch(() => null);
+    const list = agents.list(true);
+    return {
+      ...stats,
+      agents: stats.agents.map((a) => {
+        const ag = list.find((x) => x.id === a.agentId);
+        return { ...a, name: ag?.name ?? "已删除", emoji: ag?.emoji ?? "·", spendUsd: spend ? (spend[`constella-${a.agentId}`] ?? 0) : null };
+      }),
+      spendUsd: spend && !q.model ? list.filter((a) => !q.agent || a.id === q.agent).reduce((n, a) => n + (spend![`constella-${a.id}`] ?? 0), 0) : null,
+      filters: { models: [...new Set(all.map((e) => e.model))].sort(), agents: list.map((a) => ({ id: a.id, name: a.name, emoji: a.emoji })) },
+    };
+  });
   app.get("/api/settings", async () => settings.view());
   app.patch("/api/settings", async (req) => {
     const b = z
@@ -505,8 +556,12 @@ export function registerRoutes(hub: Hub): void {
         newapiAdminUserId: z.string().optional(),
         telegramBotToken: z.string().optional(),
         telegramChatId: z.string().optional(),
+        autoResume: z.boolean().optional(),
+        approvalMode: z.enum(["ask", "smart", "auto"]).optional(),
       })
       .parse(req.body);
+    if (b.approvalMode) kvSet(db, "settings.approvalMode", b.approvalMode);
+    if (b.autoResume !== undefined) kvSet(db, "settings.autoResume", String(b.autoResume));
     if (b.defaultModel) kvSet(db, "settings.defaultModel", b.defaultModel);
     if (b.reflectModel) kvSet(db, "settings.reflectModel", b.reflectModel);
     if (b.newapiAdminToken !== undefined) b.newapiAdminToken ? hub.secrets.set("settings", "newapiAdminToken", b.newapiAdminToken) : hub.secrets.delete("settings", "newapiAdminToken");

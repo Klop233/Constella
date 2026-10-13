@@ -39,6 +39,7 @@ export function startLive(qc: QueryClient): () => void {
         void qc.invalidateQueries({ queryKey: ["overview"] });
         void qc.invalidateQueries({ queryKey: ["agents"] });
         void qc.invalidateQueries({ queryKey: ["conversations"] });
+        void qc.invalidateQueries({ queryKey: ["approvals"] });
       }
     });
     es.addEventListener("hub", (e) => {

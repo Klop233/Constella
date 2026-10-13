@@ -1,6 +1,7 @@
 import { canTransition, isTerminal, type HubToRunner, type RunStatus, type RunnerEvent } from "@constella/protocol";
 import { config, newId, nowIso } from "./config.ts";
 import { audit, type Db } from "./db.ts";
+import { decideApproval, type ApprovalMode } from "./safety.ts";
 import type { EventStore } from "./events.ts";
 
 export interface RunRow {
@@ -52,6 +53,26 @@ export interface RunDeps {
     skillRoots: string[];
   };
   notify(title: string, body: string, url?: string): void;
+  /** Whether runs cut off by an agent / hub restart are continued automatically. */
+  autoResume?(): boolean;
+  /** How approval requests are decided: always ask, ask only for destructive actions, or approve all. */
+  approvalMode?(): ApprovalMode;
+  /** Wait before the 1st, 2nd, 3rd automatic continuation in a row (tests pass zeros). */
+  resumeDelaysMs?: number[];
+}
+
+/** Prompt of a run started automatically to continue one that was cut off. */
+export const RESUME_PREFIX = "［自动继续］";
+const resumeText = (why: string) => `${RESUME_PREFIX}上次任务因为${why}中断了，请从中断的地方继续完成。`;
+/** Give up after this many automatic continuations in a row that also got cut off. */
+const MAX_AUTO_RESUMES = 3;
+const RESUME_DELAYS_MS = [3_000, 30_000, 120_000];
+/** Engine failures worth retrying: crashes, dropped connections, rate limits, upstream 5xx. */
+const TRANSIENT =
+  /app-server exited|stream (disconnected|closed|error)|timed? ?out|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|socket hang up|network|rate.?limit|too many requests|overloaded|temporarily|unavailable|bad gateway|\b(429|500|502|503|504|520|522|524)\b/i;
+
+export function isTransientError(error: string | null | undefined): boolean {
+  return !!error && TRANSIENT.test(error);
 }
 
 type FinishedHook = (run: RunRow) => void;
@@ -65,6 +86,8 @@ export class RunManager {
   #d: RunDeps;
   #finishedHooks: FinishedHook[] = [];
   #hubApprovals = new Map<string, HubApproval>();
+  /** Runs the watchdog stopped for running too long; continued once the stop lands. */
+  #resumeOnCancel = new Set<string>();
   #watchdogNotified = new Set<string>();
   #timer: NodeJS.Timeout | null = null;
 
@@ -201,6 +224,7 @@ export class RunManager {
 
   finish(runId: string, status: "done" | "failed" | "cancelled", error?: string): void {
     if (!this.transition(runId, status, error)) return;
+    if (this.#resumeOnCancel.delete(runId)) this.#maybeResume(runId, resumeText(`单轮运行超过 ${config.runTimeoutMinutes} 分钟`));
     this.#watchdogNotified.delete(runId);
     this.#d.events.forget(runId);
     for (const [id, a] of this.#hubApprovals) {
@@ -248,8 +272,13 @@ export class RunManager {
       db.prepare(
         "INSERT INTO approvals (id, run_id, agent_id, kind, summary, detail, status, created_at, source) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, 'engine')",
       ).run(ev.approvalId, run.id, agentId, ev.kind, ev.summary, ev.detail ?? null, nowIso());
+      const { approve, why } = decideApproval(this.#d.approvalMode?.() ?? "ask", ev.kind, ev.summary);
+      if (approve) {
+        void this.resolveApproval(ev.approvalId, "approve", "policy", "policy");
+        return;
+      }
       this.transition(run.id, "waiting_approval");
-      this.#notifyApproval(run, ev.summary);
+      this.#notifyApproval(run, why ? `${why}：${ev.summary}` : ev.summary);
     }
   }
 
@@ -264,10 +293,46 @@ export class RunManager {
     const rows = this.#d.db
       .prepare("SELECT id FROM runs WHERE agent_id = ? AND status IN ('running','waiting_approval','paused_by_user')")
       .all(agentId) as { id: string }[];
-    for (const { id } of rows) if (!activeRuns.includes(id)) this.finish(id, "failed", "agent 进程重启，任务中断");
+    for (const { id } of rows) if (!activeRuns.includes(id)) this.cutOff(id, "agent 进程重启，任务中断");
   }
 
-  async resolveApproval(approvalId: string, decision: "approve" | "deny", actor: string): Promise<void> {
+  /** A restart cut this run off: fail it, then continue it automatically when that's enabled. */
+  cutOff(runId: string, error: string): void {
+    this.finish(runId, "failed", error);
+    this.#maybeResume(runId, resumeText("重启"));
+  }
+
+  /** The engine reported the turn finished; temporary failures (crash, network, rate limit) get continued. */
+  engineDone(runId: string, status: "done" | "failed" | "cancelled", error?: string): void {
+    this.finish(runId, status, error);
+    if (status === "failed" && isTransientError(error)) this.#maybeResume(runId, resumeText("临时故障"));
+  }
+
+  /** Continue a cut-off run in the same conversation (the engine thread keeps the context), backing off each time. */
+  #maybeResume(runId: string, text: string): void {
+    if (!this.#d.autoResume?.()) return;
+    const run = this.get(runId);
+    if (!run) return;
+    // How many automatic continuations in a row led here; stop once they keep getting cut off.
+    const recent = this.#d.db
+      .prepare("SELECT prompt FROM runs WHERE conversation_id = ? ORDER BY created_at DESC LIMIT ?")
+      .all(run.conversation_id, MAX_AUTO_RESUMES) as { prompt: string }[];
+    let streak = 0;
+    while (streak < recent.length && recent[streak]!.prompt.startsWith(RESUME_PREFIX)) streak++;
+    if (streak >= MAX_AUTO_RESUMES) return;
+    const delays = this.#d.resumeDelaysMs ?? RESUME_DELAYS_MS;
+    setTimeout(() => {
+      // The user may have sent something meanwhile; don't stack a continuation on top of it.
+      if (this.activeRun(run.conversation_id)) return;
+      const latest = this.#d.db.prepare("SELECT id FROM runs WHERE conversation_id = ? ORDER BY created_at DESC LIMIT 1").get(run.conversation_id) as { id: string };
+      if (latest.id !== runId) return;
+      void this.send({ agentId: run.agent_id, conversationId: run.conversation_id, text, source: "auto-resume" }).catch((err) =>
+        console.error("auto-resume failed", runId, err),
+      );
+    }, delays[Math.min(streak, delays.length - 1)] ?? 0).unref?.();
+  }
+
+  async resolveApproval(approvalId: string, decision: "approve" | "deny", actor: string, by: "user" | "policy" = "user"): Promise<void> {
     const { db } = this.#d;
     const row = db.prepare("SELECT * FROM approvals WHERE id = ?").get(approvalId) as
       | { id: string; run_id: string; agent_id: string; status: string; source: string }
@@ -281,7 +346,7 @@ export class RunManager {
     );
     audit(db, actor, `approval.${decision}`, { approvalId });
     const run = this.get(row.run_id);
-    if (run) this.#append(run, { type: "approval.resolved", runId: run.id, approvalId, decision, by: "user" });
+    if (run) this.#append(run, { type: "approval.resolved", runId: run.id, approvalId, decision, by });
     if (row.source === "hub") {
       const pending = this.#hubApprovals.get(approvalId);
       this.#hubApprovals.delete(approvalId);
@@ -306,9 +371,15 @@ export class RunManager {
       )
       .run(approvalId, runId, run.agent_id, kind, summary, detail ?? null, nowIso());
     this.#append(run, { type: "approval.requested", runId, approvalId, kind, summary, detail });
+    const decided = new Promise<boolean>((resolve) => this.#hubApprovals.set(approvalId, { resolve, runId }));
+    const { approve, why } = decideApproval(this.#d.approvalMode?.() ?? "ask", kind, summary);
+    if (approve) {
+      void this.resolveApproval(approvalId, "approve", "policy", "policy");
+      return decided;
+    }
     this.transition(runId, "waiting_approval");
-    this.#notifyApproval(run, summary);
-    return new Promise((resolve) => this.#hubApprovals.set(approvalId, { resolve, runId }));
+    this.#notifyApproval(run, why ? `${why}：${summary}` : summary);
+    return decided;
   }
 
   async interrupt(runId: string, actor: string): Promise<void> {
@@ -348,8 +419,12 @@ export class RunManager {
 
   /** On boot: queued runs were never sent; they can't be resumed reliably. */
   recoverOnBoot(): void {
-    const rows = this.#d.db.prepare("SELECT id FROM runs WHERE status = 'queued'").all() as { id: string }[];
-    for (const { id } of rows) this.finish(id, "failed", "hub 重启，任务未开始");
+    const rows = this.#d.db.prepare("SELECT id, prompt FROM runs WHERE status = 'queued'").all() as { id: string; prompt: string }[];
+    for (const { id, prompt } of rows) {
+      this.finish(id, "failed", "hub 重启，任务未开始");
+      // It never started, so send the original request again rather than "continue".
+      setTimeout(() => this.#maybeResume(id, prompt.startsWith(RESUME_PREFIX) ? prompt : `${RESUME_PREFIX}${prompt}`), 1000);
+    }
     // Running runs wait for their runner's hello (onRunnerHello) or the watchdog.
   }
 
@@ -361,6 +436,8 @@ export class RunManager {
       const idle = now - Date.parse(run.last_event_at ?? run.created_at);
       const age = now - Date.parse(run.created_at);
       if (age > config.runTimeoutMinutes * 60_000) {
+        // Long tasks get split rather than dropped: stop this turn, then continue in a fresh one.
+        this.#resumeOnCancel.add(run.id);
         void this.interrupt(run.id, "watchdog");
         continue;
       }

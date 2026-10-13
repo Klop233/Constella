@@ -1,12 +1,12 @@
 import { ChevronLeft, Loader2, X } from "lucide-react";
-import { useEffect, type ButtonHTMLAttributes, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ButtonHTMLAttributes, type ReactNode } from "react";
 import { useNavigate } from "react-router";
 
 export function cx(...c: (string | false | null | undefined)[]): string {
   return c.filter(Boolean).join(" ");
 }
 
-type Variant = "primary" | "secondary" | "ghost" | "danger";
+type Variant = "primary" | "secondary" | "soft" | "ghost" | "danger";
 
 export function Button({
   variant = "secondary",
@@ -19,6 +19,7 @@ export function Button({
   const styles: Record<Variant, string> = {
     primary: "bg-accent-grad text-white hover:brightness-95 active:brightness-90 disabled:opacity-50",
     secondary: "bg-surface border border-line hover:bg-surface-2 active:bg-surface-2 disabled:opacity-50",
+    soft: "bg-surface-2 hover:bg-[color-mix(in_oklab,var(--text)_12%,transparent)] disabled:opacity-50",
     ghost: "hover:bg-surface-2 active:bg-surface-2 disabled:opacity-50",
     danger: "bg-[var(--danger)] text-white active:opacity-85 disabled:opacity-50",
   };
@@ -84,7 +85,7 @@ export function Header({ title, back, backMobileOnly, right, sub }: { title: Rea
       <div className="h-12 flex items-center gap-1 px-2">
         {back ? (
           <button aria-label="返回" className={cx("size-8 grid place-items-center rounded-md hover:bg-surface-2 active:bg-surface-2", backMobileOnly && "lg:hidden")} onClick={() => (typeof back === "string" ? nav(back) : history.length > 1 ? nav(-1) : nav("/"))}>
-            <ChevronLeft className="size-5" />
+            <ChevronLeft className="size-4" />
           </button>
         ) : (
           <div className="w-2" />
@@ -118,11 +119,11 @@ export function Sheet({ open, onClose, title, children }: { open: boolean; onClo
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center" role="dialog" aria-modal="true" aria-label={title}>
       <div className="absolute inset-0 bg-black/30 backdrop-blur-[2px]" onClick={onClose} />
-      <div className="relative w-full sm:max-w-lg max-h-[88dvh] overflow-y-auto bg-surface border border-line shadow-2xl rounded-t-2xl sm:rounded-2xl safe-bottom">
+      <div className="relative w-full sm:max-w-lg max-h-[88dvh] overflow-y-auto bg-surface border border-line shadow-xl rounded-t-2xl sm:rounded-2xl safe-bottom">
         <div className="sticky top-0 bg-surface flex items-center px-4 pt-3 pb-1.5 z-10">
-          <div className="flex-1 font-display font-semibold text-base">{title}</div>
+          <div className="flex-1 font-display font-semibold text-[15px]">{title}</div>
           <IconButton label="关闭" onClick={onClose}>
-            <X className="size-5" />
+            <X className="size-4" />
           </IconButton>
         </div>
         <div className="px-4 pb-5">{children}</div>
@@ -160,7 +161,7 @@ export function Toggle({ checked, onChange, label }: { checked: boolean; onChang
       aria-checked={checked}
       aria-label={label}
       onClick={() => onChange(!checked)}
-      className={cx("relative w-9 h-5 rounded-full transition shrink-0", checked ? "bg-accent-grad" : "bg-[color-mix(in_oklab,var(--text)_18%,transparent)]")}
+      className={cx("relative w-9 h-5 rounded-full transition shrink-0", checked ? "bg-accent" : "bg-[color-mix(in_oklab,var(--text)_18%,transparent)]")}
     >
       <span className={cx("absolute top-0.5 size-4 rounded-full bg-white shadow transition", checked ? "left-[18px]" : "left-0.5")} />
     </button>
@@ -169,13 +170,13 @@ export function Toggle({ checked, onChange, label }: { checked: boolean; onChang
 
 export function Segmented<T extends string>({ value, options, onChange }: { value: T; options: { value: T; label: string }[]; onChange: (v: T) => void }) {
   return (
-    <div className="flex p-0.5 rounded-md bg-surface-2 gap-0.5">
+    <div className="flex h-7 p-0.5 rounded-md bg-surface-2 gap-0.5">
       {options.map((o) => (
         <button
           key={o.value}
           type="button"
           onClick={() => onChange(o.value)}
-          className={cx("flex-1 h-7 rounded text-[13px] font-medium transition", value === o.value ? "bg-surface shadow-sm" : "text-muted hover:text-[var(--text)]")}
+          className={cx("flex-1 h-6 rounded text-[13px] font-medium transition border", value === o.value ? "bg-surface border-line" : "border-transparent text-muted hover:text-[var(--text)]")}
         >
           {o.label}
         </button>
@@ -212,3 +213,150 @@ export function Row({ title, sub, right, onClick, icon }: { title: ReactNode; su
 export function toast(message: string, tone: "ok" | "danger" = "ok"): void {
   window.dispatchEvent(new CustomEvent("constella:toast", { detail: { message, tone } }));
 }
+
+/**
+ * A trigger that opens a floating panel (above it by default); closes on outside click or Escape.
+ * `trigger` is the button's content; pass `triggerClassName` to restyle the button itself.
+ */
+export function Popover({
+  label,
+  trigger,
+  children,
+  className,
+  triggerClassName,
+  side = "top",
+  align = "right",
+}: {
+  label: string;
+  trigger: ReactNode;
+  children: (close: () => void) => ReactNode;
+  className?: string;
+  triggerClassName?: string;
+  side?: "top" | "bottom";
+  align?: "left" | "right";
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: PointerEvent) => !ref.current?.contains(e.target as Node) && setOpen(false);
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
+    document.addEventListener("pointerdown", onDown);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("pointerdown", onDown);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        aria-label={label}
+        aria-expanded={open}
+        onClick={() => setOpen(!open)}
+        className={
+          triggerClassName ??
+          cx("flex items-center gap-1 h-7 px-1.5 rounded-md text-[13px] text-muted hover:text-[var(--text)] hover:bg-surface-2 tabular-nums", open && "bg-surface-2 text-[var(--text)]")
+        }
+      >
+        {trigger}
+      </button>
+      {open && (
+        <div
+          role="dialog"
+          aria-label={label}
+          className={cx(
+            "absolute z-40 rounded-xl border border-line bg-surface shadow-xl",
+            side === "top" ? "bottom-full mb-1.5" : "top-full mt-1.5",
+            align === "right" ? "right-0" : "left-0",
+            className,
+          )}
+        >
+          {children(() => setOpen(false))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** A row in a dropdown menu: 16px icon, label, optional right-side hint. */
+export function MenuItem({ icon, label, hint, onClick, danger }: { icon?: ReactNode; label: ReactNode; hint?: ReactNode; onClick: () => void; danger?: boolean }) {
+  return (
+    <button type="button" onClick={onClick} className={cx("w-full flex items-center gap-2.5 h-8 px-2.5 rounded-md text-left text-[13.5px] hover:bg-surface-2", danger && "text-danger")}>
+      {icon && <span className="text-muted shrink-0 [&_svg]:size-4">{icon}</span>}
+      <span className="flex-1 truncate">{label}</span>
+      {hint && <span className="text-xs text-muted shrink-0">{hint}</span>}
+    </button>
+  );
+}
+
+export function MenuDivider() {
+  return <div className="my-1 h-px bg-[var(--border)]" />;
+}
+
+/** A settings section: heading, then rows separated by hairlines. */
+export function SettingGroup({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <section className="space-y-1">
+      <h2 className="text-base font-semibold">{title}</h2>
+      <div className="divide-y divide-[var(--border)]">{children}</div>
+    </section>
+  );
+}
+
+/** One setting: title + description on the left, its control on the right (stacks on narrow screens when `wide`). */
+export function SettingRow({ title, desc, children, wide }: { title: ReactNode; desc?: ReactNode; children?: ReactNode; wide?: boolean }) {
+  return (
+    <div className={cx("py-3.5 flex gap-x-6 gap-y-2", wide ? "flex-col sm:flex-row sm:items-center" : "items-center")}>
+      <div className="flex-1 min-w-0">
+        <div className="text-sm font-medium">{title}</div>
+        {desc && <div className="text-[13px] text-muted mt-0.5 leading-relaxed">{desc}</div>}
+      </div>
+      {children != null && <div className="shrink-0 flex items-center gap-2">{children}</div>}
+    </div>
+  );
+}
+
+/** Sidebar / settings-nav item: neutral highlight when selected, fainter on hover. */
+export function navItemClass(active: boolean): string {
+  return cx(
+    "flex items-center gap-2.5 px-2.5 rounded-md transition-colors",
+    active ? "bg-[color-mix(in_oklab,var(--text)_9%,transparent)] text-[var(--text)]" : "text-[color-mix(in_oklab,var(--text)_80%,transparent)] hover:bg-[color-mix(in_oklab,var(--text)_5%,transparent)]",
+  );
+}
+
+/** Underline tabs: different views of the same data (请求日志 / 模型 / …). */
+export function Tabs<T extends string>({ value, options, onChange, right }: { value: T; options: { value: T; label: string }[]; onChange: (v: T) => void; right?: ReactNode }) {
+  return (
+    <div className="flex items-end gap-5 border-b border-line">
+      {options.map((o) => (
+        <button
+          key={o.value}
+          type="button"
+          role="tab"
+          aria-selected={value === o.value}
+          onClick={() => onChange(o.value)}
+          className={cx("-mb-px pb-2 text-[13.5px] border-b-2 transition-colors", value === o.value ? "border-[var(--color-accent)] font-semibold" : "border-transparent text-muted hover:text-[var(--text)]")}
+        >
+          {o.label}
+        </button>
+      ))}
+      {right && <div className="ml-auto pb-2 text-xs text-muted">{right}</div>}
+    </div>
+  );
+}
+
+/** A metric tile: small muted label on top, number below. */
+export function StatTile({ label, value, sub, size = "lg" }: { label: ReactNode; value: ReactNode; sub?: ReactNode; size?: "lg" | "sm" }) {
+  return (
+    <div className={cx("rounded-xl border border-line bg-surface min-w-0", size === "lg" ? "px-3.5 py-3" : "px-3.5 py-2.5")}>
+      <div className="text-xs text-muted truncate">{label}</div>
+      <div className={cx("tabular-nums truncate", size === "lg" ? "text-2xl font-semibold mt-1" : "text-base font-semibold mt-0.5")}>{value}</div>
+      {sub && <div className="text-[11.5px] text-muted mt-0.5 truncate">{sub}</div>}
+    </div>
+  );
+}
+
+export const selectClass = "h-8 pl-2.5 pr-7 rounded-lg border border-line bg-surface text-[13px] outline-none hover:border-[color-mix(in_oklab,var(--text)_25%,transparent)]";
+

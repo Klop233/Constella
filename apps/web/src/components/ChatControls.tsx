@@ -1,46 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
 import { Check, ChevronDown, Search } from "lucide-react";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { api } from "../lib/api";
 import { tokens } from "../lib/format";
 import type { Effort, Run } from "../lib/types";
 import { conversationUsage, type LatestStats } from "./RunView";
-import { cx } from "./ui";
-
-/** A button that opens a panel above itself; closes on outside click or Escape. */
-function Popover({ label, trigger, children, className }: { label: string; trigger: ReactNode; children: (close: () => void) => ReactNode; className?: string }) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e: PointerEvent) => !ref.current?.contains(e.target as Node) && setOpen(false);
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
-    document.addEventListener("pointerdown", onDown);
-    window.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("pointerdown", onDown);
-      window.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
-  return (
-    <div ref={ref} className="relative">
-      <button
-        type="button"
-        aria-label={label}
-        aria-expanded={open}
-        onClick={() => setOpen(!open)}
-        className={cx("flex items-center gap-1 h-8 px-2 rounded-lg text-xs text-muted hover:text-[var(--text)] hover:bg-surface-2 tabular-nums", open && "bg-surface-2 text-[var(--text)]")}
-      >
-        {trigger}
-      </button>
-      {open && (
-        <div role="dialog" aria-label={label} className={cx("absolute bottom-full right-0 mb-2 z-40 rounded-xl border border-line bg-surface shadow-xl", className)}>
-          {children(() => setOpen(false))}
-        </div>
-      )}
-    </div>
-  );
-}
+import { cx, Popover } from "./ui";
 
 interface Model {
   id: string;
@@ -81,9 +46,9 @@ export function ModelPicker({ value, agentModel, onChange }: { value: string | n
         return (
           <div className="p-1.5">
             {(models.data?.length ?? 0) > 8 && (
-              <label className="flex items-center gap-2 px-2.5 mb-1 h-9 rounded-lg bg-surface-2">
+              <label className="flex items-center gap-2 px-2.5 mb-1 h-8 rounded-md bg-surface-2">
                 <Search className="size-4 text-muted" />
-                <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="搜索模型" className="flex-1 bg-transparent outline-none text-sm" />
+                <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="搜索模型" className="flex-1 bg-transparent outline-none text-[13px]" />
               </label>
             )}
             {!q && item(null, "跟随 agent", agentModel)}
@@ -111,10 +76,10 @@ export function EffortPicker({ value, agentEffort, onChange }: { value: Effort |
   const idx = Math.max(0, EFFORTS.findIndex((e) => e.value === value));
   const agentLabel = EFFORTS.find((e) => e.value === agentEffort)?.label;
   return (
-    <Popover label="推理强度" className="w-64 max-w-[calc(100vw-2rem)] p-3.5" trigger={<span>{value ? EFFORTS[idx]!.label : agentLabel && agentLabel !== "默认" ? agentLabel : "默认"}</span>}>
+    <Popover label="推理强度" className="w-56 max-w-[calc(100vw-2rem)] p-3" trigger={<span>{value ? EFFORTS[idx]!.label : agentLabel && agentLabel !== "默认" ? agentLabel : "默认"}</span>}>
       {() => (
         <div className="space-y-3">
-          <div className="flex items-center text-sm">
+          <div className="flex items-center text-[13px]">
             <span className="flex-1 text-muted">推理强度</span>
             <span className="font-medium">{EFFORTS[idx]!.label}</span>
           </div>
@@ -122,7 +87,7 @@ export function EffortPicker({ value, agentEffort, onChange }: { value: Effort |
             <span>更快</span>
             <span>更聪明</span>
           </div>
-          <div className="relative h-7 rounded-full bg-surface-2 flex items-center px-1">
+          <div className="relative h-5 rounded-md bg-surface-2 flex items-center px-0.5">
             {EFFORTS.map((e, i) => (
               <button
                 key={e.label}
@@ -132,7 +97,7 @@ export function EffortPicker({ value, agentEffort, onChange }: { value: Effort |
                 onClick={() => onChange(e.value)}
                 className="flex-1 h-full grid place-items-center"
               >
-                {i === idx ? <span className="size-5 rounded-full bg-accent-grad shadow" /> : <span className="size-1.5 rounded-full bg-[var(--muted)] opacity-50" />}
+                {i === idx ? <span className="w-3 h-4 rounded-sm bg-[var(--text)] shadow-sm" /> : <span className="size-1 rounded-full bg-[var(--muted)] opacity-60" />}
               </button>
             ))}
           </div>
@@ -143,28 +108,38 @@ export function EffortPicker({ value, agentEffort, onChange }: { value: Effort |
   );
 }
 
+/** Thin stacked bar: segments separated by a 2px surface gap, the rest of the track left neutral. */
 function Bar({ parts, total }: { parts: { value: number; color: string }[]; total: number }) {
   return (
-    <div className="flex h-1.5 rounded-full bg-surface-2 overflow-hidden">
-      {parts.map((p, i) => (
-        <span key={i} style={{ width: `${Math.min(100, (p.value / total) * 100)}%`, background: p.color }} />
-      ))}
+    <div className="flex h-1.5 gap-0.5 rounded-full overflow-hidden bg-[color-mix(in_oklab,var(--text)_12%,transparent)]">
+      {parts
+        .filter((p) => p.value > 0)
+        .map((p, i) => (
+          <span key={i} className="shrink-0" style={{ width: `${Math.min(100, (p.value / total) * 100)}%`, background: p.color }} />
+        ))}
     </div>
   );
 }
 
 function Legend({ color, label, value }: { color?: string; label: string; value: string }) {
   return (
-    <div className="flex items-center gap-2 text-xs">
+    <div className="flex items-center gap-2">
       {color && <span className="size-2 rounded-sm shrink-0" style={{ background: color }} />}
-      <span className="flex-1 text-muted">{label}</span>
+      <span className="flex-1 text-muted truncate">{label}</span>
       <span className="tabular-nums">{value}</span>
     </div>
   );
 }
 
-/** Composer gauge for context occupancy; opens a panel with the full breakdown. */
-export function ContextMeter({ stats, runs, agentId }: { stats: LatestStats; runs: Run[]; agentId: string }) {
+interface Breakdown {
+  used: number;
+  window: number | null;
+  measured: boolean;
+  parts: { key: string; label: string; tokens: number }[];
+}
+
+/** Composer gauge for context occupancy; opens a panel with what fills the window and what it cost. */
+export function ContextMeter({ stats, runs, agentId, conversationId }: { stats: LatestStats; runs: Run[]; agentId: string; conversationId: string }) {
   const { context, tps } = stats;
   const pct = context.window ? Math.min(1, context.tokens / context.window) : null;
   const ringColor = pct == null ? "var(--color-accent)" : pct > 0.85 ? "var(--danger)" : pct > 0.6 ? "var(--warn)" : "var(--color-accent)";
@@ -173,7 +148,7 @@ export function ContextMeter({ stats, runs, agentId }: { stats: LatestStats; run
   return (
     <Popover
       label="上下文与用量"
-      className="w-80 max-w-[calc(100vw-2rem)]"
+      className="w-[22rem] max-w-[calc(100vw-2rem)]"
       trigger={
         <>
           {tps != null && <span className="hidden sm:inline mr-1">{tps.toFixed(0)} tok/s</span>}
@@ -185,12 +160,25 @@ export function ContextMeter({ stats, runs, agentId }: { stats: LatestStats; run
         </>
       }
     >
-      {() => <ContextPanel stats={stats} runs={runs} agentId={agentId} />}
+      {() => <ContextPanel stats={stats} runs={runs} agentId={agentId} conversationId={conversationId} />}
     </Popover>
   );
 }
 
-function ContextPanel({ stats, runs, agentId }: { stats: LatestStats; runs: Run[]; agentId: string }) {
+const SERIES: Record<string, string> = {
+  persona: "var(--series-1)",
+  memory: "var(--series-2)",
+  skills: "var(--series-3)",
+  builtin: "var(--series-4)",
+  messages: "var(--series-5)",
+  tools: "var(--series-6)",
+};
+
+function ContextPanel({ stats, runs, agentId, conversationId }: { stats: LatestStats; runs: Run[]; agentId: string; conversationId: string }) {
+  const breakdown = useQuery({
+    queryKey: ["context", conversationId, stats.context.tokens],
+    queryFn: () => api.get<Breakdown>(`/api/conversations/${conversationId}/context`),
+  });
   const today = useQuery({
     queryKey: ["agent-today", agentId],
     queryFn: () => api.get<{ runs: number; input: number; output: number; spentUsd: number | null; budgetUsd: number | null }>(`/api/agents/${agentId}/today`),
@@ -198,13 +186,12 @@ function ContextPanel({ stats, runs, agentId }: { stats: LatestStats; runs: Run[
   });
   const { context } = stats;
   const conv = conversationUsage(runs);
-  const fresh = Math.max(0, stats.input - stats.cached);
-  const total = context.window ?? context.tokens;
-  const colors = { cached: "var(--color-accent)", fresh: "var(--accent-2)", output: "var(--muted)" };
+  const b = breakdown.data;
   const t = today.data;
+  const total = context.window ?? context.tokens;
   return (
-    <div className="divide-y divide-[var(--border)] text-sm">
-      <div className="p-3.5 space-y-2.5">
+    <div className="text-[13px] [&>*+*]:border-t [&>*+*]:border-line [&>*+*]:mx-3 [&>*+*]:px-0">
+      <div className="p-3 space-y-2.5">
         <div className="flex items-baseline">
           <span className="flex-1 font-medium">上下文窗口</span>
           <span className="text-xs text-muted tabular-nums">
@@ -212,30 +199,33 @@ function ContextPanel({ stats, runs, agentId }: { stats: LatestStats; runs: Run[
             {context.window ? ` / ${tokens(context.window)}（${Math.round((context.tokens / context.window) * 100)}%）` : ""}
           </span>
         </div>
-        <Bar
-          total={total}
-          parts={[
-            { value: stats.cached, color: colors.cached },
-            { value: fresh, color: colors.fresh },
-            { value: stats.output, color: colors.output },
-          ]}
-        />
-        <div className="space-y-1.5">
-          <Legend color={colors.cached} label="缓存命中的输入" value={tokens(stats.cached)} />
-          <Legend color={colors.fresh} label="新输入" value={tokens(fresh)} />
-          <Legend color={colors.output} label={stats.reasoning ? `输出（含推理 ${tokens(stats.reasoning)}）` : "输出"} value={tokens(stats.output)} />
-          {context.window && <Legend color="color-mix(in oklab, var(--text) 12%, transparent)" label="剩余" value={tokens(Math.max(0, context.window - context.tokens))} />}
-        </div>
-        <div className="text-[11px] text-muted">按最近一次模型请求统计{stats.tps ? ` · 输出速度 ${stats.tps.toFixed(1)} tok/s` : ""}</div>
+        <Bar total={total} parts={(b?.parts ?? []).map((p) => ({ value: p.tokens, color: SERIES[p.key]! }))} />
+        {!b ? (
+          <div className="text-xs text-muted">计算中…</div>
+        ) : (
+          <div className="space-y-1.5">
+            {b.parts.map((p) => (
+              <Legend key={p.key} color={SERIES[p.key]} label={p.label} value={tokens(p.tokens)} />
+            ))}
+            {context.window && <Legend color="color-mix(in oklab, var(--text) 12%, transparent)" label="剩余空间" value={tokens(Math.max(0, context.window - context.tokens))} />}
+          </div>
+        )}
+        <div className="text-[11.5px] text-muted">总量是最近一次请求的实测值，各部分按文本估算。</div>
       </div>
-      <div className="p-3.5 space-y-1.5">
+      <div className="py-3 space-y-1.5">
+        <div className="font-medium mb-1">最近一次请求</div>
+        <Legend label="输入" value={`${tokens(stats.input)}${stats.cached ? `（缓存命中 ${tokens(stats.cached)}）` : ""}`} />
+        <Legend label={stats.reasoning ? `输出（含推理 ${tokens(stats.reasoning)}）` : "输出"} value={tokens(stats.output)} />
+        {stats.tps != null && <Legend label="输出速度" value={`${stats.tps.toFixed(1)} tok/s`} />}
+      </div>
+      <div className="py-3 space-y-1.5">
         <div className="font-medium mb-1">这个对话</div>
         <Legend label={`${conv.runs} 次任务 · 输入`} value={`${tokens(conv.input)}${conv.cached ? `（缓存 ${tokens(conv.cached)}）` : ""}`} />
         <Legend label="输出" value={tokens(conv.output)} />
         {conv.timedMs > 0 && <Legend label="平均输出速度" value={`${(conv.timedOutput / (conv.timedMs / 1000)).toFixed(1)} tok/s`} />}
       </div>
-      <div className="p-3.5 space-y-2">
-        <div className="font-medium">今天（这个 agent）</div>
+      <div className="py-3 space-y-1.5">
+        <div className="font-medium mb-1">今天（这个 agent）</div>
         {!t ? (
           <div className="text-xs text-muted">加载中…</div>
         ) : (
@@ -243,10 +233,7 @@ function ContextPanel({ stats, runs, agentId }: { stats: LatestStats; runs: Run[
             <Legend label={`${t.runs} 次任务 · 输入 / 输出`} value={`${tokens(t.input)} / ${tokens(t.output)}`} />
             {t.budgetUsd ? (
               <>
-                <div className="flex items-baseline text-xs">
-                  <span className="flex-1 text-muted">每日预算</span>
-                  <span className="tabular-nums">{t.spentUsd != null ? `$${t.spentUsd.toFixed(2)} / $${t.budgetUsd}` : `$${t.budgetUsd}（花费未知）`}</span>
-                </div>
+                <Legend label="每日预算" value={t.spentUsd != null ? `$${t.spentUsd.toFixed(2)} / $${t.budgetUsd}` : `$${t.budgetUsd}（花费未知）`} />
                 {t.spentUsd != null && <Bar total={t.budgetUsd} parts={[{ value: t.spentUsd, color: t.spentUsd / t.budgetUsd > 0.85 ? "var(--danger)" : "var(--color-accent)" }]} />}
               </>
             ) : (

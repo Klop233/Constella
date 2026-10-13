@@ -61,7 +61,7 @@ export default function Tasks() {
         sub="定时提醒和定时让 agent 干活"
         right={
           <IconButton label="新建" onClick={() => setEdit({ kind: "notify", cron: "0 8 * * *", name: "", payload: { body: "" } })}>
-            <Plus className="size-5" />
+            <Plus className="size-4" />
           </IconButton>
         }
       />
@@ -105,7 +105,7 @@ export default function Tasks() {
                             )}
                           </span>
                           <button
-                            className="flex items-center gap-1 text-accent"
+                            className="flex items-center gap-1 hover:text-[var(--text)]"
                             onClick={() => void api.post<{ ok: boolean; detail?: string }>(`/api/schedules/${s.id}/run`).then((r) => toast(r.ok ? `已执行 ${r.detail ?? ""}` : `失败：${r.detail}`, r.ok ? "ok" : "danger"))}
                           >
                             <Play className="size-3.5" /> 立即运行

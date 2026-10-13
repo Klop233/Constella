@@ -49,7 +49,7 @@ export default function Desktops() {
         sub="agent 的图形桌面，随时查看和接管"
         right={
           <IconButton label="新建桌面" onClick={() => setCreating(true)}>
-            <Plus className="size-5" />
+            <Plus className="size-4" />
           </IconButton>
         }
       />

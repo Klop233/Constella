@@ -10,6 +10,14 @@
   --font-display: var(--font-sans);
   --color-accent: #8b5cf6;
   --color-accent-soft: rgb(139 92 246 / 0.12);
+  /* Tight radii, after Claude Code: shifts every rounded-* utility down a notch. */
+  --radius-xs: 2px;
+  --radius-sm: 3px;
+  --radius-md: 4px;
+  --radius-lg: 6px;
+  --radius-xl: 8px;
+  --radius-2xl: 10px;
+  --radius-3xl: 12px;
 }
 
 /*
@@ -30,6 +38,13 @@
   --ok: #3f8f5a;
   --warn: #b7791f;
   --danger: #c93a3a;
+  /* Categorical chart series (fixed order, validated with the dataviz palette script). */
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+  --series-3: #1baf7a;
+  --series-4: #eda100;
+  --series-5: #e87ba4;
+  --series-6: #008300;
   color-scheme: light;
 }
 :root[data-mode="dark"] {
@@ -46,6 +61,12 @@
   --ok: #7fc493;
   --warn: #e5b04f;
   --danger: #ef7a7a;
+  --series-1: #3987e5;
+  --series-2: #d95926;
+  --series-3: #199e70;
+  --series-4: #c98500;
+  --series-5: #d55181;
+  --series-6: #008300;
   color-scheme: dark;
 }
 
@@ -133,19 +154,28 @@ body {
 .safe-top { padding-top: env(safe-area-inset-top); }
 .safe-bottom { padding-bottom: env(safe-area-inset-bottom); }
 
-.prose-chat { line-height: 1.7; word-break: break-word; }
+.prose-chat { line-height: 1.65; word-break: break-word; }
 .prose-chat p { margin: 0.35em 0; }
 .prose-chat ul, .prose-chat ol { margin: 0.35em 0; padding-left: 1.3em; }
 .prose-chat ul { list-style: disc; }
 .prose-chat ol { list-style: decimal; }
 .prose-chat a { color: var(--color-accent); text-decoration: underline; }
-.prose-chat code { font-family: var(--font-mono); font-size: 0.85em; background: var(--surface-2); padding: 0.1em 0.35em; border-radius: 4px; }
-.prose-chat pre { background: var(--surface-2); border: 1px solid var(--border); padding: 0.7em 0.9em; border-radius: 8px; overflow-x: auto; margin: 0.5em 0; }
+.prose-chat code { font-family: var(--font-mono); font-size: 0.85em; background: var(--surface-2); padding: 0.1em 0.35em; border-radius: 3px; }
+.prose-chat pre { background: var(--surface-2); border: 1px solid var(--border); padding: 0.7em 0.9em; border-radius: 6px; overflow-x: auto; margin: 0.5em 0; }
 .prose-chat pre code { background: none; padding: 0; }
 .prose-chat h1, .prose-chat h2, .prose-chat h3 { font-weight: 600; font-family: var(--font-display); margin: 0.6em 0 0.3em; }
 .prose-chat table { border-collapse: collapse; display: block; overflow-x: auto; }
 .prose-chat td, .prose-chat th { border: 1px solid var(--border); padding: 0.25em 0.5em; }
 .prose-chat blockquote { border-left: 3px solid var(--border); padding-left: 0.8em; color: var(--muted); }
+
+/* Thin, quiet scrollbars: no arrows, transparent track, a rounded thumb that darkens on hover. */
+* { scrollbar-width: thin; scrollbar-color: color-mix(in oklab, var(--text) 18%, transparent) transparent; }
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: color-mix(in oklab, var(--text) 18%, transparent); border-radius: 999px; border: 2px solid transparent; background-clip: content-box; }
+::-webkit-scrollbar-thumb:hover { background-color: color-mix(in oklab, var(--text) 32%, transparent); }
+::-webkit-scrollbar-button { display: none; }
+::-webkit-scrollbar-corner { background: transparent; }
 
 .no-scrollbar::-webkit-scrollbar { display: none; }
 .no-scrollbar { scrollbar-width: none; }

@@ -4,7 +4,7 @@ import { useState } from "react";
 import { api } from "../lib/api";
 import { timeAgo } from "../lib/format";
 import type { Approval } from "../lib/types";
-import { Button, Card, toast } from "./ui";
+import { Button, Card, cx, toast } from "./ui";
 
 const KIND: Record<string, string> = {
   command: "执行命令",
@@ -14,7 +14,7 @@ const KIND: Record<string, string> = {
   other: "操作",
 };
 
-export function ApprovalCard({ approval, showAgent = true, onResolved }: { approval: Approval; showAgent?: boolean; onResolved?: () => void }) {
+export function ApprovalCard({ approval, showAgent = true, onResolved, className, extra }: { approval: Approval; showAgent?: boolean; onResolved?: () => void; className?: string; extra?: React.ReactNode }) {
   const qc = useQueryClient();
   const [busy, setBusy] = useState<"approve" | "deny" | null>(null);
   const decide = async (decision: "approve" | "deny") => {
@@ -31,7 +31,7 @@ export function ApprovalCard({ approval, showAgent = true, onResolved }: { appro
     }
   };
   return (
-    <Card className="p-4 border-[color-mix(in_oklab,var(--warn)_45%,transparent)]">
+    <Card className={cx("p-3.5 border-[color-mix(in_oklab,var(--warn)_45%,transparent)]", className)}>
       <div className="flex items-center gap-2 text-sm">
         <ShieldAlert className="size-4 text-warn" />
         <span className="font-medium">{KIND[approval.kind] ?? "操作"}需要审批</span>
@@ -41,10 +41,11 @@ export function ApprovalCard({ approval, showAgent = true, onResolved }: { appro
           </span>
         )}
         <span className="ml-auto text-xs text-muted shrink-0">{timeAgo(approval.created_at)}</span>
+        {extra}
       </div>
-      <pre className="mt-2 text-[13px] font-mono whitespace-pre-wrap break-all bg-surface-2 rounded-xl p-3 max-h-48 overflow-auto">{approval.summary}</pre>
+      <pre className="mt-2 text-[13px] font-mono whitespace-pre-wrap break-all bg-surface-2 rounded-lg p-3 max-h-48 overflow-auto">{approval.summary}</pre>
       {approval.detail && <div className="mt-1.5 text-xs text-muted whitespace-pre-wrap">{approval.detail}</div>}
-      <div className="mt-3 grid grid-cols-2 gap-2">
+      <div className="mt-2.5 grid grid-cols-2 gap-2">
         <Button variant="secondary" loading={busy === "deny"} disabled={!!busy} onClick={() => decide("deny")}>
           拒绝
         </Button>
