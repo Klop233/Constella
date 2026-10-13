@@ -1,5 +1,5 @@
-import { Brain, ChevronRight, CircleAlert, RotateCw, FileEdit, Globe, Loader2, Monitor, Terminal, ThumbsDown, ThumbsUp, Wrench, X } from "lucide-react";
-import { memo, useMemo, useState } from "react";
+import { Brain, ChevronRight, CircleSlash, CircleX, FileEdit, Globe, Loader2, Monitor, RotateCw, ShieldCheck, ShieldX, Terminal, ThumbsDown, ThumbsUp, Wrench, X } from "lucide-react";
+import { memo, useMemo, useState, type ReactNode } from "react";
 import { Link } from "react-router";
 import { api } from "../lib/api";
 import { useAppearance } from "../lib/appearance";
@@ -21,6 +21,8 @@ const STEER_PREFIX = "［追加指示］";
 const MIN_TIMED_MS = 250;
 /** Matches RESUME_PREFIX in apps/hub/src/runs.ts: runs the hub started itself after a restart. */
 const RESUME_PREFIX = "［自动继续］";
+/** Sent for an empty message after a task ended abnormally. */
+export const CONTINUE_TEXT = "继续完成上次中断的任务。";
 
 /** Folds a run's event stream into display items (streaming text, tool cards, approvals). */
 export interface Usage {
@@ -120,14 +122,18 @@ function toolTitle(name: string, input: any): { icon: typeof Terminal; title: st
   return { icon: Wrench, title: name };
 }
 
-type Step = Extract<Item, { kind: "tool" | "reasoning" | "desktop" }>;
-type Block = Exclude<Item, Step> | { kind: "steps"; id: string; steps: Step[] };
+type ApprovalItem = Extract<Item, { kind: "approval" }>;
+type Step = Extract<Item, { kind: "tool" | "reasoning" | "desktop" }> | ApprovalItem;
+type Block = Exclude<Item, Step> | ApprovalItem | { kind: "steps"; id: string; steps: Step[] };
 
-/** Collapses each run of consecutive tool calls / reasoning / desktop actions into one block. */
-function groupSteps(items: Item[]): Block[] {
+/**
+ * Collapses each run of consecutive tool calls / reasoning / desktop actions / settled approvals into one block.
+ * A pending approval stays its own block so its card can interrupt the flow.
+ */
+function groupSteps(items: Item[], pending: Set<string>): Block[] {
   const out: Block[] = [];
   for (const it of items) {
-    if (it.kind === "tool" || it.kind === "reasoning" || it.kind === "desktop") {
+    if (it.kind === "tool" || it.kind === "reasoning" || it.kind === "desktop" || (it.kind === "approval" && !pending.has(it.approvalId))) {
       const last = out.at(-1);
       if (last?.kind === "steps") last.steps.push(it);
       else out.push({ kind: "steps", id: `steps:${it.id}`, steps: [it] });
@@ -136,7 +142,11 @@ function groupSteps(items: Item[]): Block[] {
   return out;
 }
 
-const ToolRow = memo(function ToolRow({ item }: { item: Extract<Item, { kind: "tool" }> }) {
+function approvalOutcome(a: ApprovalItem): string {
+  return a.resolved === "approve" ? (a.by === "policy" ? "已自动批准" : "已批准") : a.resolved === "deny" ? "已拒绝" : "已失效";
+}
+
+const ToolRow = memo(function ToolRow({ item, ended }: { item: Extract<Item, { kind: "tool" }>; ended: boolean }) {
   const [open, setOpen] = useState(false);
   const { icon: Icon, title } = toolTitle(item.name, item.input);
   return (
@@ -144,7 +154,15 @@ const ToolRow = memo(function ToolRow({ item }: { item: Extract<Item, { kind: "t
       <button className="w-full flex items-center gap-2 py-1 text-left text-[12.5px] text-muted hover:text-[var(--text)]" onClick={() => setOpen(!open)}>
         <Icon className="size-3.5 shrink-0" />
         <span className="font-mono truncate flex-1">{title || item.name}</span>
-        {!item.done ? <Loader2 className="size-3.5 animate-spin text-accent shrink-0" /> : !item.ok && <X className="size-3.5 text-danger shrink-0" />}
+        {!item.done ? (
+          ended ? (
+            <CircleSlash aria-label="未完成" className="size-3.5 shrink-0" />
+          ) : (
+            <Loader2 className="size-3.5 animate-spin text-accent shrink-0" />
+          )
+        ) : (
+          !item.ok && <X className="size-3.5 text-danger shrink-0" />
+        )}
       </button>
       {open && (
         <div className="mb-1.5 ml-5.5 space-y-1.5 text-xs">
@@ -158,8 +176,8 @@ const ToolRow = memo(function ToolRow({ item }: { item: Extract<Item, { kind: "t
   );
 });
 
-function StepRow({ step }: { step: Step }) {
-  if (step.kind === "tool") return <ToolRow item={step} />;
+function StepRow({ step, ended }: { step: Step; ended: boolean }) {
+  if (step.kind === "tool") return <ToolRow item={step} ended={ended} />;
   if (step.kind === "reasoning")
     return (
       <div className="flex items-start gap-2 py-1 text-[12.5px] text-muted">
@@ -167,6 +185,17 @@ function StepRow({ step }: { step: Step }) {
         <span className="whitespace-pre-wrap">{step.text}</span>
       </div>
     );
+  if (step.kind === "approval") {
+    const Icon = step.resolved === "deny" ? ShieldX : ShieldCheck;
+    return (
+      <div className="flex items-start gap-2 py-1 text-[12.5px] text-muted">
+        <Icon className="size-3.5 mt-0.5 shrink-0" />
+        <span className="min-w-0 break-all">
+          审批 <span className="font-mono">{step.summary}</span> · {approvalOutcome(step)}
+        </span>
+      </div>
+    );
+  }
   return (
     <Link to={`/desktops/${step.desktopId}`} className="flex items-center gap-2 py-1 text-[12.5px] text-muted hover:text-[var(--text)]">
       <Monitor className="size-3.5 shrink-0" /> {step.action}
@@ -177,40 +206,48 @@ function StepRow({ step }: { step: Step }) {
 function stepLabel(step: Step): string {
   if (step.kind === "tool") return toolTitle(step.name, step.input).title || step.name;
   if (step.kind === "reasoning") return step.text.split("\n")[0] ?? "";
+  if (step.kind === "approval") return `审批 ${step.summary}`;
   return step.action;
 }
 
-/** Summary of what a run of steps did, e.g. "运行了 2 条命令，修改了 1 个文件". */
-function stepsSummary(steps: Step[]): string {
+/** What a run of steps did, e.g. "运行了 2 条命令，修改了 1 处文件", plus how its approvals went; and an icon for it. */
+function stepsSummary(steps: Step[]): { icon: typeof Terminal; text: string; approvals: string } {
   let cmds = 0;
   let edits = 0;
   let others = 0;
+  const outcomes = new Map<string, number>();
   for (const s of steps) {
+    if (s.kind === "approval") outcomes.set(approvalOutcome(s), (outcomes.get(approvalOutcome(s)) ?? 0) + 1);
     if (s.kind !== "tool") continue;
     if (s.name === "shell") cmds++;
     else if (s.name === "edit") edits++;
     else others++;
   }
   const parts = [cmds && `运行了 ${cmds} 条命令`, edits && `修改了 ${edits} 处文件`, others && `调用了 ${others} 个工具`].filter(Boolean);
-  return parts.length ? parts.join("，") : "思考过程";
+  const approvals = [...outcomes].map(([o, n]) => `${n} 项审批${o}`).join("，");
+  const icon = !parts.length ? (approvals ? ShieldCheck : Brain) : cmds >= edits && cmds >= others ? Terminal : edits >= others ? FileEdit : Wrench;
+  return { icon, text: parts.length ? parts.join("，") : approvals ? "" : "思考过程", approvals };
 }
 
 /** One collapsible line per run of consecutive steps, like Claude Code's "Ran 3 commands ›". */
-function StepGroup({ steps, live }: { steps: Step[]; live: boolean }) {
+function StepGroup({ steps, live, ended }: { steps: Step[]; live: boolean; ended: boolean }) {
   const [open, setOpen] = useState(false);
   const failed = steps.filter((s) => s.kind === "tool" && s.done && !s.ok).length;
+  const { icon: Icon, text, approvals } = stepsSummary(steps);
   return (
     <div>
-      <button className="group flex items-center gap-1.5 max-w-full text-left text-sm text-muted hover:text-[var(--text)]" onClick={() => setOpen(!open)}>
-        {live && <Loader2 className="size-3.5 animate-spin text-accent shrink-0" />}
-        <span className={cx("truncate", live && "font-mono text-[12.5px]")}>{live ? stepLabel(steps.at(-1)!) : stepsSummary(steps)}</span>
-        {failed > 0 && <span className="text-danger shrink-0">· {failed} 个失败</span>}
-        <ChevronRight className={cx("size-3.5 shrink-0 transition", open && "rotate-90")} />
+      <button className="flex items-center gap-2 max-w-full h-6 text-left text-[13px] text-muted hover:text-[var(--text)]" aria-expanded={open} onClick={() => setOpen(!open)}>
+        {live ? <Loader2 className="size-3.5 animate-spin text-accent shrink-0" /> : <Icon className="size-3.5 shrink-0" />}
+        <span className="flex items-center gap-1 min-w-0">
+          <span className={cx("truncate", live && "font-mono text-[12.5px]")}>{live ? stepLabel(steps.at(-1)!) : [text, approvals].filter(Boolean).join(" · ")}</span>
+          {failed > 0 && <span className="text-danger shrink-0">· {failed} 个失败</span>}
+          <ChevronRight className={cx("size-3.5 shrink-0 transition", open && "rotate-90")} />
+        </span>
       </button>
       {open && (
-        <div className="mt-1 ml-1.5 pl-3 border-l border-line">
+        <div className="mt-1 mb-1 ml-[6.5px] pl-3.5 border-l border-line">
           {steps.map((st) => (
-            <StepRow key={st.id} step={st} />
+            <StepRow key={st.id} step={st} ended={ended} />
           ))}
         </div>
       )}
@@ -218,11 +255,23 @@ function StepGroup({ steps, live }: { steps: Step[]; live: boolean }) {
   );
 }
 
-export function UserBubble({ text, time }: { text: string; time?: string }) {
+/** The user's message, right-aligned; its time (or a label like 追加指示) sits beside it instead of on a line of its own. */
+export function UserBubble({ text, meta }: { text: string; meta?: string }) {
   return (
-    <div className="flex flex-col items-end">
+    <div className="flex items-end justify-end gap-2.5">
+      {meta && <span className="shrink-0 pb-2 text-[11px] text-muted tabular-nums">{meta}</span>}
       <div className="max-w-[85%] bg-surface-2 rounded-xl px-3 py-2 whitespace-pre-wrap break-words text-sm">{text}</div>
-      {time && <div className="text-[11px] text-muted mt-1">{time}</div>}
+    </div>
+  );
+}
+
+/** A turn the user didn't type (hub auto-resume, or an empty "continue" send): a centered divider instead of a bubble. */
+function TurnDivider({ children }: { children: ReactNode }) {
+  return (
+    <div className="flex items-center gap-3 text-[12px] text-muted">
+      <span className="flex-1 h-px bg-[var(--border)]" />
+      <span className="flex items-center gap-1.5 tabular-nums">{children}</span>
+      <span className="flex-1 h-px bg-[var(--border)]" />
     </div>
   );
 }
@@ -284,14 +333,26 @@ function UsageLine({ run, usage }: { run: Run; usage: Usage }) {
   return <>{parts.join(" · ")}</>;
 }
 
+/** A process-level line in a turn (status, failure, stop): same 13px / 14px-icon rhythm as the step rows. */
+function StatusLine({ icon, tone, children }: { icon: ReactNode; tone?: "danger"; children: ReactNode }) {
+  return (
+    <div className={cx("flex items-start gap-2 text-[13px] leading-6", tone === "danger" ? "text-danger" : "text-muted")}>
+      <span className="h-6 grid place-items-center shrink-0">{icon}</span>
+      <span className="min-w-0 break-words">{children}</span>
+    </div>
+  );
+}
+
+/**
+ * One turn: the user's message, then the agent's work (text in full, process folded into one-line rows),
+ * then a footer with how it ended, the model and usage, and feedback (revealed on hover where there is one).
+ */
 export function RunView({ run, approvals, onChanged }: { run: Run; approvals: Approval[]; onChanged: () => void }) {
-  const { blocks, usage } = useMemo(() => {
-    const { items, usage } = buildItems(run.events);
-    return { blocks: groupSteps(items), usage };
-  }, [run.events]);
+  const { items, usage } = useMemo(() => buildItems(run.events), [run.events]);
+  const pending = useMemo(() => new Map(approvals.map((a) => [a.id, a])), [approvals]);
+  const blocks = useMemo(() => groupSteps(items, new Set(pending.keys())), [items, pending]);
   const finished = ["done", "failed", "cancelled"].includes(run.status);
   const { usage: showUsage } = useAppearance();
-  const pending = new Map(approvals.map((a) => [a.id, a]));
   const feedback = async (value: 1 | -1) => {
     try {
       await api.post(`/api/runs/${run.id}/feedback`, { value });
@@ -301,51 +362,40 @@ export function RunView({ run, approvals, onChanged }: { run: Run; approvals: Ap
       toast(err instanceof Error ? err.message : String(err), "danger");
     }
   };
+  const time = clock(run.created_at);
   return (
-    <div className="space-y-3">
+    <article className="group/turn space-y-3">
       {run.prompt.startsWith(RESUME_PREFIX) ? (
-        <div className="flex items-center gap-1.5 text-[12.5px] text-muted">
-          <RotateCw className="size-3.5" /> 中断后自动继续 · {clock(run.created_at)}
-        </div>
+        <TurnDivider>
+          <RotateCw className="size-3" /> 中断后自动继续 · {time}
+        </TurnDivider>
+      ) : run.prompt === CONTINUE_TEXT ? (
+        <TurnDivider>
+          <RotateCw className="size-3" /> 继续中断的任务 · {time}
+        </TurnDivider>
       ) : (
-        <UserBubble text={run.prompt} time={clock(run.created_at)} />
+        <UserBubble text={run.prompt} meta={time} />
       )}
       {blocks.map((it, i) => {
         switch (it.kind) {
           case "message":
-            return it.user ? (
-              <UserBubble key={it.id} text={it.text} />
-            ) : (
-              <div key={it.id} className="text-sm">
-                <Markdown text={it.text} className="font-display" />
-                {it.streaming && !finished && <span className="inline-block size-2.5 ml-1 rounded-full bg-accent align-middle pulse-dot" />}
-              </div>
-            );
+            return it.user ? <UserBubble key={it.id} text={it.text} meta="追加指示" /> : <Markdown key={it.id} text={it.text} className="font-display text-sm" />;
           case "steps":
-            return <StepGroup key={it.id} steps={it.steps} live={!finished && i === blocks.length - 1} />;
+            return <StepGroup key={it.id} steps={it.steps} live={!finished && i === blocks.length - 1} ended={finished} />;
           case "approval": {
             const a = pending.get(it.approvalId);
-            if (a) return <ApprovalCard key={it.id} approval={a} showAgent={false} onResolved={onChanged} />;
-            return (
-              <div key={it.id} className="text-xs text-muted flex items-center gap-1.5">
-                <CircleAlert className="size-3.5" /> 审批「{it.summary.slice(0, 40)}」{it.resolved === "approve" ? (it.by === "policy" ? "已自动批准" : "已批准") : it.resolved === "deny" ? "已拒绝" : "已失效"}
-              </div>
-            );
+            return a ? <ApprovalCard key={it.id} approval={a} showAgent={false} onResolved={onChanged} /> : null;
           }
         }
       })}
       {!finished && !(run.status === "running" && blocks.at(-1)?.kind === "steps") && (
-        <div className="flex items-center gap-2 text-sm text-muted">
-          <Loader2 className="size-4 animate-spin" /> {STATUS_TEXT[run.status]}…
-        </div>
+        <StatusLine icon={<Loader2 className="size-3.5 animate-spin text-accent" />}>{STATUS_TEXT[run.status]}…</StatusLine>
       )}
-      {run.status === "failed" && (
-        <div className="text-sm text-danger bg-[color-mix(in_oklab,var(--danger)_10%,transparent)] rounded-lg px-3 py-2">任务失败：{run.error ?? "未知错误"}</div>
-      )}
-      {run.status === "cancelled" && <div className="text-xs text-muted">已停止{run.error ? `（${run.error}）` : ""}</div>}
+      {run.status === "failed" && <StatusLine tone="danger" icon={<CircleX className="size-3.5" />}>任务失败：{run.error ?? "未知错误"}</StatusLine>}
+      {run.status === "cancelled" && <StatusLine icon={<CircleSlash className="size-3.5" />}>已停止{run.error ? `（${run.error}）` : ""}</StatusLine>}
       {finished && (
-        <div className="flex items-center gap-1 text-[11px] text-muted">
-          <span className="flex-1">
+        <footer className="flex items-start gap-2 -mt-1 text-[11px] text-muted tabular-nums">
+          <span className="flex-1 min-w-0 py-[3px] leading-[18px]">
             {run.model}
             {showUsage && (
               <>
@@ -354,14 +404,16 @@ export function RunView({ run, approvals, onChanged }: { run: Run; approvals: Ap
               </>
             )}
           </span>
-          <button aria-label="有帮助" onClick={() => feedback(1)} className={cx("p-1.5 rounded-md hover:bg-surface-2", run.feedback === 1 && "text-accent")}>
-            <ThumbsUp className="size-4" />
-          </button>
-          <button aria-label="没帮助" onClick={() => feedback(-1)} className={cx("p-1.5 rounded-md hover:bg-surface-2", run.feedback === -1 && "text-danger")}>
-            <ThumbsDown className="size-4" />
-          </button>
-        </div>
+          <span className={cx("flex items-center shrink-0 -mr-1 transition-opacity", run.feedback == null && "pointer-fine:opacity-0 group-hover/turn:opacity-100 focus-within:opacity-100")}>
+            <button aria-label="有帮助" title="有帮助" onClick={() => feedback(1)} className={cx("size-6 grid place-items-center rounded-md hover:bg-surface-2 hover:text-[var(--text)]", run.feedback === 1 && "text-accent")}>
+              <ThumbsUp className="size-3.5" />
+            </button>
+            <button aria-label="没帮助" title="没帮助" onClick={() => feedback(-1)} className={cx("size-6 grid place-items-center rounded-md hover:bg-surface-2 hover:text-[var(--text)]", run.feedback === -1 && "text-danger")}>
+              <ThumbsDown className="size-3.5" />
+            </button>
+          </span>
+        </footer>
       )}
-    </div>
+    </article>
   );
 }

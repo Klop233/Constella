@@ -4,7 +4,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import { useNavigate, useParams } from "react-router";
 import { AgentDot } from "../components/AgentBits";
 import { ContextMeter, EffortPicker, ModelPicker } from "../components/ChatControls";
-import { latestStats, RunView } from "../components/RunView";
+import { CONTINUE_TEXT, latestStats, RunView } from "../components/RunView";
 import { Button, Empty, Header, Loading, cx, toast } from "../components/ui";
 import { api, ApiError, fileToBase64 } from "../lib/api";
 import { useAppearance } from "../lib/appearance";
@@ -12,8 +12,6 @@ import { useAgentEvents } from "../lib/live";
 import type { Agent, AgentEvent, Approval, Conversation, Effort, Run } from "../lib/types";
 
 const coarsePointer = window.matchMedia("(pointer: coarse)").matches;
-/** Sent for an empty message after a task ended abnormally. */
-const CONTINUE_TEXT = "继续完成上次中断的任务。";
 
 interface ConvData {
   conversation: Conversation;
@@ -272,7 +270,7 @@ export default function Chat() {
             {composer}
           </div>
         ) : !data ? null : (
-          <div className="space-y-5 py-3 max-w-3xl mx-auto">
+          <div className="space-y-8 pt-4 pb-6 max-w-3xl mx-auto">
             {data.runs.map((r) => (
               <RunView key={r.id} run={r} approvals={data.approvals} onChanged={load} />
             ))}
