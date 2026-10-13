@@ -3,8 +3,8 @@ import type { Agent } from "../lib/types";
 import { cx } from "./ui";
 
 export function AgentAvatar({ emoji, size = "md" }: { emoji: string; size?: "sm" | "md" | "lg" }) {
-  const s = { sm: "size-9 text-lg rounded-xl", md: "size-11 text-2xl rounded-2xl", lg: "size-16 text-4xl rounded-3xl" }[size];
-  return <div className={cx("grid place-items-center bg-accent-soft shrink-0", s)}>{emoji}</div>;
+  const s = { sm: "size-9 text-lg rounded-lg", md: "size-11 text-2xl rounded-xl", lg: "size-16 text-4xl rounded-2xl" }[size];
+  return <div className={cx("grid place-items-center bg-surface-2 border border-line shrink-0", s)}>{emoji}</div>;
 }
 
 export function AgentStatus({ agent }: { agent: Agent }) {

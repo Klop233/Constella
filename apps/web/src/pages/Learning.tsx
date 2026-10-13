@@ -60,7 +60,7 @@ export default function Learning() {
             {list.data.map((e) => (
               <Card key={e.id} className={cx("p-3.5", !!e.reverted && "opacity-55")} onClick={() => setOpen(e)}>
                 <div className="flex items-start gap-3">
-                  <div className="size-9 rounded-xl grid place-items-center bg-accent-soft text-accent shrink-0">
+                  <div className="size-9 rounded-lg grid place-items-center bg-accent-soft text-accent shrink-0">
                     {e.kind === "skill" ? <Lightbulb className="size-4.5" /> : <Brain className="size-4.5" />}
                   </div>
                   <div className="flex-1 min-w-0">
@@ -116,7 +116,7 @@ export default function Learning() {
 
 function Chip({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
   return (
-    <button onClick={onClick} className={cx("px-3 h-8 rounded-full text-sm shrink-0", active ? "bg-accent text-white" : "bg-surface border border-line")}>
+    <button onClick={onClick} className={cx("px-3 h-8 rounded-lg text-sm shrink-0 border transition-colors", active ? "bg-[var(--text)] text-[var(--bg)] border-transparent" : "bg-surface border-line hover:bg-surface-2")}>
       {children}
     </button>
   );

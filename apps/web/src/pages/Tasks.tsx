@@ -156,7 +156,7 @@ export default function Tasks() {
             <Field group label="时间" hint={`${describeCron(edit.cron ?? "")}（北京时间，cron 格式：分 时 日 月 周）`}>
               <div className="flex gap-1.5 flex-wrap mb-2">
                 {PRESETS.map((p) => (
-                  <button key={p.cron} type="button" onClick={() => setEdit({ ...edit, cron: p.cron })} className={cx("text-xs px-2.5 py-1 rounded-full", edit.cron === p.cron ? "bg-accent text-white" : "bg-surface-2")}>
+                  <button key={p.cron} type="button" onClick={() => setEdit({ ...edit, cron: p.cron })} className={cx("text-xs px-2.5 py-1 rounded-md border", edit.cron === p.cron ? "bg-[var(--text)] text-[var(--bg)] border-transparent" : "bg-surface border-line")}>
                     {p.label}
                   </button>
                 ))}

@@ -63,23 +63,23 @@ const TABS = [
 function Sidebar() {
   const agents = useQuery({ queryKey: ["agents"], queryFn: () => api.get<Agent[]>("/api/agents"), staleTime: 15_000 });
   const item = ({ isActive }: { isActive: boolean }) =>
-    cx("flex items-center gap-3 h-10 px-3 rounded-xl text-[15px]", isActive ? "bg-accent-soft text-accent font-medium" : "text-muted hover:bg-surface-2");
+    cx("flex items-center gap-3 h-9 px-3 rounded-lg text-[14px] transition-colors", isActive ? "bg-[color-mix(in_oklab,var(--text)_8%,transparent)] font-medium" : "text-[color-mix(in_oklab,var(--text)_75%,transparent)] hover:bg-[color-mix(in_oklab,var(--text)_5%,transparent)]");
   return (
-    <aside className="hidden lg:flex fixed inset-y-0 left-0 z-30 w-60 flex-col border-r border-line bg-surface">
+    <aside className="hidden lg:flex fixed inset-y-0 left-0 z-30 w-60 flex-col border-r border-line bg-sidebar">
       <NavLink to="/" className="flex items-center gap-2.5 px-5 h-16 shrink-0">
         <img src="/icon.svg" alt="" className="size-8 rounded-lg" />
-        <span className="font-semibold text-lg">Constella</span>
+        <span className="font-serif font-medium text-xl">Constella</span>
       </NavLink>
       <nav className="px-3 space-y-1">
         {TABS.map((t) => (
           <NavLink key={t.to} to={t.to} end={t.end} className={item}>
-            <t.icon className="size-5" strokeWidth={1.8} />
+            <t.icon className="size-[18px]" strokeWidth={1.7} />
             {t.label}
           </NavLink>
         ))}
       </nav>
-      <div className="mt-6 px-5 flex items-center text-xs font-semibold text-muted">
-        <span className="flex-1">agent</span>
+      <div className="mt-6 px-5 flex items-center text-xs font-medium text-muted">
+        <span className="flex-1">Agent</span>
         <NavLink to="/agents/new" aria-label="新建 agent" className="p-1 rounded-md hover:bg-surface-2">
           <Plus className="size-4" />
         </NavLink>
@@ -87,7 +87,7 @@ function Sidebar() {
       <div className="flex-1 overflow-y-auto px-3 py-2 space-y-0.5">
         {agents.data?.map((a) => (
           <NavLink key={a.id} to={`/agents/${a.id}`} className={item}>
-            <span className="text-lg leading-none">{a.emoji}</span>
+            <span className="text-base leading-none">{a.emoji}</span>
             <span className="truncate flex-1">{a.name}</span>
             {a.activeRuns.length > 0 && <span className="size-2 rounded-full bg-accent pulse-dot" />}
           </NavLink>
@@ -107,10 +107,10 @@ function Shell({ children }: { children: ReactNode }) {
         <main className={cx("flex-1 w-full lg:max-w-5xl lg:mx-auto lg:px-6", !hideNav && "pb-20 lg:pb-8")}>{children}</main>
       </div>
       {!hideNav && (
-        <nav className="lg:hidden fixed bottom-0 inset-x-0 z-30 bg-surface/95 backdrop-blur border-t border-line safe-bottom">
+        <nav className="lg:hidden fixed bottom-0 inset-x-0 z-30 bg-sidebar/95 backdrop-blur border-t border-line safe-bottom">
           <div className="max-w-2xl mx-auto grid grid-cols-5">
             {TABS.map((t) => (
-              <NavLink key={t.to} to={t.to} end={t.end} className={({ isActive }) => cx("flex flex-col items-center gap-0.5 pt-2 pb-1.5 text-[11px]", isActive ? "text-accent" : "text-muted")}>
+              <NavLink key={t.to} to={t.to} end={t.end} className={({ isActive }) => cx("flex flex-col items-center gap-0.5 pt-2 pb-1.5 text-[11px]", isActive ? "text-[var(--text)] font-medium" : "text-muted")}>
                 <t.icon className="size-[22px]" strokeWidth={1.8} />
                 {t.label}
               </NavLink>
@@ -137,7 +137,7 @@ function Toasts() {
   return (
     <div className="fixed top-3 inset-x-0 z-[60] flex flex-col items-center gap-2 pointer-events-none safe-top">
       {items.map((t) => (
-        <div key={t.id} className={cx("px-4 py-2.5 rounded-2xl shadow-lg text-sm max-w-[90vw]", t.tone === "danger" ? "bg-[var(--danger)] text-white" : "bg-[var(--text)] text-[var(--bg)]")}>
+        <div key={t.id} className={cx("px-4 py-2.5 rounded-lg shadow-lg text-sm max-w-[90vw]", t.tone === "danger" ? "bg-[var(--danger)] text-white" : "bg-[var(--text)] text-[var(--bg)]")}>
           {t.message}
         </div>
       ))}

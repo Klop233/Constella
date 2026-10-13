@@ -67,7 +67,7 @@ export default function DesktopView() {
       r.scaleViewport = true;
       r.resizeSession = false;
       r.viewOnly = true;
-      r.background = "#0b0d18";
+      r.background = "#1f1e1d";
       r.addEventListener("connect", () => setConnState("connected"));
       r.addEventListener("disconnect", () => setConnState("disconnected"));
       rfb.current = r;
@@ -124,7 +124,7 @@ export default function DesktopView() {
   const l = d ? leaseText(d, agents.data) : null;
 
   return (
-    <div className="fixed inset-0 lg:left-60 bg-[#0b0d18] text-white flex flex-col">
+    <div className="fixed inset-0 lg:left-60 bg-[#1f1e1d] text-white flex flex-col">
       <div className="safe-top bg-black/60 backdrop-blur z-10">
         <div className="h-12 flex items-center gap-1 px-1">
           <button aria-label="返回" className="size-10 grid place-items-center" onClick={() => nav(-1)}>

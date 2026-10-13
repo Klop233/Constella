@@ -4,7 +4,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import { useNavigate, useParams } from "react-router";
 import { AgentAvatar, AgentStatus } from "../components/AgentBits";
 import { RunView } from "../components/RunView";
-import { Empty, Header, Loading, cx, toast } from "../components/ui";
+import { Header, Loading, cx, toast } from "../components/ui";
 import { api, fileToBase64 } from "../lib/api";
 import { useAgentEvents } from "../lib/live";
 import type { Agent, AgentEvent, Approval, Conversation, Run } from "../lib/types";
@@ -160,7 +160,11 @@ export default function Chat() {
         {loading ? (
           <Loading />
         ) : !data ? (
-          <Empty title={`给${a?.name ?? "agent"}派个活`} hint="例如：帮我查一下明天上海的天气，整理成三句话" />
+          <div className="flex flex-col items-center text-center px-6 pt-[22dvh] gap-3">
+            {a && <span className="text-4xl">{a.emoji}</span>}
+            <h1 className="font-serif text-[28px] leading-tight">给{a?.name ?? "agent"}派个活</h1>
+            <p className="text-sm text-muted">例如：帮我查一下明天上海的天气，整理成三句话</p>
+          </div>
         ) : (
           <div className="space-y-6 py-4 max-w-3xl mx-auto">
             {data.runs.map((r) => (
@@ -170,25 +174,21 @@ export default function Chat() {
         )}
         <div ref={bottom} className="h-2" />
       </div>
-      <div className="border-t border-line bg-surface safe-bottom">
-        {files.length > 0 && (
-          <div className="flex gap-2 px-3 pt-2 overflow-x-auto no-scrollbar max-w-3xl mx-auto">
-            {files.map((f, i) => (
-              <span key={f.path} className="flex items-center gap-1 text-xs bg-surface-2 rounded-lg pl-2 pr-1 py-1 shrink-0">
-                {f.image ? <ImagePlus className="size-3.5" /> : <Paperclip className="size-3.5" />}
-                <span className="max-w-32 truncate">{f.name}</span>
-                <button aria-label="移除" onClick={() => setFiles((x) => x.filter((_, j) => j !== i))}>
-                  <X className="size-3.5" />
-                </button>
-              </span>
-            ))}
-          </div>
-        )}
-        <div className="flex items-end gap-2 p-2.5 max-w-3xl mx-auto">
-          <input ref={fileInput} type="file" multiple hidden onChange={(e) => upload(e.target.files)} />
-          <button aria-label="添加附件" className="size-10 grid place-items-center rounded-full text-muted active:bg-surface-2 shrink-0" onClick={() => fileInput.current?.click()} disabled={uploading}>
-            <Paperclip className={cx("size-5", uploading && "animate-pulse")} />
-          </button>
+      <div className="bg-app px-3 pb-3 pt-1 safe-bottom">
+        <div className="max-w-3xl mx-auto rounded-2xl border border-line bg-surface shadow-[0_2px_12px_rgb(0_0_0/0.05)] focus-within:border-[color-mix(in_oklab,var(--text)_28%,transparent)] transition-colors">
+          {files.length > 0 && (
+            <div className="flex gap-2 px-3 pt-3 overflow-x-auto no-scrollbar">
+              {files.map((f, i) => (
+                <span key={f.path} className="flex items-center gap-1 text-xs bg-surface-2 border border-line rounded-md pl-2 pr-1 py-1 shrink-0">
+                  {f.image ? <ImagePlus className="size-3.5" /> : <Paperclip className="size-3.5" />}
+                  <span className="max-w-32 truncate">{f.name}</span>
+                  <button aria-label="移除" onClick={() => setFiles((x) => x.filter((_, j) => j !== i))}>
+                    <X className="size-3.5" />
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
           <textarea
             value={text}
             onChange={(e) => setText(e.target.value)}
@@ -197,17 +197,24 @@ export default function Chat() {
             }}
             rows={1}
             placeholder={active ? "追加指示（任务进行中）" : "说点什么…"}
-            className="flex-1 resize-none max-h-40 min-h-10 rounded-2xl bg-surface-2 px-3.5 py-2.5 text-[15px] outline-none field-sizing-content"
+            className="block w-full resize-none max-h-48 min-h-12 bg-transparent px-4 pt-3.5 pb-1 text-[16px] outline-none field-sizing-content placeholder:text-muted"
           />
-          {active && !text.trim() ? (
-            <button aria-label="停止" onClick={stop} className="size-10 grid place-items-center rounded-full bg-[var(--danger)] text-white shrink-0">
-              <Square className="size-4 fill-current" />
+          <div className="flex items-center gap-2 px-2.5 pb-2.5">
+            <input ref={fileInput} type="file" multiple hidden onChange={(e) => upload(e.target.files)} />
+            <button aria-label="添加附件" className="size-8 grid place-items-center rounded-lg border border-line text-muted hover:text-[var(--text)] hover:bg-surface-2 shrink-0" onClick={() => fileInput.current?.click()} disabled={uploading}>
+              <Paperclip className={cx("size-4", uploading && "animate-pulse")} />
             </button>
-          ) : (
-            <button aria-label="发送" onClick={send} disabled={!text.trim() || sending} className="size-10 grid place-items-center rounded-full bg-accent text-white disabled:opacity-40 shrink-0">
-              <ArrowUp className="size-5" />
-            </button>
-          )}
+            <div className="flex-1" />
+            {active && !text.trim() ? (
+              <button aria-label="停止" onClick={stop} className="size-8 grid place-items-center rounded-lg bg-[var(--text)] text-[var(--bg)] shrink-0">
+                <Square className="size-3.5 fill-current" />
+              </button>
+            ) : (
+              <button aria-label="发送" onClick={send} disabled={!text.trim() || sending} className="size-8 grid place-items-center rounded-lg bg-accent text-white hover:brightness-95 disabled:opacity-40 shrink-0">
+                <ArrowUp className="size-4" strokeWidth={2.4} />
+              </button>
+            )}
+          </div>
         </div>
       </div>
     </div>
