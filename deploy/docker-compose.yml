@@ -39,14 +39,15 @@ services:
       context: ../images/desktop
     profiles: ["images"]
 
-  # Public entry through Cloudflare Tunnel (enable with: docker compose --profile public up -d)
+  # Public entry through Cloudflare Tunnel (set up with scripts/enable-public.sh)
   cloudflared:
     image: cloudflare/cloudflared:2025.9.1
     container_name: constella-cloudflared
     restart: unless-stopped
-    command: tunnel --no-autoupdate run
-    environment:
-      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:-}
+    command: tunnel --no-autoupdate --config /etc/cloudflared/config.yml run
+    volumes:
+      # config.yml + creds.json created by scripts/enable-public.sh
+      - /srv/constella/cloudflared:/etc/cloudflared:ro
     profiles: ["public"]
     networks:
       - constella-net

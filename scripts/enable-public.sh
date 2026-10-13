@@ -1,40 +1,51 @@
 #!/usr/bin/env bash
-# Turn on the public entry through Cloudflare Tunnel.
+# Turn on the public entry through a Cloudflare Tunnel managed from this server.
 # Usage: scripts/enable-public.sh constella.example.com
-# Prompts for the tunnel token without echoing it, stores it in deploy/.env, adds the origin and restarts.
+# First run asks you to open a Cloudflare authorization link and pick the domain.
+# Set CF_PROXY (default http://127.0.0.1:7890) if Cloudflare's API needs a proxy from here.
 set -euo pipefail
 HOST=${1:?usage: enable-public.sh <public hostname>}
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 ENV="$ROOT/deploy/.env"
+DIR=/srv/constella/cloudflared
+NAME=constella
+export HTTPS_PROXY=${CF_PROXY:-http://127.0.0.1:7890} HTTP_PROXY=${CF_PROXY:-http://127.0.0.1:7890}
 
-read -rsp "粘贴 Cloudflare Tunnel token 后回车: " TOKEN; echo
-[ -n "$TOKEN" ] || { echo "token 为空"; exit 1; }
+[ -f ~/.cloudflared/cert.pem ] || cloudflared tunnel login
+ID=$(cloudflared tunnel list -o json 2>/dev/null | python3 -c "import json,sys;print(next((t['id'] for t in json.load(sys.stdin) if t['name']=='$NAME'),''))")
+[ -n "$ID" ] || ID=$(cloudflared tunnel create "$NAME" | grep -oE '[0-9a-f-]{36}' | tail -1)
+cloudflared tunnel route dns "$NAME" "$HOST" || true
 
-python3 -I - "$ENV" "$HOST" "$TOKEN" <<'EOF'
+mkdir -p "$DIR"
+cp ~/.cloudflared/"$ID".json "$DIR/creds.json"
+cat > "$DIR/config.yml" <<EOF
+tunnel: $ID
+credentials-file: /etc/cloudflared/creds.json
+ingress:
+  - hostname: $HOST
+    service: http://constella-hub:8780
+  - service: http_status:404
+EOF
+chmod 644 "$DIR"/*
+
+python3 -I - "$ENV" "$HOST" <<'EOF'
 import re, sys
-path, host, token = sys.argv[1:]
+path, host = sys.argv[1:]
 s = open(path).read()
-def setv(s, k, v):
-    return re.sub(rf"^{k}=.*$", f"{k}={v}", s, flags=re.M) if re.search(rf"^{k}=", s, re.M) else s + f"\n{k}={v}\n"
-s = setv(s, "CLOUDFLARE_TUNNEL_TOKEN", token)
-origins = re.search(r"^CONSTELLA_ORIGINS=(.*)$", s, re.M)
-items = [o for o in (origins.group(1).split(",") if origins else []) if o]
+m = re.search(r"^CONSTELLA_ORIGINS=(.*)$", s, re.M)
+items = [o for o in (m.group(1).split(",") if m else []) if o]
 if f"https://{host}" not in items:
     items.append(f"https://{host}")
-s = setv(s, "CONSTELLA_ORIGINS", ",".join(items))
+s = re.sub(r"^CONSTELLA_ORIGINS=.*$", "CONSTELLA_ORIGINS=" + ",".join(items), s, flags=re.M) if m else s + f"\nCONSTELLA_ORIGINS=https://{host}\n"
 open(path, "w").write(s)
 EOF
 chmod 600 "$ENV"
+
 cd "$ROOT/deploy"
 docker compose up -d hub
 docker compose --profile public up -d cloudflared
-echo "等待隧道连接…"
 for i in $(seq 1 30); do
-  if docker logs constella-cloudflared 2>&1 | grep -q "Registered tunnel connection"; then
-    echo "隧道已连接：https://$HOST"
-    exit 0
-  fi
+  curl -fs "https://$HOST/api/health" >/dev/null && { echo "公网入口可用：https://$HOST"; exit 0; }
   sleep 2
 done
-echo "隧道还没连上，查看日志：docker logs constella-cloudflared"
-exit 1
+echo "还没通，查看日志：docker logs constella-cloudflared"; exit 1

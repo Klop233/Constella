@@ -44,7 +44,7 @@ docker compose up -d hub
 
 - **临时内网入口**：`http://100.64.0.9:8780`（仅 tailnet 设备可访问；推送和通行密钥需要下面的 HTTPS 入口）
 - **内网 HTTPS 入口**（需先在 tailnet 后台开启 Serve）：`tailscale serve --bg --https=443 http://127.0.0.1:8780`
-- **公网入口**：先在 Cloudflare Zero Trust 建一个 Tunnel，把 Public Hostname 指向 `http://constella-hub:8780`，然后执行 `scripts/enable-public.sh constella.你的域名`
+- **公网入口**：`scripts/enable-public.sh constella.你的域名`（首次会给出 Cloudflare 授权链接，授权后自动建隧道、配 DNS、启动 cloudflared）。当前：https://constella.example.com
 - **初始化**：第一次打开页面时，用 `deploy/.env` 里的 `CONSTELLA_SETUP_CODE` 创建账号；登录后到「设置」里添加通行密钥、开启推送
 
 数据都在 `/srv/constella`：数据库、各 agent 的 home 与 workspace、桌面 home、共享知识库，以及备份（每天 03:30 自动备份，保留 7 份）。
