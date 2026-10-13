@@ -1,5 +1,6 @@
 import { canTransition, isTerminal, type HubToRunner, type RunStatus, type RunnerEvent } from "@constella/protocol";
 import { config, newId, nowIso } from "./config.ts";
+import type { Effort } from "./catalog.ts";
 import { audit, type Db } from "./db.ts";
 import { decideApproval, type ApprovalMode } from "./safety.ts";
 import type { EventStore } from "./events.ts";
@@ -35,8 +36,6 @@ export interface ConversationRow {
   updated_at: string;
 }
 
-export type Effort = "low" | "medium" | "high" | "xhigh";
-
 /** What the hub needs from the rest of the system to drive a run. */
 export interface RunDeps {
   db: Db;
@@ -47,12 +46,14 @@ export interface RunDeps {
   /** Payload pieces that depend on the agent's configuration and knowledge. */
   startPayload(agentId: string): {
     model: string;
-    effort?: "low" | "medium" | "high" | "xhigh";
+    effort?: Effort;
     instructions: string;
     approvalPolicy: "auto" | "ask";
     skillRoots: string[];
   };
   notify(title: string, body: string, url?: string): void;
+  /** The level closest to `effort` that `model` supports (undefined = let the model pick); defaults to as-is. */
+  fitEffort?(model: string, effort: Effort): Effort | undefined;
   /** Whether runs cut off by an agent / hub restart are continued automatically. */
   autoResume?(): boolean;
   /** How approval requests are decided: always ask, ask only for destructive actions, or approve all. */
@@ -162,6 +163,7 @@ export class RunManager {
     const payload = this.#d.startPayload(input.agentId);
     if (conv.model) payload.model = conv.model;
     if (conv.effort) payload.effort = conv.effort;
+    if (payload.effort && this.#d.fitEffort) payload.effort = this.#d.fitEffort(payload.model, payload.effort);
     const run: RunRow = {
       id: newId("run"),
       conversation_id: conv.id,

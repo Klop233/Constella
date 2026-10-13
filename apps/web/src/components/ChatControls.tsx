@@ -1,16 +1,12 @@
 import { useQuery } from "@tanstack/react-query";
 import { Check, ChevronDown, Search } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { useRef, useState, type KeyboardEvent, type PointerEvent, type ReactNode } from "react";
 import { api } from "../lib/api";
+import { effortLabel, fitIndex, modelEfforts } from "../lib/effort";
 import { tokens } from "../lib/format";
-import type { Effort, Run } from "../lib/types";
+import type { Effort, Model, Run } from "../lib/types";
 import { conversationUsage, type LatestStats } from "./RunView";
 import { cx, Popover } from "./ui";
-
-interface Model {
-  id: string;
-  compat?: "ok" | "upstream_error";
-}
 
 /** Per-conversation model; `null` follows the agent's model. */
 export function ModelPicker({ value, agentModel, onChange }: { value: string | null; agentModel: string; onChange: (v: string | null) => void }) {
@@ -63,48 +59,113 @@ export function ModelPicker({ value, agentModel, onChange }: { value: string | n
   );
 }
 
-const EFFORTS: { value: Effort | null; label: string }[] = [
-  { value: null, label: "默认" },
-  { value: "low", label: "低" },
-  { value: "medium", label: "中" },
-  { value: "high", label: "高" },
-  { value: "xhigh", label: "极高" },
-];
-
-/** Per-conversation reasoning effort, as a Faster ↔ Smarter slider; `null` follows the agent. */
-export function EffortPicker({ value, agentEffort, onChange }: { value: Effort | null; agentEffort: string | null; onChange: (v: Effort | null) => void }) {
-  const idx = Math.max(0, EFFORTS.findIndex((e) => e.value === value));
-  const agentLabel = EFFORTS.find((e) => e.value === agentEffort)?.label;
+/** Per-conversation reasoning effort, as a Faster ↔ Smarter slider with one stop per level the model supports; `null` follows the agent. */
+export function EffortPicker({ value, agentEffort, model, onChange }: { value: Effort | null; agentEffort: Effort | null; model: string; onChange: (v: Effort | null) => void }) {
+  const models = useQuery({ queryKey: ["models"], queryFn: () => api.get<Model[]>("/api/models"), staleTime: 300_000 });
+  const { efforts, defaultEffort } = modelEfforts(models.data, model);
+  const [preview, setPreview] = useState<number | null>(null);
+  if (!efforts.length) return null;
+  const inherited = agentEffort ?? defaultEffort;
+  const idx = value ? fitIndex(efforts, value) : inherited ? fitIndex(efforts, inherited) : Math.max(0, efforts.indexOf("medium"));
+  const shown = effortLabel(efforts[preview ?? idx]!);
   return (
-    <Popover label="推理强度" className="w-56 max-w-[calc(100vw-2rem)] p-3" trigger={<span>{value ? EFFORTS[idx]!.label : agentLabel && agentLabel !== "默认" ? agentLabel : "默认"}</span>}>
+    <Popover label="推理强度" className="w-56 max-w-[calc(100vw-2rem)] p-3" trigger={<span>{value || inherited ? effortLabel(efforts[idx]!) : "默认"}</span>}>
       {() => (
         <div className="space-y-3">
           <div className="flex items-center text-[13px]">
             <span className="flex-1 text-muted">推理强度</span>
-            <span className="font-medium">{EFFORTS[idx]!.label}</span>
+            <span className="font-medium">{shown}</span>
           </div>
           <div className="flex justify-between text-xs text-muted">
             <span>更快</span>
             <span>更聪明</span>
           </div>
-          <div className="relative h-5 rounded-md bg-surface-2 flex items-center px-0.5">
-            {EFFORTS.map((e, i) => (
-              <button
-                key={e.label}
-                type="button"
-                aria-label={e.label}
-                aria-pressed={i === idx}
-                onClick={() => onChange(e.value)}
-                className="flex-1 h-full grid place-items-center"
-              >
-                {i === idx ? <span className="w-3 h-4 rounded-sm bg-[var(--text)] shadow-sm" /> : <span className="size-1 rounded-full bg-[var(--muted)] opacity-60" />}
+          <StepSlider
+            label="推理强度"
+            steps={efforts.map(effortLabel)}
+            index={idx}
+            onPreview={setPreview}
+            onChange={(i) => i !== idx && onChange(efforts[i]!)}
+          />
+          <div className="flex items-center gap-2 text-xs text-muted">
+            <span className="flex-1">
+              {value !== null ? "只对这个对话生效" : agentEffort ? `跟随 agent 设置（${effortLabel(efforts[idx]!)}）` : `模型默认${inherited ? `（${effortLabel(efforts[idx]!)}）` : ""}`}
+            </span>
+            {value !== null && (
+              <button type="button" onClick={() => onChange(null)} className="text-accent hover:underline">
+                恢复默认
               </button>
-            ))}
+            )}
           </div>
-          <div className="text-xs text-muted">{value === null ? `跟随 agent 设置（${agentLabel ?? "模型默认"}）` : "只对这个对话生效"}</div>
         </div>
       )}
     </Popover>
+  );
+}
+
+/**
+ * A track with one stop per step and a thumb that follows the pointer while dragging, then snaps to the
+ * nearest stop. `onChange` fires once on release (or per key press), so dragging never hits the network.
+ */
+function StepSlider({ label, steps, index, onChange, onPreview }: { label: string; steps: string[]; index: number; onChange: (i: number) => void; onPreview: (i: number | null) => void }) {
+  const track = useRef<HTMLDivElement>(null);
+  /** Thumb position while dragging, as a fraction of the track width; null when resting on `index`. */
+  const [drag, setDrag] = useState<number | null>(null);
+  const dragRef = useRef<number | null>(null);
+  const n = steps.length;
+  const center = (i: number) => (i + 0.5) / n;
+  const at = (e: PointerEvent) => {
+    const r = track.current!.getBoundingClientRect();
+    return Math.min(center(n - 1), Math.max(center(0), (e.clientX - r.left) / r.width));
+  };
+  const nearest = (f: number) => Math.min(n - 1, Math.max(0, Math.round(f * n - 0.5)));
+  const move = (f: number) => {
+    dragRef.current = f;
+    setDrag(f);
+    onPreview(nearest(f));
+  };
+  const end = (commit: boolean) => {
+    if (dragRef.current === null) return;
+    if (commit) onChange(nearest(dragRef.current));
+    dragRef.current = null;
+    setDrag(null);
+    onPreview(null);
+  };
+  const key = (e: KeyboardEvent) => {
+    const next = { ArrowLeft: index - 1, ArrowDown: index - 1, ArrowRight: index + 1, ArrowUp: index + 1, Home: 0, End: n - 1 }[e.key];
+    if (next === undefined) return;
+    e.preventDefault();
+    onChange(Math.min(n - 1, Math.max(0, next)));
+  };
+  return (
+    <div
+      ref={track}
+      role="slider"
+      tabIndex={0}
+      aria-label={label}
+      aria-valuemin={0}
+      aria-valuemax={n - 1}
+      aria-valuenow={index}
+      aria-valuetext={steps[index]}
+      onKeyDown={key}
+      onPointerDown={(e) => {
+        if (e.button !== 0) return;
+        e.currentTarget.setPointerCapture(e.pointerId);
+        move(at(e));
+      }}
+      onPointerMove={(e) => dragRef.current !== null && move(at(e))}
+      onPointerUp={() => end(true)}
+      onPointerCancel={() => end(false)}
+      className="relative h-5 rounded-md bg-surface-2 touch-none select-none cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
+    >
+      {steps.map((s, i) => (
+        <span key={s} className="absolute top-1/2 size-1 -translate-x-1/2 -translate-y-1/2 rounded-full bg-[var(--muted)] opacity-60" style={{ left: `${center(i) * 100}%` }} />
+      ))}
+      <span
+        className={cx("absolute top-1/2 w-3 h-4 -translate-x-1/2 -translate-y-1/2 rounded-sm bg-[var(--text)] shadow-sm", drag === null && "transition-[left] duration-150 ease-out")}
+        style={{ left: `${(drag ?? center(index)) * 100}%` }}
+      />
+    </div>
   );
 }
 

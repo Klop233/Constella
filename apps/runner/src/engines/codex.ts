@@ -142,6 +142,25 @@ export class CodexEngine {
     this.#write({ id: pending.rpcId, result: { decision: decision === "approve" ? "accept" : "decline" } });
   }
 
+  /** Models Codex has metadata for, with the reasoning levels each supports (weakest first). */
+  async models(): Promise<{ id: string; efforts: string[]; defaultEffort: string | null }[]> {
+    await this.#ensureProcess();
+    const out: { id: string; efforts: string[]; defaultEffort: string | null }[] = [];
+    let cursor: string | null = null;
+    do {
+      const res = await this.#request("model/list", { includeHidden: true, cursor });
+      for (const m of res.data ?? []) {
+        out.push({
+          id: m.model ?? m.id,
+          efforts: (m.supportedReasoningEfforts ?? []).map((e: Json) => e.reasoningEffort),
+          defaultEffort: m.defaultReasoningEffort ?? null,
+        });
+      }
+      cursor = res.nextCursor ?? null;
+    } while (cursor);
+    return out;
+  }
+
   stop(): void {
     this.#proc?.kill();
   }

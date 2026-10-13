@@ -227,7 +227,7 @@ export default function Chat() {
         <div className="flex-1 min-w-0" />
         {stats && agentId && conversationId && <ContextMeter stats={stats} runs={data!.runs} agentId={agentId} conversationId={conversationId} />}
         {a && <ModelPicker value={model} agentModel={a.model} onChange={(m) => void changeModel({ model: m })} />}
-        {a && <EffortPicker value={effort} agentEffort={a.effort} onChange={(e) => void changeModel({ effort: e })} />}
+        {a && <EffortPicker value={effort} agentEffort={a.effort} model={model ?? a.model} onChange={(e) => void changeModel({ effort: e })} />}
       </div>
     </div>
   );

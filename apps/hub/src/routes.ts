@@ -4,6 +4,7 @@ import type { FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { AgentInput, TEMPLATES } from "./agents.ts";
 import type { Hub } from "./app.ts";
+import { EffortSchema } from "./catalog.ts";
 import { config, nowIso } from "./config.ts";
 import { audit, kvSet } from "./db.ts";
 import type { DesktopAction } from "./desktops.ts";
@@ -30,7 +31,7 @@ class HttpError extends Error {
 }
 
 export function registerRoutes(hub: Hub): void {
-  const { app, auth, agents, runs, events, desktops, knowledge, learning, reflect, scheduler, notifier, newapi, settings, containers, db } = hub;
+  const { app, auth, agents, runs, events, desktops, knowledge, learning, reflect, scheduler, notifier, newapi, catalog, settings, containers, db } = hub;
 
   app.setErrorHandler((err: any, _req, reply) => {
     const status = err instanceof HttpError ? err.status : err?.validation || err instanceof z.ZodError ? 400 : (err?.statusCode ?? 400);
@@ -262,7 +263,7 @@ export function registerRoutes(hub: Hub): void {
   );
   const ModelPatch = {
     model: z.string().min(1).max(200).nullable().optional(),
-    effort: z.enum(["low", "medium", "high", "xhigh"]).nullable().optional(),
+    effort: EffortSchema.nullable().optional(),
   };
   const SendBody = z.object({ text: z.string().min(1).max(20000), images: z.array(z.string()).max(8).optional(), ...ModelPatch });
   app.post("/api/agents/:id/messages", async (req) => {
@@ -506,7 +507,9 @@ export function registerRoutes(hub: Hub): void {
   app.get("/api/schedules/:id/history", async (req) => scheduler.history(id(req)));
 
   // ── models, usage, settings ──────────────────────────────
-  app.get("/api/models", async (req) => newapi.models((req.query as { refresh?: string }).refresh === "1"));
+  app.get("/api/models", async (req) =>
+    (await newapi.models((req.query as { refresh?: string }).refresh === "1")).map((m) => ({ ...m, ...catalog.get(m.id) })),
+  );
   app.get("/api/usage", async (req) => {
     const days = Math.min(Number((req.query as { days?: string }).days ?? 7), 90);
     const since = new Date(Date.now() - days * 86_400_000).toISOString();

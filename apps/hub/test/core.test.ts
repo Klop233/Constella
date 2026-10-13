@@ -23,6 +23,7 @@ const { SecretBox, redact } = await import("../src/secrets.ts");
 const { hashPassword, verifyPassword } = await import("../src/auth.ts");
 const { transcriptFor } = await import("../src/learning.ts");
 const { parseJsonLoose } = await import("../src/newapi.ts");
+const { EffortCatalog } = await import("../src/catalog.ts");
 
 describe("run state machine", () => {
   it("allows the normal lifecycle and rejects leaving terminal states", () => {
@@ -97,6 +98,23 @@ describe("RunManager", () => {
     await new Promise((res) => setTimeout(res, 10));
     expect(sent[2].model).toBe("m");
     expect(sent[2].effort).toBeUndefined();
+  });
+
+  it("fits the effort to what the model supports", async () => {
+    const catalog = new EffortCatalog(db);
+    catalog.update([{ id: "m", efforts: ["low", "medium", "high", "xhigh"], defaultEffort: "medium" }]);
+    runs = new RunManager({
+      db,
+      events: new EventStore(db),
+      ensureRunner: async () => {},
+      sendToRunner: (_a, msg) => (sent.push(msg), true),
+      startPayload: () => ({ model: "m", effort: "ultra", instructions: "i", approvalPolicy: "auto", skillRoots: [] }),
+      notify: () => {},
+      fitEffort: (model, effort) => catalog.fit(model, effort),
+    });
+    await runs.send({ agentId: "ag1", text: "a" });
+    await new Promise((res) => setTimeout(res, 10));
+    expect(sent[0].effort).toBe("xhigh");
   });
 
   it("continues runs a restart cut off, but not forever and not when turned off", async () => {
@@ -190,6 +208,23 @@ describe("RunManager", () => {
     await expect(pending).resolves.toBe(false);
     runs.onRunnerHello("ag1", []);
     expect(runs.get(r.runId)!.status).toBe("failed");
+  });
+});
+
+describe("effort catalog", () => {
+  it("keeps what Codex reported across restarts and clamps to the supported levels", () => {
+    const db = openDb(":memory:");
+    new EffortCatalog(db).update([
+      { id: "astra", efforts: ["low", "medium", "high", "xhigh", "max", "ultra"], defaultEffort: "low" },
+      { id: "flat", efforts: [], defaultEffort: null },
+    ]);
+    const c = new EffortCatalog(db);
+    expect(c.get("astra")).toEqual({ efforts: ["low", "medium", "high", "xhigh", "max", "ultra"], defaultEffort: "low" });
+    expect(c.get("unknown").efforts).toEqual(["low", "medium", "high"]);
+    expect(c.fit("astra", "max")).toBe("max");
+    expect(c.fit("unknown", "max")).toBe("high");
+    expect(c.fit("unknown", "minimal")).toBe("low");
+    expect(c.fit("flat", "high")).toBeUndefined();
   });
 });
 

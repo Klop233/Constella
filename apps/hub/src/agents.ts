@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { DesktopPolicy, ApprovalPolicy } from "@constella/protocol";
 import { z } from "zod";
+import { EffortSchema } from "./catalog.ts";
 import { config, newId, nowIso } from "./config.ts";
 import { audit, type Db } from "./db.ts";
 import type { Knowledge } from "./knowledge.ts";
@@ -89,7 +90,7 @@ export const AgentInput = z.object({
   template: z.string().default("assistant"),
   persona: z.string().max(4000).optional(),
   model: z.string().min(1).optional(),
-  effort: z.enum(["low", "medium", "high", "xhigh"]).nullable().optional(),
+  effort: EffortSchema.nullable().optional(),
   approvalPolicy: ApprovalPolicy.optional(),
   desktopPolicy: DesktopPolicy.optional(),
   hostAccess: z.boolean().optional(),

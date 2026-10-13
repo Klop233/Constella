@@ -2,7 +2,16 @@ import type { AgentEvent, DesktopLease, DesktopPolicy, RunStatus } from "@conste
 
 export type { AgentEvent, DesktopLease, DesktopPolicy, RunStatus };
 
-export type Effort = "low" | "medium" | "high" | "xhigh";
+/** Codex reasoning level ("low", "medium", "high", "xhigh", "max", …); which ones apply depends on the model. */
+export type Effort = string;
+
+export interface Model {
+  id: string;
+  compat?: "ok" | "upstream_error";
+  /** Reasoning levels the model supports, weakest first (empty: not adjustable). */
+  efforts: Effort[];
+  defaultEffort: Effort | null;
+}
 
 export interface Agent {
   id: string;

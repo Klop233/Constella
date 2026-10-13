@@ -10,6 +10,7 @@ import Fastify, { type FastifyInstance } from "fastify";
 import type { WebSocket } from "ws";
 import { Agents } from "./agents.ts";
 import { Auth } from "./auth.ts";
+import { EffortCatalog } from "./catalog.ts";
 import { config, nowIso } from "./config.ts";
 import { Containers } from "./containers.ts";
 import { kvGet, openDb, type Db } from "./db.ts";
@@ -43,6 +44,8 @@ export interface Hub {
   scheduler: Scheduler;
   notifier: Notifier;
   newapi: NewApi;
+  /** Reasoning levels each model supports, as reported by the agents' Codex. */
+  catalog: EffortCatalog;
   runners: RunnerGateway;
   settings: Settings;
   backup(): Promise<string>;
@@ -175,6 +178,7 @@ export async function createHub(opts: { dbPath?: string; webDist?: string; logge
     apiKey: () => config.newapi.apiKey,
     admin: () => settings.newapiAdmin(),
   });
+  const catalog = new EffortCatalog(db);
   const notifier = new Notifier(db, events, config.vapid, () => settings.telegram());
   let agents!: Agents;
   const allSecretValues = () => [config.newapi.apiKey, ...(agents ? agents.list(true).flatMap((a) => agents.secretValues(a.id)) : [])];
@@ -214,13 +218,14 @@ export async function createHub(opts: { dbPath?: string; webDist?: string; logge
           : "desktop_* / browser_*：操作你的图形桌面和浏览器。网页任务优先用 browser_*（按页面结构操作，更可靠），其他程序用 desktop_screenshot + desktop_action。遇到登录、验证码、支付等必须由用户本人完成的步骤，调用 desktop_request_help。";
       return {
         model: a.model,
-        effort: (a.effort ?? undefined) as "low" | "medium" | "high" | "xhigh" | undefined,
+        effort: a.effort ?? undefined,
         instructions: agents.instructions(a, { desktopNote }),
         approvalPolicy: a.approval_policy,
         skillRoots: ["/home/agent/knowledge/skills", "/shared/skills"],
       };
     },
     notify: (title, body, url) => void notifier.send(title, body, url),
+    fitEffort: (model, effort) => catalog.fit(model, effort),
     autoResume: () => settings.autoResume(),
     approvalMode: () => settings.approvalMode(),
   });
@@ -298,6 +303,7 @@ export async function createHub(opts: { dbPath?: string; webDist?: string; logge
     scheduler,
     notifier,
     newapi,
+    catalog,
     runners,
     settings,
     backup,
@@ -339,6 +345,9 @@ export async function createHub(opts: { dbPath?: string; webDist?: string; logge
           break;
         case "thread":
           runs.onThread(agent.id, msg.runId, msg.threadId);
+          break;
+        case "models":
+          catalog.update(msg.models);
           break;
         case "turn_done": {
           const run = runs.get(msg.runId);
