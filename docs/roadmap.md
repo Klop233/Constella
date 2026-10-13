@@ -18,7 +18,7 @@
 - [x] runner + Codex 适配器，统一事件流写入 SQLite，SSE 断线续传
 - [x] run 状态机、审批、中途插话 / 停止、看门狗
 - [x] PWA：首页、对话页（已测）；Web Push 已实现，需 HTTPS 入口开通后在手机上实测
-- [ ] Tailscale Serve 入口（需要你在 tailnet 后台开启 Serve，之后执行一条命令）
+- [ ] Tailscale Serve 入口：被 tailnet 设置挡住（Serve 和 HTTPS 证书都未开启，2026-10-13 实测）。需要管理员开启 Serve，之后执行 `tailscale serve --bg --https=443 http://127.0.0.1:8780`
 
 ## 阶段 2：桌面
 - [x] 桌面池生命周期、空闲停止、持久化 home
@@ -39,6 +39,6 @@
 - [x] new-api：模型列表与兼容标注、按 agent 统计 token（已测）；专属令牌、费用统计、每日预算限制已实现，需要你提供管理令牌后实测
 - [x] agent 模板、导出 / 导入，健康与监控页，自动备份
 - [ ] Cloudflare Tunnel + Access 公网入口（已就绪：`scripts/enable-public.sh`，等你在 Cloudflare 建好 Tunnel）
-- [ ] （可选）Claude 引擎适配器：new-api 目前没有 Anthropic 原生通道，暂不做
+- [~] （可选）Claude 引擎适配器：决定不做。new-api 没有 Anthropic 原生通道，Claude 模型已能通过 Codex 引擎经 new-api 使用；引擎接口已预留，有原生通道后再加
 
 ## 阶段 5：清理 旧工具
