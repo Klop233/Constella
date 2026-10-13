@@ -113,6 +113,34 @@ try {
   await page.waitForTimeout(1000);
   await shot("13-settings");
 
+  step("passkey register + login (virtual authenticator)");
+  const cdp = await context.newCDPSession(page);
+  await cdp.send("WebAuthn.enable");
+  await cdp.send("WebAuthn.addVirtualAuthenticator", {
+    options: { protocol: "ctap2", transport: "internal", hasResidentKey: true, hasUserVerification: true, isUserVerified: true },
+  });
+  await page.getByRole("link", { name: "设置" }).click();
+  await page.getByText("通行密钥 · 0").waitFor();
+  await page.getByText("通行密钥 · 0").locator("xpath=ancestor::div[contains(@class,'flex items-center')][1]").getByRole("button", { name: "添加" }).click();
+  await page.getByText("通行密钥 · 1").waitFor({ timeout: 15000 });
+  await shot("15-passkey-added");
+  await page.getByRole("button", { name: "退出登录" }).click();
+  await page.getByRole("button", { name: "用通行密钥登录" }).click();
+  // Login keeps the current route (/settings).
+  await page.getByText("你好，e2e").waitFor({ timeout: 15000 });
+
+  step("web push subscribe");
+  await context.grantPermissions(["notifications"], { origin: BASE });
+  await page.getByRole("link", { name: "设置" }).click();
+  await page.getByRole("switch", { name: "接收推送" }).click();
+  const pushResult = await Promise.race([
+    page.getByText("已开启推送").waitFor({ timeout: 30000 }).then(() => "subscribed"),
+    page.locator(".bg-\\[var\\(--danger\\)\\]").first().waitFor({ timeout: 30000 }).then(async (el) => `failed: ${await page.locator(".bg-\\[var\\(--danger\\)\\]").first().innerText()}`),
+  ]).catch((e) => `timeout: ${e.message}`);
+  console.log("  push:", pushResult);
+  process.env.PUSH_RESULT = pushResult;
+  await shot("16-push");
+
   step("new agent form");
   await page.goto(`${BASE}/agents/new`, { waitUntil: "networkidle" });
   await page.getByText("网页办事").waitFor();

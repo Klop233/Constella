@@ -19,7 +19,7 @@
 - [x] run 状态机、审批、中途插话 / 停止、看门狗
 - [x] PWA：首页、对话页（已测）；Web Push 已实现，需 HTTPS 入口开通后在手机上实测
 - [x] 临时内网入口 http://100.64.0.9:8780（仅 tailnet，可用聊天和桌面；推送和通行密钥需要 HTTPS）
-- [~] Tailscale Serve HTTPS 入口（2026-10-13 你决定暂不开通；推送和通行密钥待开通后实测）：被 tailnet 设置挡住（Serve 和 HTTPS 证书都未开启，2026-10-13 实测）。需要管理员开启 Serve，之后执行 `tailscale serve --bg --https=443 http://127.0.0.1:8780`
+- [x] Tailscale Serve HTTPS 入口：https://your-machine.your-tailnet.ts.net（2026-10-13 开通，证书有效）
 
 ## 阶段 2：桌面
 - [x] 桌面池生命周期、空闲停止、持久化 home
