@@ -17,7 +17,7 @@ export function Button({
   ...rest
 }: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: Variant; size?: "sm" | "md" | "lg"; loading?: boolean }) {
   const styles: Record<Variant, string> = {
-    primary: "bg-accent text-white hover:brightness-95 active:brightness-90 disabled:opacity-50",
+    primary: "bg-accent-grad text-white hover:brightness-95 active:brightness-90 disabled:opacity-50",
     secondary: "bg-surface border border-line hover:bg-surface-2 active:bg-surface-2 disabled:opacity-50",
     ghost: "hover:bg-surface-2 active:bg-surface-2 disabled:opacity-50",
     danger: "bg-[var(--danger)] text-white active:opacity-85 disabled:opacity-50",
@@ -70,7 +70,7 @@ export function Empty({ icon, title, hint, action }: { icon?: ReactNode; title: 
   return (
     <div className="flex flex-col items-center text-center px-8 py-14 gap-2">
       {icon && <div className="text-muted mb-1">{icon}</div>}
-      <div className="font-serif text-lg">{title}</div>
+      <div className="font-display text-lg">{title}</div>
       {hint && <div className="text-sm text-muted">{hint}</div>}
       {action && <div className="mt-3">{action}</div>}
     </div>
@@ -90,7 +90,7 @@ export function Header({ title, back, right, sub }: { title: ReactNode; back?: b
           <div className="w-2" />
         )}
         <div className="flex-1 min-w-0">
-          <div className="font-serif font-medium text-[18px] truncate">{title}</div>
+          <div className="font-display font-semibold text-[17px] truncate">{title}</div>
           {sub && <div className="text-xs text-muted truncate -mt-0.5">{sub}</div>}
         </div>
         <div className="flex items-center gap-1 pr-1">{right}</div>
@@ -120,7 +120,7 @@ export function Sheet({ open, onClose, title, children }: { open: boolean; onClo
       <div className="absolute inset-0 bg-black/30 backdrop-blur-[2px]" onClick={onClose} />
       <div className="relative w-full sm:max-w-lg max-h-[88dvh] overflow-y-auto bg-surface border border-line shadow-2xl rounded-t-2xl sm:rounded-2xl safe-bottom">
         <div className="sticky top-0 bg-surface flex items-center px-5 pt-4 pb-2 z-10">
-          <div className="flex-1 font-serif font-medium text-xl">{title}</div>
+          <div className="flex-1 font-display font-medium text-xl">{title}</div>
           <IconButton label="关闭" onClick={onClose}>
             <X className="size-5" />
           </IconButton>
@@ -160,7 +160,7 @@ export function Toggle({ checked, onChange, label }: { checked: boolean; onChang
       aria-checked={checked}
       aria-label={label}
       onClick={() => onChange(!checked)}
-      className={cx("relative w-12 h-7 rounded-full transition shrink-0", checked ? "bg-accent" : "bg-[color-mix(in_oklab,var(--text)_18%,transparent)]")}
+      className={cx("relative w-12 h-7 rounded-full transition shrink-0", checked ? "bg-accent-grad" : "bg-[color-mix(in_oklab,var(--text)_18%,transparent)]")}
     >
       <span className={cx("absolute top-0.5 size-6 rounded-full bg-white shadow transition", checked ? "left-[22px]" : "left-0.5")} />
     </button>

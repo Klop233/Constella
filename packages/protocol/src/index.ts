@@ -85,6 +85,14 @@ export const AgentEvent = z.discriminatedUnion("type", [
     inputTokens: z.number().int().nonnegative(),
     outputTokens: z.number().int().nonnegative(),
     costUsd: z.number().nonnegative().optional(),
+    /** Of inputTokens, how many were served from the prompt cache. */
+    cachedInputTokens: z.number().int().nonnegative().optional(),
+    reasoningTokens: z.number().int().nonnegative().optional(),
+    /** Tokens occupying the context window after this model request, and the window size. */
+    contextTokens: z.number().int().nonnegative().optional(),
+    contextWindow: z.number().int().positive().optional(),
+    /** Wall time of this model request (from the previous boundary to its usage report), for tokens/s. */
+    durationMs: z.number().int().nonnegative().optional(),
   }),
   z.object({
     ...envelope,

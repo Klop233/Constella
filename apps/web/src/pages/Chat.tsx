@@ -3,11 +3,15 @@ import { ArrowUp, ImagePlus, Paperclip, Square, X } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router";
 import { AgentAvatar, AgentStatus } from "../components/AgentBits";
-import { RunView } from "../components/RunView";
+import { latestStats, RunView } from "../components/RunView";
 import { Header, Loading, cx, toast } from "../components/ui";
 import { api, fileToBase64 } from "../lib/api";
+import { useAppearance } from "../lib/appearance";
+import { tokens } from "../lib/format";
 import { useAgentEvents } from "../lib/live";
 import type { Agent, AgentEvent, Approval, Conversation, Run } from "../lib/types";
+
+const coarsePointer = window.matchMedia("(pointer: coarse)").matches;
 
 interface ConvData {
   conversation: Conversation;
@@ -84,6 +88,8 @@ export default function Chat() {
     if (stick.current) bottom.current?.scrollIntoView({ block: "end" });
   });
 
+  const { usage: showUsage } = useAppearance();
+  const stats = showUsage && data ? latestStats(data.runs) : null;
   const active = data?.runs.find((r) => !["done", "failed", "cancelled"].includes(r.status));
 
   const send = async () => {
@@ -162,7 +168,7 @@ export default function Chat() {
         ) : !data ? (
           <div className="flex flex-col items-center text-center px-6 pt-[22dvh] gap-3">
             {a && <span className="text-4xl">{a.emoji}</span>}
-            <h1 className="font-serif text-[28px] leading-tight">给{a?.name ?? "agent"}派个活</h1>
+            <h1 className="font-display text-[28px] leading-tight">给{a?.name ?? "agent"}派个活</h1>
             <p className="text-sm text-muted">例如：帮我查一下明天上海的天气，整理成三句话</p>
           </div>
         ) : (
@@ -193,8 +199,20 @@ export default function Chat() {
             value={text}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) void send();
+              // Enter sends; Ctrl/⌘/Shift+Enter inserts a newline. Ignore Enter while an IME is composing,
+              // and on touch keyboards (no modifier keys) leave Enter as a newline.
+              if (e.key !== "Enter" || e.nativeEvent.isComposing || e.keyCode === 229) return;
+              if (e.ctrlKey || e.metaKey) {
+                e.preventDefault();
+                const el = e.currentTarget;
+                el.setRangeText("\n", el.selectionStart, el.selectionEnd, "end");
+                setText(el.value);
+              } else if (!e.shiftKey && !coarsePointer) {
+                e.preventDefault();
+                void send();
+              }
             }}
+            enterKeyHint={coarsePointer ? "enter" : "send"}
             rows={1}
             placeholder={active ? "追加指示（任务进行中）" : "说点什么…"}
             className="block w-full resize-none max-h-48 min-h-12 bg-transparent px-4 pt-3.5 pb-1 text-[16px] outline-none field-sizing-content placeholder:text-muted"
@@ -205,12 +223,13 @@ export default function Chat() {
               <Paperclip className={cx("size-4", uploading && "animate-pulse")} />
             </button>
             <div className="flex-1" />
+            {stats && <ContextMeter {...stats} />}
             {active && !text.trim() ? (
               <button aria-label="停止" onClick={stop} className="size-8 grid place-items-center rounded-lg bg-[var(--text)] text-[var(--bg)] shrink-0">
                 <Square className="size-3.5 fill-current" />
               </button>
             ) : (
-              <button aria-label="发送" onClick={send} disabled={!text.trim() || sending} className="size-8 grid place-items-center rounded-lg bg-accent text-white hover:brightness-95 disabled:opacity-40 shrink-0">
+              <button aria-label="发送" onClick={send} disabled={!text.trim() || sending} className="size-8 grid place-items-center rounded-lg bg-accent-grad text-white hover:brightness-95 disabled:opacity-40 shrink-0">
                 <ArrowUp className="size-4" strokeWidth={2.4} />
               </button>
             )}
@@ -218,5 +237,38 @@ export default function Chat() {
         </div>
       </div>
     </div>
+  );
+}
+
+/** Composer-side gauge: how full the context window is, plus the latest request's output speed. */
+function ContextMeter({ context, tps }: { context: { tokens: number; window: number | null }; tps: number | null }) {
+  const pct = context.window ? Math.min(1, context.tokens / context.window) : null;
+  const detail = `上下文 ${tokens(context.tokens)}${context.window ? ` / ${tokens(context.window)}` : ""}${tps ? ` · 最近一次 ${tps.toFixed(1)} tok/s` : ""}`;
+  const r = 7;
+  const c = 2 * Math.PI * r;
+  return (
+    <button type="button" title={detail} aria-label={detail} onClick={() => toast(detail)} className="flex items-center gap-1.5 h-8 px-2 rounded-lg text-xs text-muted hover:bg-surface-2 tabular-nums">
+      {tps != null && <span>{tps.toFixed(0)} tok/s</span>}
+      {pct != null ? (
+        <>
+          <svg viewBox="0 0 18 18" className="size-4 -rotate-90">
+            <circle cx="9" cy="9" r={r} fill="none" stroke="var(--border)" strokeWidth="2.5" />
+            <circle
+              cx="9"
+              cy="9"
+              r={r}
+              fill="none"
+              stroke={pct > 0.85 ? "var(--danger)" : pct > 0.6 ? "var(--warn)" : "var(--color-accent)"}
+              strokeWidth="2.5"
+              strokeDasharray={`${pct * c} ${c}`}
+              strokeLinecap="round"
+            />
+          </svg>
+          <span>{Math.round(pct * 100)}%</span>
+        </>
+      ) : (
+        <span>{tokens(context.tokens)}</span>
+      )}
+    </button>
   );
 }

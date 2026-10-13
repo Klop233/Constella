@@ -2,7 +2,8 @@ import { Brain, Check, ChevronDown, CircleAlert, FileEdit, Globe, Loader2, Monit
 import { memo, useMemo, useState } from "react";
 import { Link } from "react-router";
 import { api } from "../lib/api";
-import { clock, STATUS_TEXT, tokens } from "../lib/format";
+import { useAppearance } from "../lib/appearance";
+import { clock, duration, STATUS_TEXT, tokens } from "../lib/format";
 import type { AgentEvent, Approval, Run } from "../lib/types";
 import { ApprovalCard } from "./ApprovalCard";
 import { Markdown } from "./Markdown";
@@ -18,10 +19,20 @@ type Item =
 const STEER_PREFIX = "［追加指示］";
 
 /** Folds a run's event stream into display items (streaming text, tool cards, approvals). */
-export function buildItems(events: AgentEvent[]): { items: Item[]; usage: { input: number; output: number } } {
+export interface Usage {
+  input: number;
+  output: number;
+  cached: number;
+  /** Output tokens and wall time of the requests that reported a duration, for tokens/s. */
+  timedOutput: number;
+  timedMs: number;
+  context: { tokens: number; window: number | null } | null;
+}
+
+export function buildItems(events: AgentEvent[]): { items: Item[]; usage: Usage } {
   const items: Item[] = [];
   const byId = new Map<string, Item>();
-  const usage = { input: 0, output: 0 };
+  const usage: Usage = { input: 0, output: 0, cached: 0, timedOutput: 0, timedMs: 0, context: null };
   for (const ev of events) {
     switch (ev.type) {
       case "message.delta": {
@@ -84,6 +95,12 @@ export function buildItems(events: AgentEvent[]): { items: Item[]; usage: { inpu
       case "usage":
         usage.input += ev.inputTokens;
         usage.output += ev.outputTokens;
+        usage.cached += ev.cachedInputTokens ?? 0;
+        if (ev.durationMs) {
+          usage.timedOutput += ev.outputTokens;
+          usage.timedMs += ev.durationMs;
+        }
+        if (ev.contextTokens != null) usage.context = { tokens: ev.contextTokens, window: ev.contextWindow ?? null };
         break;
     }
   }
@@ -196,12 +213,42 @@ export function UserBubble({ text, time }: { text: string; time?: string }) {
   );
 }
 
+/** Context occupancy and output speed of the latest model request in these runs (newest last). */
+export function latestStats(runs: Run[]): { context: NonNullable<Usage["context"]>; tps: number | null } | null {
+  for (let i = runs.length - 1; i >= 0; i--) {
+    const ev = runs[i]!.events.findLast((e) => e.type === "usage" && e.contextTokens != null);
+    if (ev?.type === "usage") {
+      return {
+        context: { tokens: ev.contextTokens!, window: ev.contextWindow ?? null },
+        tps: ev.durationMs && ev.outputTokens ? ev.outputTokens / (ev.durationMs / 1000) : null,
+      };
+    }
+  }
+  return null;
+}
+
+function UsageLine({ run, usage }: { run: Run; usage: Usage }) {
+  const input = usage.input || run.input_tokens;
+  const output = usage.output || run.output_tokens;
+  const parts: string[] = [];
+  if (usage.context) {
+    const { tokens: used, window } = usage.context;
+    parts.push(window ? `上下文 ${tokens(used)} / ${tokens(window)} (${Math.round((used / window) * 100)}%)` : `上下文 ${tokens(used)}`);
+  }
+  parts.push(`入 ${tokens(input)}${usage.cached ? ` (缓存 ${tokens(usage.cached)})` : ""}`);
+  parts.push(`出 ${tokens(output)}`);
+  if (usage.timedMs > 0 && usage.timedOutput > 0) parts.push(`${(usage.timedOutput / (usage.timedMs / 1000)).toFixed(1)} tok/s`);
+  if (run.finished_at) parts.push(duration(Date.parse(run.finished_at) - Date.parse(run.created_at)));
+  return <>{parts.join(" · ")}</>;
+}
+
 export function RunView({ run, approvals, onChanged }: { run: Run; approvals: Approval[]; onChanged: () => void }) {
   const { blocks, usage } = useMemo(() => {
     const { items, usage } = buildItems(run.events);
     return { blocks: groupSteps(items), usage };
   }, [run.events]);
   const finished = ["done", "failed", "cancelled"].includes(run.status);
+  const { usage: showUsage } = useAppearance();
   const pending = new Map(approvals.map((a) => [a.id, a]));
   const feedback = async (value: 1 | -1) => {
     try {
@@ -221,8 +268,8 @@ export function RunView({ run, approvals, onChanged }: { run: Run; approvals: Ap
             return it.user ? (
               <UserBubble key={it.id} text={it.text} />
             ) : (
-              <div key={it.id} className="text-[16px]">
-                <Markdown text={it.text} className="font-serif" />
+              <div key={it.id} className="text-[15px]">
+                <Markdown text={it.text} className="font-display" />
                 {it.streaming && !finished && <span className="inline-block size-2.5 ml-1 rounded-full bg-accent align-middle pulse-dot" />}
               </div>
             );
@@ -251,7 +298,13 @@ export function RunView({ run, approvals, onChanged }: { run: Run; approvals: Ap
       {finished && (
         <div className="flex items-center gap-1 text-[11px] text-muted">
           <span className="flex-1">
-            {run.model} · {tokens(usage.input || run.input_tokens)} 入 / {tokens(usage.output || run.output_tokens)} 出
+            {run.model}
+            {showUsage && (
+              <>
+                {" · "}
+                <UsageLine run={run} usage={usage} />
+              </>
+            )}
           </span>
           <button aria-label="有帮助" onClick={() => feedback(1)} className={cx("p-1.5 rounded-md hover:bg-surface-2", run.feedback === 1 && "text-accent")}>
             <ThumbsUp className="size-4" />

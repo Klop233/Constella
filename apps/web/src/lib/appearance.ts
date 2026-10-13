@@ -1,0 +1,58 @@
+import { useSyncExternalStore } from "react";
+
+/** Per-device display preferences, kept in localStorage and applied as attributes on <html>. */
+export interface Appearance {
+  theme: "system" | "light" | "dark";
+  palette: "nebula" | "clay" | "ocean";
+  font: "sans" | "serif";
+  /** Show context / token / speed stats in conversations. */
+  usage: boolean;
+}
+
+const KEY = "constella:appearance";
+const DEFAULTS: Appearance = { theme: "system", palette: "nebula", font: "sans", usage: true };
+const dark = window.matchMedia("(prefers-color-scheme: dark)");
+const listeners = new Set<() => void>();
+
+function read(): Appearance {
+  try {
+    return { ...DEFAULTS, ...JSON.parse(localStorage.getItem(KEY) ?? "{}") };
+  } catch {
+    return DEFAULTS;
+  }
+}
+
+let current = read();
+
+function apply(): void {
+  const root = document.documentElement;
+  root.dataset.mode = current.theme === "system" ? (dark.matches ? "dark" : "light") : current.theme;
+  root.dataset.palette = current.palette;
+  root.dataset.font = current.font;
+  const bg = getComputedStyle(root).getPropertyValue("--bg").trim();
+  if (bg) document.querySelector('meta[name="theme-color"]')?.setAttribute("content", bg);
+}
+
+export function setAppearance(patch: Partial<Appearance>): void {
+  current = { ...current, ...patch };
+  try {
+    localStorage.setItem(KEY, JSON.stringify(current));
+  } catch {
+    // Private mode etc.: the choice just won't survive a reload.
+  }
+  apply();
+  for (const l of listeners) l();
+}
+
+export function useAppearance(): Appearance {
+  return useSyncExternalStore(
+    (l) => {
+      listeners.add(l);
+      return () => listeners.delete(l);
+    },
+    () => current,
+  );
+}
+
+dark.addEventListener("change", () => current.theme === "system" && apply());
+apply();

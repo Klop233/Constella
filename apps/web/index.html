@@ -3,12 +3,22 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
-    <meta name="theme-color" content="#262624" media="(prefers-color-scheme: dark)" />
-    <meta name="theme-color" content="#faf9f5" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#faf9fc" />
     <meta name="description" content="Constella：你的 agent 星座" />
     <link rel="icon" href="/icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/icon-192.png" />
     <title>Constella</title>
+    <script>
+      // Apply saved appearance before first paint (kept in sync with src/lib/appearance.ts).
+      (function () {
+        var a = {};
+        try { a = JSON.parse(localStorage.getItem("constella:appearance") || "{}"); } catch (e) {}
+        var t = a.theme || "system", r = document.documentElement;
+        r.dataset.mode = t === "system" ? (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light") : t;
+        r.dataset.palette = a.palette || "nebula";
+        r.dataset.font = a.font || "sans";
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

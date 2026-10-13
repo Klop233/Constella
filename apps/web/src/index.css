@@ -6,41 +6,101 @@
   --font-sans: "Inter", "PingFang SC", "HarmonyOS Sans SC", "MiSans", "Noto Sans CJK SC", system-ui, sans-serif;
   --font-serif: "Tiempos Text", "Source Serif 4", Georgia, "Noto Serif SC", "Source Han Serif SC", "Songti SC", ui-serif, serif;
   --font-mono: "JetBrains Mono", "SFMono-Regular", "Cascadia Mono", ui-monospace, monospace;
-  --color-accent: #c96442;
-  --color-accent-soft: rgb(201 100 66 / 0.12);
+  /* Titles and agent replies; switchable in Settings → 外观. */
+  --font-display: var(--font-sans);
+  --color-accent: #8b5cf6;
+  --color-accent-soft: rgb(139 92 246 / 0.12);
 }
 
-/* Warm neutrals + terracotta accent, after Claude's visual language. */
+/*
+ * Appearance is driven by attributes on <html> (see lib/appearance.ts):
+ *   data-mode    light | dark        (resolved; "跟随系统" is handled in JS)
+ *   data-palette nebula | clay | ocean
+ *   data-font    sans | serif
+ */
 :root {
+  --bg: #faf9fc;
+  --sidebar: #f3f1f8;
+  --surface: #ffffff;
+  --surface-2: #f0edf6;
+  --border: #e5e1ee;
+  --text: #221d2c;
+  --muted: #756e84;
+  --accent-2: #ec4899;
+  --ok: #3f8f5a;
+  --warn: #b7791f;
+  --danger: #c93a3a;
+  color-scheme: light;
+}
+:root[data-mode="dark"] {
+  --bg: #1c1a23;
+  --sidebar: #16141c;
+  --surface: #26232f;
+  --surface-2: #312d3b;
+  --border: #3b3746;
+  --text: #f2eff8;
+  --muted: #a39cb2;
+  --accent-2: #e260a8;
+  --color-accent: #9b7bf0;
+  --color-accent-soft: rgb(155 123 240 / 0.16);
+  --ok: #7fc493;
+  --warn: #e5b04f;
+  --danger: #ef7a7a;
+  color-scheme: dark;
+}
+
+/* 陶土: warm neutrals + terracotta, after Claude. */
+:root[data-palette="clay"] {
   --bg: #faf9f5;
   --sidebar: #f5f4ed;
-  --surface: #ffffff;
   --surface-2: #f0eee6;
   --border: #e6e3d8;
   --text: #29261b;
   --muted: #7a776d;
-  --ok: #3f7d4e;
-  --warn: #b7791f;
-  --danger: #b53333;
-  color-scheme: light;
+  --accent-2: #d97757;
+  --color-accent: #c96442;
+  --color-accent-soft: rgb(201 100 66 / 0.12);
+}
+:root[data-palette="clay"][data-mode="dark"] {
+  --bg: #262624;
+  --sidebar: #1f1e1d;
+  --surface: #30302e;
+  --surface-2: #3a3936;
+  --border: #45443f;
+  --text: #f5f4ee;
+  --muted: #a6a39a;
+  --accent-2: #e08a6c;
+  --color-accent: #d97757;
+  --color-accent-soft: rgb(217 119 87 / 0.16);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #262624;
-    --sidebar: #1f1e1d;
-    --surface: #30302e;
-    --surface-2: #3a3936;
-    --border: #45443f;
-    --text: #f5f4ee;
-    --muted: #a6a39a;
-    --ok: #7fb88c;
-    --warn: #e0a84f;
-    --danger: #e5786f;
-    --color-accent: #d97757;
-    --color-accent-soft: rgb(217 119 87 / 0.16);
-    color-scheme: dark;
-  }
+/* 海洋: cool slate + blue/cyan. */
+:root[data-palette="ocean"] {
+  --bg: #f8fafc;
+  --sidebar: #f1f4f8;
+  --surface-2: #eef2f7;
+  --border: #e2e8f0;
+  --text: #1a2332;
+  --muted: #64748b;
+  --accent-2: #06b6d4;
+  --color-accent: #2563eb;
+  --color-accent-soft: rgb(37 99 235 / 0.1);
+}
+:root[data-palette="ocean"][data-mode="dark"] {
+  --bg: #161b22;
+  --sidebar: #11151b;
+  --surface: #1f2630;
+  --surface-2: #2a323e;
+  --border: #343d4a;
+  --text: #e8edf4;
+  --muted: #94a3b8;
+  --accent-2: #22b8d4;
+  --color-accent: #4f8ff7;
+  --color-accent-soft: rgb(79 143 247 / 0.16);
+}
+
+:root[data-font="serif"] {
+  --font-display: var(--font-serif);
 }
 
 html,
@@ -62,6 +122,7 @@ body {
 .bg-surface { background: var(--surface); }
 .bg-surface-2 { background: var(--surface-2); }
 .bg-sidebar { background: var(--sidebar); }
+.bg-accent-grad { background: linear-gradient(135deg, var(--color-accent), var(--accent-2)); }
 .border-line { border-color: var(--border); }
 .text-muted { color: var(--muted); }
 .text-ok { color: var(--ok); }
@@ -80,7 +141,7 @@ body {
 .prose-chat code { font-family: var(--font-mono); font-size: 0.85em; background: var(--surface-2); padding: 0.1em 0.35em; border-radius: 4px; }
 .prose-chat pre { background: var(--surface-2); border: 1px solid var(--border); padding: 0.7em 0.9em; border-radius: 8px; overflow-x: auto; margin: 0.5em 0; }
 .prose-chat pre code { background: none; padding: 0; }
-.prose-chat h1, .prose-chat h2, .prose-chat h3 { font-weight: 600; font-family: var(--font-serif); margin: 0.6em 0 0.3em; }
+.prose-chat h1, .prose-chat h2, .prose-chat h3 { font-weight: 600; font-family: var(--font-display); margin: 0.6em 0 0.3em; }
 .prose-chat table { border-collapse: collapse; display: block; overflow-x: auto; }
 .prose-chat td, .prose-chat th { border: 1px solid var(--border); padding: 0.25em 0.5em; }
 .prose-chat blockquote { border-left: 3px solid var(--border); padding-left: 0.8em; color: var(--muted); }

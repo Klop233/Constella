@@ -1,11 +1,12 @@
 import { startRegistration } from "@simplewebauthn/browser";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bell, Database, Fingerprint, KeyRound, LogOut, Server, Shield, Smartphone } from "lucide-react";
+import { Bell, Database, Gauge, Fingerprint, KeyRound, LogOut, Server, Shield, Smartphone } from "lucide-react";
 import QRCode from "qrcode";
 import { useEffect, useState } from "react";
 import { ModelSelect } from "./AgentEdit";
-import { Badge, Button, Card, Field, Header, Loading, Row, Section, Sheet, Toggle, cx, inputClass, toast } from "../components/ui";
+import { Badge, Button, Card, Field, Header, Loading, Row, Section, Segmented, Sheet, Toggle, cx, inputClass, toast } from "../components/ui";
 import { api } from "../lib/api";
+import { setAppearance, useAppearance, type Appearance } from "../lib/appearance";
 import { timeAgo, tokens } from "../lib/format";
 import { currentSubscription, disablePush, enablePush, pushSupported } from "../lib/push";
 import type { Agent } from "../lib/types";
@@ -48,6 +49,7 @@ export default function Settings() {
     <div>
       <Header title="设置" sub={`你好，${me.data.name}`} />
       <div className="px-4 space-y-6 pb-8 lg:max-w-3xl">
+        <AppearanceSection />
         <PushSection />
         <Section title="模型">
           <Card className="p-4 space-y-4">
@@ -72,6 +74,70 @@ export default function Settings() {
         </Button>
       </div>
     </div>
+  );
+}
+
+const PALETTES: { value: Appearance["palette"]; label: string; swatch: [string, string] }[] = [
+  { value: "nebula", label: "星云", swatch: ["#8b5cf6", "#ec4899"] },
+  { value: "clay", label: "陶土", swatch: ["#c96442", "#d97757"] },
+  { value: "ocean", label: "海洋", swatch: ["#2563eb", "#06b6d4"] },
+];
+
+function AppearanceSection() {
+  const a = useAppearance();
+  return (
+    <Section title="外观（仅这台设备）">
+      <Card className="p-4 space-y-4">
+        <Field label="主题" group>
+          <Segmented
+            value={a.theme}
+            options={[
+              { value: "system", label: "跟随系统" },
+              { value: "light", label: "浅色" },
+              { value: "dark", label: "深色" },
+            ]}
+            onChange={(theme) => setAppearance({ theme })}
+          />
+        </Field>
+        <Field label="配色" group>
+          <div className="grid grid-cols-3 gap-2">
+            {PALETTES.map((p) => (
+              <button
+                key={p.value}
+                type="button"
+                aria-pressed={a.palette === p.value}
+                onClick={() => setAppearance({ palette: p.value })}
+                className={cx(
+                  "flex items-center gap-2 h-10 px-3 rounded-lg border text-sm transition-colors",
+                  a.palette === p.value ? "border-[var(--color-accent)] ring-1 ring-[var(--color-accent)]" : "border-line hover:bg-surface-2",
+                )}
+              >
+                <span className="size-4 rounded-full shrink-0" style={{ background: `linear-gradient(135deg, ${p.swatch[0]}, ${p.swatch[1]})` }} />
+                {p.label}
+              </button>
+            ))}
+          </div>
+        </Field>
+        <Field label="标题与回复字体" group>
+          <Segmented
+            value={a.font}
+            options={[
+              { value: "sans", label: "无衬线" },
+              { value: "serif", label: "衬线" },
+            ]}
+            onChange={(font) => setAppearance({ font })}
+          />
+        </Field>
+      </Card>
+      <Card className="overflow-hidden">
+        <Row
+          icon={<Gauge className="size-5 text-muted" />}
+          title="对话中显示用量"
+          sub="上下文占用、token 数、输出速度"
+          right={<Toggle checked={a.usage} onChange={(usage) => setAppearance({ usage })} label="对话中显示用量" />}
+        />
+      </Card>
+    </Section>
   );
 }
 

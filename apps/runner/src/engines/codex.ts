@@ -20,6 +20,8 @@ interface ActiveRun {
   /** Commands output budget per tool call, to keep the event log bounded. */
   outputBytes: Map<string, number>;
   reasoning: Map<string, string>;
+  /** When the current model request began: turn start, the last tool finishing, or the previous usage report. */
+  requestStart: number;
   lastError?: string;
 }
 
@@ -87,6 +89,7 @@ export class CodexEngine {
         model: cmd.model,
         outputBytes: new Map(),
         reasoning: new Map(),
+        requestStart: Date.now(),
       };
       this.#runs.set(cmd.runId, run);
       this.#runsByThread.set(threadId, run);
@@ -248,17 +251,26 @@ export class CodexEngine {
         break;
       case "item/completed":
         this.#onItem(run, p.item, "completed");
+        // A finished tool call hands control back to the model: the next request starts now.
+        if (!["userMessage", "agentMessage", "reasoning"].includes(p.item?.type)) run.requestStart = Date.now();
         break;
       case "thread/tokenUsage/updated": {
         const last = p.tokenUsage?.last;
         if (last) {
+          const now = Date.now();
           this.#sink.event({
             type: "usage",
             runId,
             model: run.model,
             inputTokens: last.inputTokens ?? 0,
             outputTokens: last.outputTokens ?? 0,
+            cachedInputTokens: last.cachedInputTokens ?? undefined,
+            reasoningTokens: last.reasoningOutputTokens ?? undefined,
+            contextTokens: last.totalTokens ?? undefined,
+            contextWindow: p.tokenUsage.modelContextWindow || undefined,
+            durationMs: now - run.requestStart,
           });
+          run.requestStart = now;
         }
         break;
       }
