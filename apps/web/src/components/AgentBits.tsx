@@ -7,7 +7,7 @@ export function AgentAvatar({ emoji, size = "md" }: { emoji: string; size?: "sm"
   return <div className={cx("grid place-items-center bg-surface-2 border border-line shrink-0", s)}>{emoji}</div>;
 }
 
-export function AgentStatus({ agent }: { agent: Agent }) {
+function statusOf(agent: Agent): { text: string; dot: string } {
   const active = agent.activeRuns[0];
   let text = "空闲";
   let dot = "bg-[var(--muted)]";
@@ -23,6 +23,17 @@ export function AgentStatus({ agent }: { agent: Agent }) {
   } else {
     text = "休眠";
   }
+  return { text, dot };
+}
+
+/** Just the status dot, with the status as its tooltip. */
+export function AgentDot({ agent }: { agent: Agent }) {
+  const { text, dot } = statusOf(agent);
+  return <span title={text} aria-label={text} className={cx("size-1.5 rounded-full", dot)} />;
+}
+
+export function AgentStatus({ agent }: { agent: Agent }) {
+  const { text, dot } = statusOf(agent);
   return (
     <div className="flex items-center gap-1.5 text-xs text-muted mt-0.5">
       <span className={cx("size-1.5 rounded-full", dot)} />

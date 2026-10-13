@@ -22,7 +22,7 @@ export function Button({
     ghost: "hover:bg-surface-2 active:bg-surface-2 disabled:opacity-50",
     danger: "bg-[var(--danger)] text-white active:opacity-85 disabled:opacity-50",
   };
-  const sizes = { sm: "h-8 px-3 text-sm rounded-md", md: "h-10 px-4 text-[15px] rounded-lg", lg: "h-12 px-5 text-base rounded-xl" };
+  const sizes = { sm: "h-7 px-2.5 text-[13px] rounded-md", md: "h-8 px-3 text-[13.5px] rounded-md", lg: "h-10 px-4 text-sm rounded-lg" };
   return (
     <button
       {...rest}
@@ -51,7 +51,7 @@ export function Badge({ tone = "muted", children, className }: { tone?: "muted" 
     danger: "bg-[color-mix(in_oklab,var(--danger)_15%,transparent)] text-danger",
     accent: "bg-accent-soft text-accent",
   };
-  return <span className={cx("inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs font-medium", tones[tone], className)}>{children}</span>;
+  return <span className={cx("inline-flex items-center gap-1 rounded px-1.5 py-px text-[11.5px] font-medium", tones[tone], className)}>{children}</span>;
 }
 
 export function Spinner({ className }: { className?: string }) {
@@ -68,29 +68,29 @@ export function Loading() {
 
 export function Empty({ icon, title, hint, action }: { icon?: ReactNode; title: string; hint?: string; action?: ReactNode }) {
   return (
-    <div className="flex flex-col items-center text-center px-8 py-14 gap-2">
+    <div className="flex flex-col items-center text-center px-6 py-10 gap-1.5">
       {icon && <div className="text-muted mb-1">{icon}</div>}
-      <div className="font-display text-lg">{title}</div>
+      <div className="font-display text-base font-medium">{title}</div>
       {hint && <div className="text-sm text-muted">{hint}</div>}
       {action && <div className="mt-3">{action}</div>}
     </div>
   );
 }
 
-export function Header({ title, back, right, sub }: { title: ReactNode; back?: boolean | string; right?: ReactNode; sub?: ReactNode }) {
+export function Header({ title, back, backMobileOnly, right, sub }: { title: ReactNode; back?: boolean | string; backMobileOnly?: boolean; right?: ReactNode; sub?: ReactNode }) {
   const nav = useNavigate();
   return (
     <header className="safe-top sticky top-0 z-20 bg-app/90 backdrop-blur-md">
-      <div className="h-14 flex items-center gap-1 px-2">
+      <div className="h-12 flex items-center gap-1 px-2">
         {back ? (
-          <button aria-label="返回" className="size-10 grid place-items-center rounded-lg hover:bg-surface-2 active:bg-surface-2" onClick={() => (typeof back === "string" ? nav(back) : history.length > 1 ? nav(-1) : nav("/"))}>
-            <ChevronLeft className="size-6" />
+          <button aria-label="返回" className={cx("size-8 grid place-items-center rounded-md hover:bg-surface-2 active:bg-surface-2", backMobileOnly && "lg:hidden")} onClick={() => (typeof back === "string" ? nav(back) : history.length > 1 ? nav(-1) : nav("/"))}>
+            <ChevronLeft className="size-5" />
           </button>
         ) : (
           <div className="w-2" />
         )}
         <div className="flex-1 min-w-0">
-          <div className="font-display font-semibold text-[17px] truncate">{title}</div>
+          <div className="font-display font-semibold text-[15px] truncate">{title}</div>
           {sub && <div className="text-xs text-muted truncate -mt-0.5">{sub}</div>}
         </div>
         <div className="flex items-center gap-1 pr-1">{right}</div>
@@ -101,7 +101,7 @@ export function Header({ title, back, right, sub }: { title: ReactNode; back?: b
 
 export function IconButton({ label, onClick, children, className }: { label: string; onClick?: () => void; children: ReactNode; className?: string }) {
   return (
-    <button aria-label={label} title={label} onClick={onClick} className={cx("size-10 grid place-items-center rounded-lg text-muted hover:text-[var(--text)] hover:bg-surface-2 active:bg-surface-2", className)}>
+    <button aria-label={label} title={label} onClick={onClick} className={cx("size-8 grid place-items-center rounded-md text-muted hover:text-[var(--text)] hover:bg-surface-2 active:bg-surface-2", className)}>
       {children}
     </button>
   );
@@ -119,13 +119,13 @@ export function Sheet({ open, onClose, title, children }: { open: boolean; onClo
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center" role="dialog" aria-modal="true" aria-label={title}>
       <div className="absolute inset-0 bg-black/30 backdrop-blur-[2px]" onClick={onClose} />
       <div className="relative w-full sm:max-w-lg max-h-[88dvh] overflow-y-auto bg-surface border border-line shadow-2xl rounded-t-2xl sm:rounded-2xl safe-bottom">
-        <div className="sticky top-0 bg-surface flex items-center px-5 pt-4 pb-2 z-10">
-          <div className="flex-1 font-display font-medium text-xl">{title}</div>
+        <div className="sticky top-0 bg-surface flex items-center px-4 pt-3 pb-1.5 z-10">
+          <div className="flex-1 font-display font-semibold text-base">{title}</div>
           <IconButton label="关闭" onClick={onClose}>
             <X className="size-5" />
           </IconButton>
         </div>
-        <div className="px-5 pb-6">{children}</div>
+        <div className="px-4 pb-5">{children}</div>
       </div>
     </div>
   );
@@ -135,7 +135,7 @@ export function Sheet({ open, onClose, title, children }: { open: boolean; onClo
 export function Field({ label, hint, children, group }: { label: string; hint?: ReactNode; children: ReactNode; group?: boolean }) {
   const body = (
     <>
-      <div className="text-sm font-medium">{label}</div>
+      <div className="text-[13px] font-medium">{label}</div>
       {children}
       {hint && <div className="text-xs text-muted">{hint}</div>}
     </>
@@ -150,7 +150,7 @@ export function Field({ label, hint, children, group }: { label: string; hint?: 
 }
 
 export const inputClass =
-  "w-full rounded-lg bg-surface border border-line hover:border-[color-mix(in_oklab,var(--text)_25%,transparent)] focus:border-[var(--color-accent)] outline-none px-3.5 py-2.5 text-[15px] placeholder:text-muted transition-colors";
+  "w-full rounded-lg bg-surface border border-line hover:border-[color-mix(in_oklab,var(--text)_25%,transparent)] focus:border-[var(--color-accent)] outline-none px-3 py-1.5 text-[13.5px] placeholder:text-muted transition-colors";
 
 export function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (v: boolean) => void; label?: string }) {
   return (
@@ -160,22 +160,22 @@ export function Toggle({ checked, onChange, label }: { checked: boolean; onChang
       aria-checked={checked}
       aria-label={label}
       onClick={() => onChange(!checked)}
-      className={cx("relative w-12 h-7 rounded-full transition shrink-0", checked ? "bg-accent-grad" : "bg-[color-mix(in_oklab,var(--text)_18%,transparent)]")}
+      className={cx("relative w-9 h-5 rounded-full transition shrink-0", checked ? "bg-accent-grad" : "bg-[color-mix(in_oklab,var(--text)_18%,transparent)]")}
     >
-      <span className={cx("absolute top-0.5 size-6 rounded-full bg-white shadow transition", checked ? "left-[22px]" : "left-0.5")} />
+      <span className={cx("absolute top-0.5 size-4 rounded-full bg-white shadow transition", checked ? "left-[18px]" : "left-0.5")} />
     </button>
   );
 }
 
 export function Segmented<T extends string>({ value, options, onChange }: { value: T; options: { value: T; label: string }[]; onChange: (v: T) => void }) {
   return (
-    <div className="flex p-1 rounded-lg bg-surface-2 gap-1">
+    <div className="flex p-0.5 rounded-md bg-surface-2 gap-0.5">
       {options.map((o) => (
         <button
           key={o.value}
           type="button"
           onClick={() => onChange(o.value)}
-          className={cx("flex-1 h-8 rounded-md text-sm font-medium transition", value === o.value ? "bg-surface shadow-sm" : "text-muted hover:text-[var(--text)]")}
+          className={cx("flex-1 h-7 rounded text-[13px] font-medium transition", value === o.value ? "bg-surface shadow-sm" : "text-muted hover:text-[var(--text)]")}
         >
           {o.label}
         </button>
@@ -186,9 +186,9 @@ export function Segmented<T extends string>({ value, options, onChange }: { valu
 
 export function Section({ title, action, children }: { title: string; action?: ReactNode; children: ReactNode }) {
   return (
-    <section className="space-y-2">
+    <section className="space-y-1.5">
       <div className="flex items-center px-1">
-        <h2 className="flex-1 text-[13px] font-medium text-muted">{title}</h2>
+        <h2 className="flex-1 text-xs font-medium text-muted">{title}</h2>
         {action}
       </div>
       {children}
@@ -198,7 +198,7 @@ export function Section({ title, action, children }: { title: string; action?: R
 
 export function Row({ title, sub, right, onClick, icon }: { title: ReactNode; sub?: ReactNode; right?: ReactNode; onClick?: () => void; icon?: ReactNode }) {
   return (
-    <div onClick={onClick} className={cx("flex items-center gap-3 px-4 py-3", onClick && "hover:bg-surface-2 active:bg-surface-2 cursor-pointer")}>
+    <div onClick={onClick} className={cx("flex items-center gap-3 px-3.5 py-2.5", onClick && "hover:bg-surface-2 active:bg-surface-2 cursor-pointer")}>
       {icon && <div className="shrink-0">{icon}</div>}
       <div className="flex-1 min-w-0">
         <div className="truncate">{title}</div>

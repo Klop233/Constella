@@ -1,4 +1,4 @@
-import { Brain, Check, ChevronDown, CircleAlert, FileEdit, Globe, Loader2, Monitor, Terminal, ThumbsDown, ThumbsUp, Wrench, X } from "lucide-react";
+import { Brain, ChevronRight, CircleAlert, FileEdit, Globe, Loader2, Monitor, Terminal, ThumbsDown, ThumbsUp, Wrench, X } from "lucide-react";
 import { memo, useMemo, useState } from "react";
 import { Link } from "react-router";
 import { api } from "../lib/api";
@@ -137,17 +137,16 @@ const ToolRow = memo(function ToolRow({ item }: { item: Extract<Item, { kind: "t
   const { icon: Icon, title } = toolTitle(item.name, item.input);
   return (
     <div>
-      <button className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-[13px] hover:bg-surface-2" onClick={() => setOpen(!open)}>
-        <Icon className="size-3.5 text-muted shrink-0" />
+      <button className="w-full flex items-center gap-2 py-1 text-left text-[12.5px] text-muted hover:text-[var(--text)]" onClick={() => setOpen(!open)}>
+        <Icon className="size-3.5 shrink-0" />
         <span className="font-mono truncate flex-1">{title || item.name}</span>
-        {!item.done ? <Loader2 className="size-3.5 animate-spin text-accent" /> : item.ok ? <Check className="size-3.5 text-ok" /> : <X className="size-3.5 text-danger" />}
-        <ChevronDown className={cx("size-3.5 text-muted transition", open && "rotate-180")} />
+        {!item.done ? <Loader2 className="size-3.5 animate-spin text-accent shrink-0" /> : !item.ok && <X className="size-3.5 text-danger shrink-0" />}
       </button>
       {open && (
-        <div className="px-3 pb-2 pl-8 space-y-2 text-xs">
+        <div className="mb-1.5 ml-5.5 space-y-1.5 text-xs">
           <pre className="font-mono whitespace-pre-wrap break-all text-muted max-h-40 overflow-auto">{JSON.stringify(item.input, null, 2)}</pre>
-          {item.output && <pre className="font-mono whitespace-pre-wrap break-all bg-surface-2 rounded-md p-2 max-h-72 overflow-auto">{item.output}</pre>}
-          {item.result != null && !item.output && <pre className="font-mono whitespace-pre-wrap break-all bg-surface-2 rounded-md p-2 max-h-72 overflow-auto">{JSON.stringify(item.result, null, 2)}</pre>}
+          {item.output && <pre className="font-mono whitespace-pre-wrap break-all bg-surface-2 rounded-md px-2.5 py-2 max-h-72 overflow-auto">{item.output}</pre>}
+          {item.result != null && !item.output && <pre className="font-mono whitespace-pre-wrap break-all bg-surface-2 rounded-md px-2.5 py-2 max-h-72 overflow-auto">{JSON.stringify(item.result, null, 2)}</pre>}
           {item.error && <div className="text-danger">{item.error}</div>}
         </div>
       )}
@@ -159,13 +158,13 @@ function StepRow({ step }: { step: Step }) {
   if (step.kind === "tool") return <ToolRow item={step} />;
   if (step.kind === "reasoning")
     return (
-      <div className="flex items-start gap-2 px-3 py-1.5 text-xs text-muted">
-        <Brain className="size-3.5 mt-px shrink-0" />
+      <div className="flex items-start gap-2 py-1 text-[12.5px] text-muted">
+        <Brain className="size-3.5 mt-0.5 shrink-0" />
         <span className="whitespace-pre-wrap">{step.text}</span>
       </div>
     );
   return (
-    <Link to={`/desktops/${step.desktopId}`} className="flex items-center gap-2 px-3 py-1.5 text-xs text-muted hover:bg-surface-2">
+    <Link to={`/desktops/${step.desktopId}`} className="flex items-center gap-2 py-1 text-[12.5px] text-muted hover:text-[var(--text)]">
       <Monitor className="size-3.5 shrink-0" /> {step.action}
     </Link>
   );
@@ -177,24 +176,35 @@ function stepLabel(step: Step): string {
   return step.action;
 }
 
-/** One card per run of consecutive steps: a one-line summary that expands into the full list. */
+/** Summary of what a run of steps did, e.g. "运行了 2 条命令，修改了 1 个文件". */
+function stepsSummary(steps: Step[]): string {
+  let cmds = 0;
+  let edits = 0;
+  let others = 0;
+  for (const s of steps) {
+    if (s.kind !== "tool") continue;
+    if (s.name === "shell") cmds++;
+    else if (s.name === "edit") edits++;
+    else others++;
+  }
+  const parts = [cmds && `运行了 ${cmds} 条命令`, edits && `修改了 ${edits} 处文件`, others && `调用了 ${others} 个工具`].filter(Boolean);
+  return parts.length ? parts.join("，") : "思考过程";
+}
+
+/** One collapsible line per run of consecutive steps, like Claude Code's "Ran 3 commands ›". */
 function StepGroup({ steps, live }: { steps: Step[]; live: boolean }) {
   const [open, setOpen] = useState(false);
-  const tools = steps.filter((s) => s.kind === "tool") as Extract<Item, { kind: "tool" }>[];
-  const failed = tools.filter((t) => t.done && !t.ok).length;
-  const last = steps.at(-1)!;
-  const summary = live ? stepLabel(last) : tools.length ? `执行了 ${tools.length} 个操作` : "思考过程";
+  const failed = steps.filter((s) => s.kind === "tool" && s.done && !s.ok).length;
   return (
-    <div className="rounded-lg border border-line bg-surface overflow-hidden">
-      <button className="w-full flex items-center gap-2 px-3 py-2 text-left text-[13px]" onClick={() => setOpen(!open)}>
-        {live ? <Loader2 className="size-4 animate-spin text-accent shrink-0" /> : <Wrench className="size-4 text-muted shrink-0" />}
-        <span className={cx("truncate flex-1", live ? "font-mono text-muted" : "text-[color-mix(in_oklab,var(--text)_80%,transparent)]")}>{summary}</span>
-        {failed > 0 && <span className="text-xs text-danger shrink-0">{failed} 个失败</span>}
-        {live && steps.length > 1 && <span className="text-xs text-muted shrink-0">{steps.length} 步</span>}
-        <ChevronDown className={cx("size-4 text-muted transition shrink-0", open && "rotate-180")} />
+    <div>
+      <button className="group flex items-center gap-1.5 max-w-full text-left text-[13.5px] text-muted hover:text-[var(--text)]" onClick={() => setOpen(!open)}>
+        {live && <Loader2 className="size-3.5 animate-spin text-accent shrink-0" />}
+        <span className={cx("truncate", live && "font-mono text-[12.5px]")}>{live ? stepLabel(steps.at(-1)!) : stepsSummary(steps)}</span>
+        {failed > 0 && <span className="text-danger shrink-0">· {failed} 个失败</span>}
+        <ChevronRight className={cx("size-3.5 shrink-0 transition", open && "rotate-90")} />
       </button>
       {open && (
-        <div className="border-t border-line py-1">
+        <div className="mt-1 ml-1.5 pl-3 border-l border-line">
           {steps.map((st) => (
             <StepRow key={st.id} step={st} />
           ))}
@@ -207,24 +217,52 @@ function StepGroup({ steps, live }: { steps: Step[]; live: boolean }) {
 export function UserBubble({ text, time }: { text: string; time?: string }) {
   return (
     <div className="flex flex-col items-end">
-      <div className="max-w-[85%] bg-surface-2 rounded-xl px-4 py-2.5 whitespace-pre-wrap break-words text-[15px]">{text}</div>
+      <div className="max-w-[85%] bg-surface-2 rounded-lg px-3.5 py-2 whitespace-pre-wrap break-words text-[15px]">{text}</div>
       {time && <div className="text-[11px] text-muted mt-1">{time}</div>}
     </div>
   );
 }
 
+export interface LatestStats {
+  context: NonNullable<Usage["context"]>;
+  /** Breakdown of the latest model request. */
+  input: number;
+  cached: number;
+  output: number;
+  reasoning: number;
+  tps: number | null;
+}
+
 /** Context occupancy and output speed of the latest model request in these runs (newest last). */
-export function latestStats(runs: Run[]): { context: NonNullable<Usage["context"]>; tps: number | null } | null {
+export function latestStats(runs: Run[]): LatestStats | null {
   for (let i = runs.length - 1; i >= 0; i--) {
     const ev = runs[i]!.events.findLast((e) => e.type === "usage" && e.contextTokens != null);
     if (ev?.type === "usage") {
       return {
         context: { tokens: ev.contextTokens!, window: ev.contextWindow ?? null },
+        input: ev.inputTokens,
+        cached: ev.cachedInputTokens ?? 0,
+        output: ev.outputTokens,
+        reasoning: ev.reasoningTokens ?? 0,
         tps: ev.durationMs && ev.outputTokens ? ev.outputTokens / (ev.durationMs / 1000) : null,
       };
     }
   }
   return null;
+}
+
+/** Usage summed over every run of a conversation. */
+export function conversationUsage(runs: Run[]): Usage & { runs: number } {
+  const total: Usage & { runs: number } = { input: 0, output: 0, cached: 0, timedOutput: 0, timedMs: 0, context: null, runs: runs.length };
+  for (const r of runs) {
+    const { usage } = buildItems(r.events);
+    total.input += usage.input || r.input_tokens;
+    total.output += usage.output || r.output_tokens;
+    total.cached += usage.cached;
+    total.timedOutput += usage.timedOutput;
+    total.timedMs += usage.timedMs;
+  }
+  return total;
 }
 
 function UsageLine({ run, usage }: { run: Run; usage: Usage }) {

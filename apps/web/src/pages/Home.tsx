@@ -48,7 +48,7 @@ export default function Home() {
       {isLoading || !data ? (
         <Loading />
       ) : (
-        <div className="px-4 space-y-6 pb-6">
+        <div className="px-4 space-y-5 pb-6">
           {data.approvals.length > 0 && (
             <Section title={`待审批 · ${data.approvals.length}`}>
               <div className="space-y-3">
@@ -74,7 +74,7 @@ export default function Home() {
             ) : (
               <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-3">
                 {data.agents.map((a) => (
-                  <Card key={a.id} className="p-3.5" onClick={() => nav(`/agents/${a.id}`)}>
+                  <Card key={a.id} className="p-3" onClick={() => nav(`/agents/${a.id}`)}>
                     <div className="flex items-start gap-2.5">
                       <AgentAvatar emoji={a.emoji} />
                       <div className="min-w-0 flex-1">
@@ -116,7 +116,7 @@ export default function Home() {
             ) : (
               <Card className="divide-y divide-[var(--border)] overflow-hidden">
                 {data.conversations.map((c) => (
-                  <div key={c.id} className="flex items-center gap-3 px-4 py-3 active:bg-surface-2 cursor-pointer" onClick={() => nav(`/c/${c.id}`)}>
+                  <div key={c.id} className="flex items-center gap-2.5 px-3.5 py-2.5 hover:bg-surface-2 active:bg-surface-2 cursor-pointer" onClick={() => nav(`/c/${c.id}`)}>
                     <AgentAvatar emoji={c.agent_emoji ?? "✨"} size="sm" />
                     <div className="flex-1 min-w-0">
                       <div className="truncate">{c.title}</div>

@@ -257,11 +257,29 @@ export function registerRoutes(hub: Hub): void {
       )
       .all(id(req)),
   );
-  const SendBody = z.object({ text: z.string().min(1).max(20000), images: z.array(z.string()).max(8).optional() });
+  const ModelPatch = {
+    model: z.string().min(1).max(200).nullable().optional(),
+    effort: z.enum(["low", "medium", "high", "xhigh"]).nullable().optional(),
+  };
+  const SendBody = z.object({ text: z.string().min(1).max(20000), images: z.array(z.string()).max(8).optional(), ...ModelPatch });
   app.post("/api/agents/:id/messages", async (req) => {
     const b = SendBody.parse(req.body);
     await checkBudget(hub, id(req));
-    return runs.send({ agentId: id(req), text: b.text, images: b.images });
+    return runs.send({ agentId: id(req), text: b.text, images: b.images, model: b.model, effort: b.effort });
+  });
+  app.get("/api/agents/:id/today", async (req) => {
+    const a = agents.get(id(req));
+    const start = new Date();
+    start.setHours(0, 0, 0, 0);
+    const totals = db
+      .prepare("SELECT COUNT(*) AS runs, COALESCE(SUM(input_tokens), 0) AS input, COALESCE(SUM(output_tokens), 0) AS output FROM runs WHERE agent_id = ? AND created_at >= ?")
+      .get(a.id, start.toISOString()) as { runs: number; input: number; output: number };
+    let spentUsd: number | null = null;
+    if (a.newapi_token_id && newapi.adminEnabled()) {
+      const spend = await newapi.spendByToken(Math.floor(start.getTime() / 1000)).catch(() => null);
+      spentUsd = spend ? (spend[`constella-${a.id}`] ?? 0) : null;
+    }
+    return { ...totals, spentUsd, budgetUsd: a.budget_daily_usd };
   });
   app.get("/api/conversations/:id", async (req) => {
     const conv = runs.conversation(id(req));
@@ -274,8 +292,9 @@ export function registerRoutes(hub: Hub): void {
     };
   });
   app.patch("/api/conversations/:id", async (req) => {
-    const b = z.object({ title: z.string().min(1).max(60) }).parse(req.body);
-    db.prepare("UPDATE conversations SET title = ? WHERE id = ?").run(b.title, id(req));
+    const b = z.object({ title: z.string().min(1).max(60).optional(), ...ModelPatch }).parse(req.body);
+    if (b.title) db.prepare("UPDATE conversations SET title = ? WHERE id = ?").run(b.title, id(req));
+    if (b.model !== undefined || b.effort !== undefined) runs.setConversationModel(id(req), b);
     return { ok: true };
   });
   app.delete("/api/conversations/:id", async (req) => {
@@ -294,7 +313,7 @@ export function registerRoutes(hub: Hub): void {
     if (!conv) throw new HttpError(404, "conversation not found");
     const b = SendBody.parse(req.body);
     await checkBudget(hub, conv.agent_id);
-    return runs.send({ agentId: conv.agent_id, conversationId: conv.id, text: b.text, images: b.images });
+    return runs.send({ agentId: conv.agent_id, conversationId: conv.id, text: b.text, images: b.images, model: b.model, effort: b.effort });
   });
   app.post("/api/runs/:id/interrupt", async (req) => {
     await runs.interrupt(id(req), actor(req));

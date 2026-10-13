@@ -48,11 +48,11 @@ export default function Settings() {
   return (
     <div>
       <Header title="设置" sub={`你好，${me.data.name}`} />
-      <div className="px-4 space-y-6 pb-8 lg:max-w-3xl">
+      <div className="px-4 space-y-5 pb-8 lg:max-w-3xl">
         <AppearanceSection />
         <PushSection />
         <Section title="模型">
-          <Card className="p-4 space-y-4">
+          <Card className="p-3.5 space-y-3.5">
             <Field label="新 agent 默认模型">
               <ModelSelect value={s.defaultModel} onChange={(v) => save({ defaultModel: v })} />
             </Field>
@@ -87,7 +87,7 @@ function AppearanceSection() {
   const a = useAppearance();
   return (
     <Section title="外观（仅这台设备）">
-      <Card className="p-4 space-y-4">
+      <Card className="p-3.5 space-y-3.5">
         <Field label="主题" group>
           <Segmented
             value={a.theme}

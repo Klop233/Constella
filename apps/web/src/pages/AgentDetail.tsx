@@ -123,7 +123,7 @@ function Knowledge({ agentId }: { agentId: string }) {
             </button>
           }
         >
-          <Card className="p-4 text-sm">
+          <Card className="p-3 text-[13px]">
             {q.data.memory[scope].replace(/^#.*\n/, "").trim() ? <Markdown text={q.data.memory[scope].replace(/^#.*\n/, "")} /> : <div className="text-muted">暂无</div>}
           </Card>
         </Section>
@@ -262,7 +262,7 @@ function Manage({ agent }: { agent: Agent }) {
         </Card>
       </Section>
       <Section title="new-api">
-        <Card className="p-4 space-y-3">
+        <Card className="p-3 space-y-2.5">
           <div className="text-sm text-muted">
             {agent.newapi_token_id ? `使用专属令牌 #${agent.newapi_token_id}，可按 agent 统计费用和限额。` : "使用全局令牌。生成专属令牌后可单独统计费用、设置每日预算。"}
           </div>

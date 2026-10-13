@@ -171,7 +171,7 @@ export default function AgentEdit() {
             ]}
           />
         </Field>
-        <Card className="p-4 flex items-start gap-3">
+        <Card className="p-3 flex items-start gap-3">
           <div className="flex-1">
             <div className="font-medium">允许操作宿主服务器</div>
             <div className="text-xs text-muted mt-1">开启后可用 host_exec 在这台服务器上执行命令。只读命令自动放行，其余每条都要你在手机上批准。</div>
@@ -204,7 +204,7 @@ export default function AgentEdit() {
           </div>
         )}
       </div>
-      <div className="fixed bottom-0 inset-x-0 lg:left-60 bg-surface border-t border-line p-3 safe-bottom">
+      <div className="fixed bottom-0 inset-x-0 lg:left-64 bg-surface border-t border-line p-3 safe-bottom">
         <div className="max-w-2xl mx-auto">
           <Button variant="primary" size="lg" className="w-full" onClick={save} loading={saving} disabled={!name.trim() || !model}>
             {editing ? "保存" : "创建并开始对话"}

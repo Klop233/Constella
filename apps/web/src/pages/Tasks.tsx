@@ -80,7 +80,7 @@ export default function Tasks() {
                   {user.map((s) => {
                     const a = agentName(s.agent_id);
                     return (
-                      <Card key={s.id} className="p-4">
+                      <Card key={s.id} className="p-3">
                         <div className="flex items-start gap-3">
                           <div className="flex-1 min-w-0" onClick={() => setEdit(s)}>
                             <div className="font-medium truncate">{s.name}</div>

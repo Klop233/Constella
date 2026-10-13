@@ -27,9 +27,14 @@ export interface ConversationRow {
   title: string;
   thread_id: string | null;
   source: string;
+  /** Overrides of the agent's model / reasoning effort for this conversation. */
+  model: string | null;
+  effort: Effort | null;
   created_at: string;
   updated_at: string;
 }
+
+export type Effort = "low" | "medium" | "high" | "xhigh";
 
 /** What the hub needs from the rest of the system to drive a run. */
 export interface RunDeps {
@@ -79,6 +84,12 @@ export class RunManager {
     return this.#d.db.prepare("SELECT * FROM conversations WHERE id = ?").get(id) as ConversationRow | undefined;
   }
 
+  setConversationModel(id: string, patch: { model?: string | null; effort?: Effort | null }): ConversationRow {
+    if (patch.model !== undefined) this.#d.db.prepare("UPDATE conversations SET model = ? WHERE id = ?").run(patch.model, id);
+    if (patch.effort !== undefined) this.#d.db.prepare("UPDATE conversations SET effort = ? WHERE id = ?").run(patch.effort, id);
+    return this.conversation(id)!;
+  }
+
   activeRun(conversationId: string): RunRow | undefined {
     return this.#d.db
       .prepare(
@@ -89,7 +100,7 @@ export class RunManager {
 
   createConversation(agentId: string, title: string, source = "user"): ConversationRow {
     const now = nowIso();
-    const conv: ConversationRow = { id: newId("cv"), agent_id: agentId, title, thread_id: null, source, created_at: now, updated_at: now };
+    const conv: ConversationRow = { id: newId("cv"), agent_id: agentId, title, thread_id: null, source, model: null, effort: null, created_at: now, updated_at: now };
     this.#d.db
       .prepare("INSERT INTO conversations (id, agent_id, title, thread_id, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
       .run(conv.id, conv.agent_id, conv.title, null, conv.source, now, now);
@@ -106,12 +117,16 @@ export class RunManager {
     text: string;
     images?: string[];
     source?: string;
+    /** Switch this conversation's model / effort (null = back to the agent's) before sending. */
+    model?: string | null;
+    effort?: Effort | null;
   }): Promise<{ conversationId: string; runId: string; steered: boolean }> {
     const { db } = this.#d;
     let conv = input.conversationId ? this.conversation(input.conversationId) : undefined;
     if (input.conversationId && !conv) throw new Error("conversation not found");
     if (conv && conv.agent_id !== input.agentId) throw new Error("conversation belongs to another agent");
     if (!conv) conv = this.createConversation(input.agentId, titleFrom(input.text), input.source ?? "user");
+    if (input.model !== undefined || input.effort !== undefined) conv = this.setConversationModel(conv.id, input);
 
     const active = this.activeRun(conv.id);
     if (active && (active.status === "running" || active.status === "paused_by_user")) {
@@ -122,6 +137,8 @@ export class RunManager {
     if (active) throw new Error("该对话正在等待审批，请先处理审批");
 
     const payload = this.#d.startPayload(input.agentId);
+    if (conv.model) payload.model = conv.model;
+    if (conv.effort) payload.effort = conv.effort;
     const run: RunRow = {
       id: newId("run"),
       conversation_id: conv.id,

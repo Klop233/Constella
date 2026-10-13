@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
-import { Brain, CalendarClock, House, Monitor, Plus, Settings as SettingsIcon } from "lucide-react";
+import { Brain, CalendarClock, House, Monitor, Plus, Search, Settings as SettingsIcon, SlidersHorizontal } from "lucide-react";
 import { lazy, StrictMode, Suspense, useEffect, useState, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter, NavLink, Route, Routes, useLocation } from "react-router";
@@ -9,7 +9,7 @@ import "./index.css";
 import "./lib/appearance";
 import { api, ApiError } from "./lib/api";
 import { startLive } from "./lib/live";
-import type { Agent } from "./lib/types";
+import type { Overview } from "./lib/types";
 import Home from "./pages/Home";
 import Login from "./pages/Login";
 
@@ -61,38 +61,89 @@ const TABS = [
   { to: "/settings", label: "设置", icon: SettingsIcon },
 ];
 
+const NAV = TABS.filter((t) => t.to !== "/settings");
+
+/** Conversation bullet, like Claude Code's session dots: hollow when idle, colored while something is going on. */
+function StatusDot({ status }: { status?: string | null }) {
+  if (status === "running" || status === "queued") return <span className="size-2 rounded-full bg-accent pulse-dot shrink-0" />;
+  if (status === "waiting_approval" || status === "paused_by_user") return <span className="size-2 rounded-full bg-[var(--warn)] shrink-0" />;
+  if (status === "failed") return <span className="size-2 rounded-full bg-[var(--danger)] shrink-0" />;
+  return <span className="size-2 rounded-full border border-[var(--muted)] opacity-60 shrink-0" />;
+}
+
 function Sidebar() {
-  const agents = useQuery({ queryKey: ["agents"], queryFn: () => api.get<Agent[]>("/api/agents"), staleTime: 15_000 });
+  const overview = useQuery({ queryKey: ["overview"], queryFn: () => api.get<Overview>("/api/overview"), refetchInterval: 30_000 });
+  const me = useQuery({ queryKey: ["me"], queryFn: () => api.get<{ name: string }>("/api/me"), staleTime: 300_000 });
+  const [q, setQ] = useState("");
   const item = ({ isActive }: { isActive: boolean }) =>
-    cx("flex items-center gap-3 h-9 px-3 rounded-lg text-[14px] transition-colors", isActive ? "bg-[color-mix(in_oklab,var(--text)_8%,transparent)] font-medium" : "text-[color-mix(in_oklab,var(--text)_75%,transparent)] hover:bg-[color-mix(in_oklab,var(--text)_5%,transparent)]");
+    cx(
+      "flex items-center gap-2.5 h-8 px-2.5 rounded-md text-[13.5px] transition-colors",
+      isActive ? "bg-[color-mix(in_oklab,var(--text)_9%,transparent)] text-[var(--text)]" : "text-[color-mix(in_oklab,var(--text)_80%,transparent)] hover:bg-[color-mix(in_oklab,var(--text)_5%,transparent)]",
+    );
+  const needle = q.trim().toLowerCase();
+  const groups = (overview.data?.agents ?? []).map((a) => ({
+    agent: a,
+    convs: (overview.data?.conversations ?? []).filter((c) => c.agent_id === a.id && (!needle || c.title.toLowerCase().includes(needle) || a.name.toLowerCase().includes(needle))),
+  }));
+  const name = me.data?.name ?? "";
   return (
-    <aside className="hidden lg:flex fixed inset-y-0 left-0 z-30 w-60 flex-col border-r border-line bg-sidebar">
-      <NavLink to="/" className="flex items-center gap-2.5 px-5 h-16 shrink-0">
-        <img src="/icon.svg?v=2" alt="" className="size-8 rounded-lg" />
-        <span className="font-semibold text-lg">Constella</span>
-      </NavLink>
-      <nav className="px-3 space-y-1">
-        {TABS.map((t) => (
+    <aside className="hidden lg:flex fixed inset-y-0 left-0 z-30 w-64 flex-col border-r border-line bg-sidebar">
+      <div className="px-2.5 pt-3 pb-1.5">
+        <label className="flex items-center gap-2 h-8 px-2.5 rounded-md border border-line bg-surface text-[13px] focus-within:border-[var(--color-accent)]">
+          <Search className="size-3.5 text-muted shrink-0" />
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="搜索对话" className="flex-1 min-w-0 bg-transparent outline-none placeholder:text-muted" />
+        </label>
+      </div>
+      <nav className="px-2 space-y-px">
+        <NavLink to="/agents/new" className={item}>
+          <Plus className="size-4" strokeWidth={1.8} />
+          新建 agent
+        </NavLink>
+        {NAV.map((t) => (
           <NavLink key={t.to} to={t.to} end={t.end} className={item}>
-            <t.icon className="size-[18px]" strokeWidth={1.7} />
+            <t.icon className="size-4" strokeWidth={1.8} />
             {t.label}
           </NavLink>
         ))}
       </nav>
-      <div className="mt-6 px-5 flex items-center text-xs font-medium text-muted">
-        <span className="flex-1">Agent</span>
-        <NavLink to="/agents/new" aria-label="新建 agent" className="p-1 rounded-md hover:bg-surface-2">
-          <Plus className="size-4" />
-        </NavLink>
+      <div className="flex-1 overflow-y-auto px-2 pt-3 pb-2 space-y-3">
+        {groups.map(({ agent: a, convs }) =>
+          needle && !convs.length ? null : (
+            <div key={a.id}>
+              <div className="group flex items-center h-7 pl-2.5 pr-1 text-[12.5px] text-muted">
+                <NavLink to={`/agents/${a.id}`} className="flex-1 min-w-0 truncate hover:text-[var(--text)]">
+                  {a.emoji} {a.name}
+                </NavLink>
+                <NavLink to={`/agents/${a.id}/chat`} aria-label={`和${a.name}开始新对话`} title="新对话" className="p-1 rounded hover:bg-[color-mix(in_oklab,var(--text)_7%,transparent)] hover:text-[var(--text)]">
+                  <Plus className="size-3.5" />
+                </NavLink>
+                <NavLink to={`/agents/${a.id}/edit`} aria-label={`${a.name}设置`} title="设置" className="p-1 rounded hover:bg-[color-mix(in_oklab,var(--text)_7%,transparent)] hover:text-[var(--text)]">
+                  <SlidersHorizontal className="size-3.5" />
+                </NavLink>
+              </div>
+              <div className="space-y-px">
+                {convs.slice(0, 8).map((c) => (
+                  <NavLink key={c.id} to={`/c/${c.id}`} className={item}>
+                    <StatusDot status={c.last_status} />
+                    <span className="truncate">{c.title}</span>
+                  </NavLink>
+                ))}
+                {!needle && convs.length > 8 && (
+                  <NavLink to={`/agents/${a.id}`} className="block px-2.5 py-1 text-xs text-muted hover:text-[var(--text)]">
+                    查看全部
+                  </NavLink>
+                )}
+              </div>
+            </div>
+          ),
+        )}
       </div>
-      <div className="flex-1 overflow-y-auto px-3 py-2 space-y-0.5">
-        {agents.data?.map((a) => (
-          <NavLink key={a.id} to={`/agents/${a.id}`} className={item}>
-            <span className="text-base leading-none">{a.emoji}</span>
-            <span className="truncate flex-1">{a.name}</span>
-            {a.activeRuns.length > 0 && <span className="size-2 rounded-full bg-accent pulse-dot" />}
-          </NavLink>
-        ))}
+      <div className="border-t border-line p-2">
+        <NavLink to="/settings" className={item}>
+          <span className="size-5 rounded-full bg-[color-mix(in_oklab,var(--text)_14%,transparent)] grid place-items-center text-[11px] font-medium uppercase">{name.slice(0, 1)}</span>
+          <span className="flex-1 truncate">{name}</span>
+          <SettingsIcon className="size-4 text-muted" strokeWidth={1.8} />
+        </NavLink>
       </div>
     </aside>
   );
@@ -104,15 +155,15 @@ function Shell({ children }: { children: ReactNode }) {
   return (
     <div className="min-h-full">
       <Sidebar />
-      <div className="min-h-full flex flex-col max-w-2xl lg:max-w-none mx-auto lg:pl-60">
-        <main className={cx("flex-1 w-full lg:max-w-5xl lg:mx-auto lg:px-6", !hideNav && "pb-20 lg:pb-8")}>{children}</main>
+      <div className="min-h-full flex flex-col max-w-2xl lg:max-w-none mx-auto lg:pl-64">
+        <main className={cx("flex-1 w-full lg:max-w-4xl lg:mx-auto lg:px-6", !hideNav && "pb-20 lg:pb-8")}>{children}</main>
       </div>
       {!hideNav && (
         <nav className="lg:hidden fixed bottom-0 inset-x-0 z-30 bg-sidebar/95 backdrop-blur border-t border-line safe-bottom">
           <div className="max-w-2xl mx-auto grid grid-cols-5">
             {TABS.map((t) => (
-              <NavLink key={t.to} to={t.to} end={t.end} className={({ isActive }) => cx("flex flex-col items-center gap-0.5 pt-2 pb-1.5 text-[11px]", isActive ? "text-[var(--text)] font-medium" : "text-muted")}>
-                <t.icon className="size-[22px]" strokeWidth={1.8} />
+              <NavLink key={t.to} to={t.to} end={t.end} className={({ isActive }) => cx("flex flex-col items-center gap-0.5 pt-1.5 pb-1 text-[10.5px]", isActive ? "text-[var(--text)] font-medium" : "text-muted")}>
+                <t.icon className="size-5" strokeWidth={1.8} />
                 {t.label}
               </NavLink>
             ))}

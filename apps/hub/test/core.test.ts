@@ -71,6 +71,23 @@ describe("RunManager", () => {
     expect(done).toMatchObject({ status: "done", tool_calls: 1, input_tokens: 10, output_tokens: 5 });
   });
 
+  it("uses the conversation's model / effort override and remembers it", async () => {
+    const r = await runs.send({ agentId: "ag1", text: "a", model: "m2", effort: "high" });
+    await new Promise((res) => setTimeout(res, 10));
+    expect(sent[0]).toMatchObject({ t: "start", model: "m2", effort: "high" });
+    expect(runs.get(r.runId)!.model).toBe("m2");
+    runs.finish(r.runId, "done");
+    const r2 = await runs.send({ agentId: "ag1", conversationId: r.conversationId, text: "b" });
+    await new Promise((res) => setTimeout(res, 10));
+    expect(sent[1]).toMatchObject({ t: "start", model: "m2", effort: "high" });
+    runs.finish(r2.runId, "done");
+    runs.setConversationModel(r.conversationId, { model: null, effort: null });
+    await runs.send({ agentId: "ag1", conversationId: r.conversationId, text: "c" });
+    await new Promise((res) => setTimeout(res, 10));
+    expect(sent[2].model).toBe("m");
+    expect(sent[2].effort).toBeUndefined();
+  });
+
   it("routes engine approvals to the runner and resumes", async () => {
     const r = await runs.send({ agentId: "ag1", text: "删除文件" });
     await new Promise((res) => setTimeout(res, 10));

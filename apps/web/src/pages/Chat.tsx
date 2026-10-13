@@ -1,15 +1,15 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowUp, ImagePlus, Paperclip, Square, X } from "lucide-react";
+import { ArrowUp, ImagePlus, Loader2, Paperclip, Plus, Square, X } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router";
-import { AgentAvatar, AgentStatus } from "../components/AgentBits";
+import { AgentDot } from "../components/AgentBits";
+import { ContextMeter, EffortPicker, ModelPicker } from "../components/ChatControls";
 import { latestStats, RunView } from "../components/RunView";
 import { Header, Loading, cx, toast } from "../components/ui";
 import { api, fileToBase64 } from "../lib/api";
 import { useAppearance } from "../lib/appearance";
-import { tokens } from "../lib/format";
 import { useAgentEvents } from "../lib/live";
-import type { Agent, AgentEvent, Approval, Conversation, Run } from "../lib/types";
+import type { Agent, AgentEvent, Approval, Conversation, Effort, Run } from "../lib/types";
 
 const coarsePointer = window.matchMedia("(pointer: coarse)").matches;
 
@@ -28,6 +28,9 @@ export default function Chat() {
   const [text, setText] = useState("");
   const [files, setFiles] = useState<{ name: string; path: string; image: boolean }[]>([]);
   const [sending, setSending] = useState(false);
+  // This conversation's model / effort; null follows the agent.
+  const [model, setModel] = useState<string | null>(null);
+  const [effort, setEffort] = useState<Effort | null>(null);
   const [uploading, setUploading] = useState(false);
   const bottom = useRef<HTMLDivElement>(null);
   const scroller = useRef<HTMLDivElement>(null);
@@ -47,6 +50,22 @@ export default function Chat() {
       setLoading(false);
     }
   }, [conversationId]);
+
+  useEffect(() => {
+    setModel(data?.conversation.model ?? null);
+    setEffort(data?.conversation.effort ?? null);
+  }, [data?.conversation.id, data?.conversation.model, data?.conversation.effort]);
+
+  const changeModel = async (patch: { model?: string | null; effort?: Effort | null }) => {
+    if (patch.model !== undefined) setModel(patch.model);
+    if (patch.effort !== undefined) setEffort(patch.effort);
+    if (!conversationId) return; // a new conversation sends it with the first message
+    try {
+      await api.patch(`/api/conversations/${conversationId}`, patch);
+    } catch (err) {
+      toast(err instanceof Error ? err.message : String(err), "danger");
+    }
+  };
 
   useEffect(() => {
     setData(null);
@@ -102,7 +121,7 @@ export default function Chat() {
       const full = others.length ? `${body}\n\n附件：${others.join("、")}` : body;
       const res = await api.post<{ conversationId: string; runId: string; steered: boolean }>(
         conversationId ? `/api/conversations/${conversationId}/messages` : `/api/agents/${agentId}/messages`,
-        { text: full, images },
+        { text: full, images, ...(conversationId ? {} : { model, effort }) },
       );
       setText("");
       setFiles([]);
@@ -145,14 +164,18 @@ export default function Chat() {
     <div className="flex flex-col h-dvh">
       <Header
         back
+        backMobileOnly
         title={
-          <button className="flex items-center gap-2 max-w-full" onClick={() => a && nav(`/agents/${a.id}`)}>
-            {a && <AgentAvatar emoji={a.emoji} size="sm" />}
-            <span className="min-w-0 text-left">
-              <span className="block truncate">{data?.conversation.title ?? a?.name ?? "对话"}</span>
-              {a && <AgentStatus agent={a} />}
-            </span>
-          </button>
+          <span className="flex items-center gap-2 min-w-0">
+            <span className="truncate">{data?.conversation.title ?? "新对话"}</span>
+            {a && (
+              <button onClick={() => nav(`/agents/${a.id}`)} className="flex items-center gap-1.5 shrink-0 h-6 px-2 rounded-md bg-surface-2 text-xs font-normal text-muted hover:text-[var(--text)]">
+                <span>{a.emoji}</span>
+                {a.name}
+                <AgentDot agent={a} />
+              </button>
+            )}
+          </span>
         }
       />
       <div
@@ -166,13 +189,13 @@ export default function Chat() {
         {loading ? (
           <Loading />
         ) : !data ? (
-          <div className="flex flex-col items-center text-center px-6 pt-[22dvh] gap-3">
-            {a && <span className="text-4xl">{a.emoji}</span>}
-            <h1 className="font-display text-[28px] leading-tight">给{a?.name ?? "agent"}派个活</h1>
+          <div className="flex flex-col items-center text-center px-6 pt-[24dvh] gap-2">
+            {a && <span className="text-3xl">{a.emoji}</span>}
+            <h1 className="font-display text-2xl font-medium leading-tight">给{a?.name ?? "agent"}派个活</h1>
             <p className="text-sm text-muted">例如：帮我查一下明天上海的天气，整理成三句话</p>
           </div>
         ) : (
-          <div className="space-y-6 py-4 max-w-3xl mx-auto">
+          <div className="space-y-5 py-3 max-w-3xl mx-auto">
             {data.runs.map((r) => (
               <RunView key={r.id} run={r} approvals={data.approvals} onChanged={load} />
             ))}
@@ -180,95 +203,68 @@ export default function Chat() {
         )}
         <div ref={bottom} className="h-2" />
       </div>
-      <div className="bg-app px-3 pb-3 pt-1 safe-bottom">
-        <div className="max-w-3xl mx-auto rounded-2xl border border-line bg-surface shadow-[0_2px_12px_rgb(0_0_0/0.05)] focus-within:border-[color-mix(in_oklab,var(--text)_28%,transparent)] transition-colors">
-          {files.length > 0 && (
-            <div className="flex gap-2 px-3 pt-3 overflow-x-auto no-scrollbar">
-              {files.map((f, i) => (
-                <span key={f.path} className="flex items-center gap-1 text-xs bg-surface-2 border border-line rounded-md pl-2 pr-1 py-1 shrink-0">
-                  {f.image ? <ImagePlus className="size-3.5" /> : <Paperclip className="size-3.5" />}
-                  <span className="max-w-32 truncate">{f.name}</span>
-                  <button aria-label="移除" onClick={() => setFiles((x) => x.filter((_, j) => j !== i))}>
-                    <X className="size-3.5" />
-                  </button>
-                </span>
-              ))}
-            </div>
-          )}
-          <textarea
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            onKeyDown={(e) => {
-              // Enter sends; Ctrl/⌘/Shift+Enter inserts a newline. Ignore Enter while an IME is composing,
-              // and on touch keyboards (no modifier keys) leave Enter as a newline.
-              if (e.key !== "Enter" || e.nativeEvent.isComposing || e.keyCode === 229) return;
-              if (e.ctrlKey || e.metaKey) {
-                e.preventDefault();
-                const el = e.currentTarget;
-                el.setRangeText("\n", el.selectionStart, el.selectionEnd, "end");
-                setText(el.value);
-              } else if (!e.shiftKey && !coarsePointer) {
-                e.preventDefault();
-                void send();
-              }
-            }}
-            enterKeyHint={coarsePointer ? "enter" : "send"}
-            rows={1}
-            placeholder={active ? "追加指示（任务进行中）" : "说点什么…"}
-            className="block w-full resize-none max-h-48 min-h-12 bg-transparent px-4 pt-3.5 pb-1 text-[16px] outline-none field-sizing-content placeholder:text-muted"
-          />
-          <div className="flex items-center gap-2 px-2.5 pb-2.5">
-            <input ref={fileInput} type="file" multiple hidden onChange={(e) => upload(e.target.files)} />
-            <button aria-label="添加附件" className="size-8 grid place-items-center rounded-lg border border-line text-muted hover:text-[var(--text)] hover:bg-surface-2 shrink-0" onClick={() => fileInput.current?.click()} disabled={uploading}>
-              <Paperclip className={cx("size-4", uploading && "animate-pulse")} />
-            </button>
-            <div className="flex-1" />
-            {stats && <ContextMeter {...stats} />}
-            {active && !text.trim() ? (
-              <button aria-label="停止" onClick={stop} className="size-8 grid place-items-center rounded-lg bg-[var(--text)] text-[var(--bg)] shrink-0">
-                <Square className="size-3.5 fill-current" />
-              </button>
-            ) : (
-              <button aria-label="发送" onClick={send} disabled={!text.trim() || sending} className="size-8 grid place-items-center rounded-lg bg-accent-grad text-white hover:brightness-95 disabled:opacity-40 shrink-0">
-                <ArrowUp className="size-4" strokeWidth={2.4} />
-              </button>
+      <div className="bg-app px-3 pb-2 pt-1 safe-bottom">
+        <div className="max-w-3xl mx-auto">
+          <div className="rounded-xl border border-line bg-surface focus-within:border-[color-mix(in_oklab,var(--text)_30%,transparent)] transition-colors">
+            {files.length > 0 && (
+              <div className="flex gap-1.5 px-2.5 pt-2.5 overflow-x-auto no-scrollbar">
+                {files.map((f, i) => (
+                  <span key={f.path} className="flex items-center gap-1 text-xs bg-surface-2 border border-line rounded-md pl-2 pr-1 py-0.5 shrink-0">
+                    {f.image ? <ImagePlus className="size-3.5" /> : <Paperclip className="size-3.5" />}
+                    <span className="max-w-32 truncate">{f.name}</span>
+                    <button aria-label="移除" onClick={() => setFiles((x) => x.filter((_, j) => j !== i))}>
+                      <X className="size-3.5" />
+                    </button>
+                  </span>
+                ))}
+              </div>
             )}
+            <div className="flex items-end gap-1 p-1.5 pl-2">
+            <textarea
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              onKeyDown={(e) => {
+                // Enter sends; Ctrl/⌘/Shift+Enter inserts a newline. Ignore Enter while an IME is composing,
+                // and on touch keyboards (no modifier keys) leave Enter as a newline.
+                if (e.key !== "Enter" || e.nativeEvent.isComposing || e.keyCode === 229) return;
+                if (e.ctrlKey || e.metaKey) {
+                  e.preventDefault();
+                  const el = e.currentTarget;
+                  el.setRangeText("\n", el.selectionStart, el.selectionEnd, "end");
+                  setText(el.value);
+                } else if (!e.shiftKey && !coarsePointer) {
+                  e.preventDefault();
+                  void send();
+                }
+              }}
+              enterKeyHint={coarsePointer ? "enter" : "send"}
+              rows={1}
+              placeholder={active ? "追加指示（任务进行中）" : "说点什么…"}
+              className="flex-1 min-w-0 resize-none max-h-48 min-h-9 bg-transparent px-1.5 py-1.5 text-[15px] outline-none field-sizing-content placeholder:text-muted"
+            />
+              {active && !text.trim() ? (
+                <button aria-label="停止" onClick={stop} className="size-8 grid place-items-center rounded-md bg-[var(--text)] text-[var(--bg)] shrink-0">
+                  <Square className="size-3 fill-current" />
+                </button>
+              ) : (
+                <button aria-label="发送" aria-busy={sending} onClick={send} disabled={!text.trim() || sending} className={cx("size-8 grid place-items-center rounded-md bg-accent-grad text-white hover:brightness-95 shrink-0", !sending && "disabled:opacity-35")}>
+                  {sending ? <Loader2 className="size-4 animate-spin" /> : <ArrowUp className="size-4" strokeWidth={2.4} />}
+                </button>
+              )}
+            </div>
+          </div>
+          <div className="flex items-center gap-0.5 pt-1 min-w-0">
+            <input ref={fileInput} type="file" multiple hidden onChange={(e) => upload(e.target.files)} />
+            <button aria-label="添加附件" title="添加附件" className="size-8 grid place-items-center rounded-md text-muted hover:text-[var(--text)] hover:bg-surface-2 shrink-0" onClick={() => fileInput.current?.click()} disabled={uploading}>
+              {uploading ? <Loader2 className="size-4 animate-spin" /> : <Plus className="size-4" />}
+            </button>
+            <div className="flex-1 min-w-0" />
+            {stats && agentId && <ContextMeter stats={stats} runs={data!.runs} agentId={agentId} />}
+            {a && <ModelPicker value={model} agentModel={a.model} onChange={(m) => void changeModel({ model: m })} />}
+            {a && <EffortPicker value={effort} agentEffort={a.effort} onChange={(e) => void changeModel({ effort: e })} />}
           </div>
         </div>
       </div>
     </div>
-  );
-}
-
-/** Composer-side gauge: how full the context window is, plus the latest request's output speed. */
-function ContextMeter({ context, tps }: { context: { tokens: number; window: number | null }; tps: number | null }) {
-  const pct = context.window ? Math.min(1, context.tokens / context.window) : null;
-  const detail = `上下文 ${tokens(context.tokens)}${context.window ? ` / ${tokens(context.window)}` : ""}${tps ? ` · 最近一次 ${tps.toFixed(1)} tok/s` : ""}`;
-  const r = 7;
-  const c = 2 * Math.PI * r;
-  return (
-    <button type="button" title={detail} aria-label={detail} onClick={() => toast(detail)} className="flex items-center gap-1.5 h-8 px-2 rounded-lg text-xs text-muted hover:bg-surface-2 tabular-nums">
-      {tps != null && <span>{tps.toFixed(0)} tok/s</span>}
-      {pct != null ? (
-        <>
-          <svg viewBox="0 0 18 18" className="size-4 -rotate-90">
-            <circle cx="9" cy="9" r={r} fill="none" stroke="var(--border)" strokeWidth="2.5" />
-            <circle
-              cx="9"
-              cy="9"
-              r={r}
-              fill="none"
-              stroke={pct > 0.85 ? "var(--danger)" : pct > 0.6 ? "var(--warn)" : "var(--color-accent)"}
-              strokeWidth="2.5"
-              strokeDasharray={`${pct * c} ${c}`}
-              strokeLinecap="round"
-            />
-          </svg>
-          <span>{Math.round(pct * 100)}%</span>
-        </>
-      ) : (
-        <span>{tokens(context.tokens)}</span>
-      )}
-    </button>
   );
 }

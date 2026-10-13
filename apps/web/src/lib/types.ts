@@ -2,6 +2,8 @@ import type { AgentEvent, DesktopLease, DesktopPolicy, RunStatus } from "@conste
 
 export type { AgentEvent, DesktopLease, DesktopPolicy, RunStatus };
 
+export type Effort = "low" | "medium" | "high" | "xhigh";
+
 export interface Agent {
   id: string;
   name: string;
@@ -38,6 +40,8 @@ export interface Conversation {
   agent_id: string;
   title: string;
   source: string;
+  model?: string | null;
+  effort?: Effort | null;
   updated_at: string;
   created_at: string;
   last_status?: RunStatus | null;
