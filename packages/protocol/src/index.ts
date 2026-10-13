@@ -15,10 +15,10 @@ export type RunStatus = z.infer<typeof RunStatus>;
 const TERMINAL: readonly RunStatus[] = ["done", "failed", "cancelled"];
 
 const RUN_TRANSITIONS: Record<RunStatus, readonly RunStatus[]> = {
-  queued: ["running", "cancelled"],
+  queued: ["running", "failed", "cancelled"],
   running: ["waiting_approval", "paused_by_user", "done", "failed", "cancelled"],
-  waiting_approval: ["running", "failed", "cancelled"],
-  paused_by_user: ["running", "failed", "cancelled"],
+  waiting_approval: ["running", "paused_by_user", "done", "failed", "cancelled"],
+  paused_by_user: ["running", "waiting_approval", "done", "failed", "cancelled"],
   done: [],
   failed: [],
   cancelled: [],
@@ -112,3 +112,5 @@ export const DesktopPolicy = z.union([
   z.object({ mode: z.literal("on_demand") }),
 ]);
 export type DesktopPolicy = z.infer<typeof DesktopPolicy>;
+
+export * from "./runner.ts";

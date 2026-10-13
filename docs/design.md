@@ -1,6 +1,8 @@
 # Constella（星座）：自建的多 agent 平台（手机 App + 桌面 + 自学习 + 接入 new-api）
 
-> 状态：已批准（2026-10-13）。实施进度见 [roadmap.md](roadmap.md)，关键决策见 [decisions/](decisions/)。
+> 状态：已实现（2026-10-13）。实施进度见 [roadmap.md](roadmap.md)，关键决策见 [decisions/](decisions/)。
+>
+> 实现与原方案的差异：密钥加密用 Node 自带的 AES-256-GCM（不用 libsodium）；桌面控制用容器内的 xdotool 服务（cua-driver 已随 旧工具 删除，见 spikes/desktop.md）；数据库用 Node 自带的 `node:sqlite`；复盘默认模型改为 mimo-v2.5-pro（deepseek 通道不可用，见 spikes/models.md）。
 
 > 项目名：**Constella**。每个 agent 是一颗星，合在一起就是你的星座，也呼应你的主机名 your-machine（hoshi 是日语里的"星"）。
 > 项目目录：`/root/constella`；数据目录：`/srv/constella`；容器、镜像和网络统一用 `constella-` 前缀；包名用 `@constella/*`；公网子域名建议 `constella.<你的域名>`。

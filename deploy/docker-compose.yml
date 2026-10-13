@@ -1,0 +1,54 @@
+name: constella
+
+services:
+  hub:
+    image: constella-hub:latest
+    build:
+      context: ..
+      dockerfile: images/hub/Dockerfile
+    container_name: constella-hub
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      CONSTELLA_DATA_DIR: /srv/constella
+      CONSTELLA_PORT: "8780"
+    ports:
+      - "127.0.0.1:8780:8780"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Same path inside and outside: the hub passes these paths to agent/desktop containers.
+      - /srv/constella:/srv/constella
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - constella-net
+
+  # Images the hub starts on demand (built here, never run by compose).
+  agent-image:
+    image: constella-agent:latest
+    build:
+      context: ..
+      dockerfile: images/agent/Dockerfile
+    profiles: ["images"]
+
+  desktop-image:
+    image: constella-desktop:latest
+    build:
+      context: ../images/desktop
+    profiles: ["images"]
+
+  # Public entry through Cloudflare Tunnel (enable with: docker compose --profile public up -d)
+  cloudflared:
+    image: cloudflare/cloudflared:2025.9.1
+    container_name: constella-cloudflared
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:-}
+    profiles: ["public"]
+    networks:
+      - constella-net
+
+networks:
+  constella-net:
+    name: constella-net
