@@ -8,3 +8,4 @@ data/
 *.db-*
 .DS_Store
 docs/spikes/runs/
+deploy/docker-compose.override.yml

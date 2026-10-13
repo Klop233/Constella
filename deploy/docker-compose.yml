@@ -14,8 +14,6 @@ services:
       CONSTELLA_PORT: "8780"
     ports:
       - "127.0.0.1:8780:8780"
-      # Tailnet-only plain HTTP entry (WireGuard-encrypted); push and passkeys need the HTTPS entries.
-      - "100.64.0.9:8780:8780"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       # Same path inside and outside: the hub passes these paths to agent/desktop containers.
