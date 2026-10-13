@@ -13,11 +13,11 @@
 - [x] 根据结果确定后备方案：引擎用 Codex app-server（已实测审批流程）；桌面控制用 xdotool
 
 ## 阶段 1：管理层核心 + 手机聊天（Tailscale）
-- [x] 认证：密码 + TOTP、设备管理（已测）；Passkey 已实现，需 HTTPS 入口开通后在手机上实测
+- [x] 认证：密码 + TOTP、设备管理（已测）；Passkey 已在 Android 手机上注册成功（2026-10-13），用它登录待实测
 - [x] agent 增删改，agent 容器生命周期（空闲休眠）
 - [x] runner + Codex 适配器，统一事件流写入 SQLite，SSE 断线续传
 - [x] run 状态机、审批、中途插话 / 停止、看门狗
-- [x] PWA：首页、对话页（已测）；Web Push 已实现，需 HTTPS 入口开通后在手机上实测
+- [x] PWA：首页、对话页（已测）；Web Push 已在 Windows Edge 真机收到测试通知（2026-10-13）。手机 Via 浏览器不支持网页推送，待定替代方案
 - [x] 临时内网入口 http://100.64.0.9:8780（仅 tailnet，可用聊天和桌面；推送和通行密钥需要 HTTPS）
 - [x] Tailscale Serve HTTPS 入口：https://your-machine.your-tailnet.ts.net（2026-10-13 开通，证书有效）
 
