@@ -202,7 +202,8 @@ export class Auth {
       path: "/",
       httpOnly: true,
       sameSite: "lax",
-      secure: config.secureCookies,
+      // Secure whenever the request arrived over HTTPS (directly or via Tailscale Serve / cloudflared).
+      secure: config.secureCookies && req.protocol === "https",
       expires,
     });
   }

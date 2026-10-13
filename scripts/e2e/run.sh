@@ -23,7 +23,7 @@ docker run -d --name "$NAME" --network constella-net -p 127.0.0.1:$PORT:8780 \
   --add-host host.docker.internal:host-gateway \
   -v /var/run/docker.sock:/var/run/docker.sock -v "$DATA:$DATA" \
   -e CONSTELLA_DATA_DIR="$DATA" -e CONSTELLA_MASTER_KEY="$CONSTELLA_MASTER_KEY" -e CONSTELLA_SETUP_CODE="$CODE" \
-  -e CONSTELLA_ORIGINS="http://localhost:$PORT" -e CONSTELLA_SECURE_COOKIES=false \
+  -e CONSTELLA_ORIGINS="http://localhost:$PORT" \
   -e NEWAPI_BASE_URL="$NEWAPI_BASE_URL" -e NEWAPI_API_KEY="$NEWAPI_API_KEY" -e TZ=Asia/Shanghai \
   -e CONSTELLA_HUB_WS="ws://$NAME:8780/api/runner" -e CONSTELLA_HUB_MCP="http://$NAME:8780/mcp" \
   constella-hub:latest >/dev/null
