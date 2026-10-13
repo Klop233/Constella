@@ -68,8 +68,8 @@ function Sidebar() {
   return (
     <aside className="hidden lg:flex fixed inset-y-0 left-0 z-30 w-60 flex-col border-r border-line bg-sidebar">
       <NavLink to="/" className="flex items-center gap-2.5 px-5 h-16 shrink-0">
-        <img src="/icon.svg" alt="" className="size-8 rounded-lg" />
-        <span className="font-display font-semibold text-lg">Constella</span>
+        <img src="/icon.svg?v=2" alt="" className="size-8 rounded-lg" />
+        <span className="font-semibold text-lg">Constella</span>
       </NavLink>
       <nav className="px-3 space-y-1">
         {TABS.map((t) => (
