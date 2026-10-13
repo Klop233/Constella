@@ -7,6 +7,7 @@ import type { Hub } from "./app.ts";
 import { config, nowIso } from "./config.ts";
 import { audit, kvSet } from "./db.ts";
 import type { DesktopAction } from "./desktops.ts";
+import { isTrusted } from "./trusted.ts";
 import { ScheduleInput } from "./scheduler.ts";
 
 declare module "fastify" {
@@ -43,7 +44,7 @@ export function registerRoutes(hub: Hub): void {
     if (!["GET", "HEAD", "OPTIONS"].includes(req.method) && !url.startsWith("/api/runner")) {
       if (req.headers["x-constella"] !== "1") return reply.code(403).send({ error: "missing X-Constella header" });
       const origin = req.headers.origin;
-      if (origin && !config.origins.includes(origin)) return reply.code(403).send({ error: "origin not allowed" });
+      if (origin && !config.origins.includes(origin) && !isTrusted(req)) return reply.code(403).send({ error: "origin not allowed" });
     }
     if (PUBLIC.some((r) => r.test(url))) return;
     const s = auth.check(req);

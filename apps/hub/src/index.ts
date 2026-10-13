@@ -1,10 +1,15 @@
 import { bootHub, createHub } from "./app.ts";
 import { config } from "./config.ts";
+import { listenTrusted } from "./trusted.ts";
 
 const hub = await createHub({ logger: process.env.CONSTELLA_LOG === "debug" });
 await bootHub(hub);
 await hub.app.listen({ host: config.listenHost, port: config.listenPort });
 console.log(`constella-hub listening on ${config.listenHost}:${config.listenPort}`);
+if (config.trustedPort) {
+  await listenTrusted(hub.app, config.listenHost, config.trustedPort);
+  console.log(`constella-hub trusted (no-login) entry on ${config.listenHost}:${config.trustedPort}`);
+}
 
 const shutdown = async () => {
   await hub.close().catch(() => {});

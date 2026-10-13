@@ -2,6 +2,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { canTransition } from "@constella/protocol";
+import Fastify from "fastify";
+import { isTrusted, listenTrusted } from "../src/trusted.ts";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "constella-test-"));
@@ -206,3 +208,19 @@ describe("helpers", () => {
 });
 
 afterEach(() => {});
+
+describe("trusted entry", () => {
+  it("marks only requests that arrive on the trusted port", async () => {
+    const app = Fastify();
+    app.get("/t", async (req) => ({ trusted: isTrusted(req) }));
+    await app.listen({ host: "127.0.0.1", port: 0 });
+    const main = (app.server.address() as { port: number }).port;
+    const port = main + 1;
+    await listenTrusted(app, "127.0.0.1", port);
+    const get = async (p: number) => ((await (await fetch(`http://127.0.0.1:${p}/t`)).json()) as { trusted: boolean }).trusted;
+    expect(await get(main)).toBe(false);
+    expect(await get(port)).toBe(true);
+    await app.close();
+  });
+});
+

@@ -16,6 +16,8 @@ export const config = {
   backupsDir: path.join(dataDir, "backups"),
   listenHost: env("CONSTELLA_HOST", "0.0.0.0"),
   listenPort: Number(env("CONSTELLA_PORT", "8780")),
+  /** Dev-only port whose requests count as the owner without login (0 = off). Publish it on private interfaces only. */
+  trustedPort: Number(env("CONSTELLA_TRUSTED_PORT", "0")),
   /** Origins the PWA is served from (Tailscale, public); used for WebAuthn and CSRF checks. */
   origins: env("CONSTELLA_ORIGINS", "http://localhost:8780")
     .split(",")

@@ -8,6 +8,7 @@ import {
 import type { FastifyReply, FastifyRequest } from "fastify";
 import * as OTPAuth from "otpauth";
 import { config, newId, nowIso } from "./config.ts";
+import { isTrusted } from "./trusted.ts";
 import { audit, type Db } from "./db.ts";
 
 export const SESSION_COOKIE = "cst_session";
@@ -210,6 +211,10 @@ export class Auth {
 
   /** Validates the session cookie and slides its expiry; returns the user id. */
   check(req: FastifyRequest): { userId: string; sessionId: string } | null {
+    if (isTrusted(req)) {
+      const owner = this.user();
+      return owner ? { userId: owner.id, sessionId: "trusted" } : null;
+    }
     const id = (req.cookies as Record<string, string | undefined>)[SESSION_COOKIE];
     if (!id) return null;
     const row = this.#db.prepare("SELECT * FROM sessions WHERE id = ?").get(id) as any;
