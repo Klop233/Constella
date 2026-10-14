@@ -14,7 +14,7 @@ export interface Appearance {
 }
 
 const KEY = "constella:appearance";
-const DEFAULTS: Appearance = { theme: "system", palette: "nebula", font: "sans", emoji: "mono", usage: true, navFolded: ["/artifacts", "/audit", "/usage", "/reflect"] };
+const DEFAULTS: Appearance = { theme: "system", palette: "nebula", font: "sans", emoji: "flat", usage: true, navFolded: ["/artifacts", "/audit", "/usage", "/reflect"] };
 const dark = window.matchMedia("(prefers-color-scheme: dark)");
 const listeners = new Set<() => void>();
 

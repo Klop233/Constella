@@ -346,7 +346,7 @@ export function registerRoutes(hub: Hub): void {
     const runRows = db.prepare("SELECT id, prompt FROM runs WHERE conversation_id = ? ORDER BY created_at").all(conv.id) as { id: string; prompt: string }[];
     return (
       contextBreakdown({
-        persona: agents.instructions(a, { desktopNote: "" }).replace(memory.user.trim(), "").replace(memory.agent.trim(), ""),
+        persona: agents.instructions(a, { desktopNote: "", styleNote: settings.emojiNote() }).replace(memory.user.trim(), "").replace(memory.agent.trim(), ""),
         memory: memoryText,
         skills: knowledge
           .skills(a.id)
@@ -988,6 +988,8 @@ export function registerRoutes(hub: Hub): void {
     telegramChatId: z.string().optional(),
     autoResume: z.boolean().optional(),
     browserHtml: z.boolean().optional(),
+    emojiUse: z.enum(["none", "rare", "some", "free"]).optional(),
+    plainHeadings: z.boolean().optional(),
     maxAutoResumes: z.number().int().min(1).max(10).optional(),
     runTimeoutMinutes: minutes(RUN_TIMEOUTS).optional(),
     runWatchdogMinutes: minutes([0, 5, 10, 20, 30, 60]).optional(),
@@ -1012,7 +1014,7 @@ export function registerRoutes(hub: Hub): void {
     checkModel(b.defaultModel);
     checkModel(b.reflectModel);
     const set = (key: string, v: unknown) => v !== undefined && kvSet(db, `settings.${key}`, String(v));
-    for (const key of ["approvalMode", "autoResume", "browserHtml", "maxAutoResumes", "runTimeoutMinutes", "runWatchdogMinutes", "agentIdleMinutes", "desktopIdleMinutes", "desktopIdleAction", "androidBackend", "maxInstances", "maxAndroidInstances", "autoReflect", "reflectMinToolCalls", "backupKeep", "modelNameFormat"] as const)
+    for (const key of ["approvalMode", "autoResume", "browserHtml", "emojiUse", "plainHeadings", "maxAutoResumes", "runTimeoutMinutes", "runWatchdogMinutes", "agentIdleMinutes", "desktopIdleMinutes", "desktopIdleAction", "androidBackend", "maxInstances", "maxAndroidInstances", "autoReflect", "reflectMinToolCalls", "backupKeep", "modelNameFormat"] as const)
       set(key, b[key]);
     if (b.defaultModel) kvSet(db, "settings.defaultModel", b.defaultModel);
     if (b.reflectModel) kvSet(db, "settings.reflectModel", b.reflectModel);

@@ -27,6 +27,8 @@ interface SettingsView {
   runTimeoutMinutes: number;
   runWatchdogMinutes: number;
   browserHtml: boolean;
+  emojiUse: "none" | "rare" | "some" | "free";
+  plainHeadings: boolean;
   approvalMode: "ask" | "smart" | "auto";
   agentIdleMinutes: number;
   desktopIdleMinutes: number;
@@ -125,7 +127,7 @@ export default function Settings() {
       {current.id === "models" && <ModelsSection s={s} save={save} />}
       {current.id === "instances" && <InstancesSection s={s} save={save} />}
       {current.id === "learning" && <LearningSection s={s} save={save} />}
-      {current.id === "appearance" && <AppearanceSection />}
+      {current.id === "appearance" && <AppearanceSection s={s} save={save} />}
       {current.id === "notify" && <NotifySection s={s} save={save} />}
       {current.id === "security" && <SecuritySection me={me.data} />}
       {current.id === "system" && <SystemSection s={s} save={save} />}
@@ -901,7 +903,7 @@ const SIDEBAR_ITEMS = [
   { to: "/reflect", label: "回顾" },
 ];
 
-function AppearanceSection() {
+function AppearanceSection({ s, save }: { s: SettingsView; save: Save }) {
   const a = useAppearance();
   return (
     <>
@@ -950,18 +952,37 @@ function AppearanceSection() {
             />
           </div>
         </SettingRow>
-        <SettingRow wide title="表情符号" desc="单色跟随文字颜色，扁平为 Twemoji，系统用设备自带的。">
+        <SettingRow wide title="表情符号" desc="扁平为 Twemoji，单色跟随文字颜色，系统用设备自带的。只对这台设备生效。">
           <div className="w-60">
             <Segmented
               value={a.emoji}
               options={[
-                { value: "mono", label: "单色" },
                 { value: "flat", label: "扁平" },
+                { value: "mono", label: "单色" },
                 { value: "system", label: "系统" },
               ]}
               onChange={(emoji) => setAppearance({ emoji })}
             />
           </div>
+        </SettingRow>
+      </SettingGroup>
+      <SettingGroup title="agent 回复">
+        <SettingRow wide title="表情符号用量" desc="agent 在回复和成果里用 emoji 的多少。对所有设备生效，从下一轮回复开始。">
+          <div className="w-60">
+            <Segmented
+              value={s.emojiUse}
+              options={[
+                { value: "none", label: "不用" },
+                { value: "rare", label: "少用" },
+                { value: "some", label: "适度" },
+                { value: "free", label: "不限制" },
+              ]}
+              onChange={(v) => void save({ emojiUse: v })}
+            />
+          </div>
+        </SettingRow>
+        <SettingRow title="标题不用表情" desc="回复里的标题和成果、文档的标题不加 emoji；已有回复里标题上的 emoji 也不再显示。">
+          <Toggle checked={s.plainHeadings} onChange={(v) => void save({ plainHeadings: v }, v ? "标题不再使用表情" : "标题可以使用表情")} label="标题不用表情" />
         </SettingRow>
       </SettingGroup>
       <SettingGroup title="侧栏">

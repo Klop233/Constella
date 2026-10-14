@@ -39,7 +39,7 @@
  *   data-mode    light | dark        (resolved; "跟随系统" is handled in JS)
  *   data-palette nebula | clay | ocean
  *   data-font    sans | serif
- *   data-emoji   mono | flat | system
+ *   data-emoji   flat | mono | system
  */
 :root {
   --bg: #faf9fc;
@@ -140,8 +140,8 @@
 }
 
 /* Emoji style (data-emoji): faces in emoji.css only cover pictographs, so they can lead every stack. */
-:root { --font-emoji: "Constella Emoji Mono"; }
-:root[data-emoji="flat"] { --font-emoji: "Constella Emoji Flat"; }
+:root { --font-emoji: "Constella Emoji Flat"; }
+:root[data-emoji="mono"] { --font-emoji: "Constella Emoji Mono"; }
 :root[data-emoji="system"] { --font-emoji: "Constella Emoji System"; }
 
 html,
