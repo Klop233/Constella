@@ -2,6 +2,19 @@
 
 @custom-variant dark (&:where(.dark, .dark *));
 
+/* Palette-driven colors, registered as utilities so variants work (hover:bg-surface-2, hover:text-danger…). */
+@theme inline {
+  --color-app: var(--bg);
+  --color-sidebar: var(--sidebar);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-line: var(--border);
+  --color-muted: var(--muted);
+  --color-ok: var(--ok);
+  --color-warn: var(--warn);
+  --color-danger: var(--danger);
+}
+
 @theme {
   --font-sans: "Inter", "PingFang SC", "HarmonyOS Sans SC", "MiSans", "Noto Sans CJK SC", system-ui, sans-serif;
   --font-serif: "Tiempos Text", "Source Serif 4", Georgia, "Noto Serif SC", "Source Han Serif SC", "Songti SC", ui-serif, serif;
@@ -140,16 +153,7 @@ body {
   overscroll-behavior-y: none;
 }
 
-.bg-app { background: var(--bg); }
-.bg-surface { background: var(--surface); }
-.bg-surface-2 { background: var(--surface-2); }
-.bg-sidebar { background: var(--sidebar); }
 .bg-accent-grad { background: linear-gradient(135deg, var(--color-accent), var(--accent-2)); }
-.border-line { border-color: var(--border); }
-.text-muted { color: var(--muted); }
-.text-ok { color: var(--ok); }
-.text-warn { color: var(--warn); }
-.text-danger { color: var(--danger); }
 
 .safe-top { padding-top: env(safe-area-inset-top); }
 .safe-bottom { padding-bottom: env(safe-area-inset-bottom); }
