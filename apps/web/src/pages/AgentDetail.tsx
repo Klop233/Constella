@@ -3,18 +3,19 @@ import { Download, KeyRound, MessageSquarePlus, Pencil, RotateCcw, Share2, Spark
 import { useState } from "react";
 import { useNavigate, useParams } from "react-router";
 import { AgentAvatar, AgentStatus } from "../components/AgentBits";
+import { ArtifactRows } from "../components/ArtifactList";
 import { Markdown } from "../components/Markdown";
 import { Badge, Button, Card, Empty, Field, Header, IconButton, Loading, Row, Section, Segmented, Sheet, cx, inputClass, toast } from "../components/ui";
 import { api } from "../lib/api";
 import { STATUS_TEXT, statusTone, timeAgo } from "../lib/format";
 import { useModelLabel } from "../lib/models";
-import type { Agent, Conversation, Skill } from "../lib/types";
+import type { Agent, Artifact, Conversation, Skill } from "../lib/types";
 
 export default function AgentDetail() {
   const { id } = useParams();
   const modelLabel = useModelLabel();
   const nav = useNavigate();
-  const [tab, setTab] = useState<"chats" | "knowledge" | "manage">("chats");
+  const [tab, setTab] = useState<"chats" | "artifacts" | "knowledge" | "manage">("chats");
   const agent = useQuery({ queryKey: ["agent", id], queryFn: () => api.get<Agent>(`/api/agents/${id}`) });
   const a = agent.data;
   if (agent.isLoading) return <Loading />;
@@ -50,14 +51,33 @@ export default function AgentDetail() {
           onChange={setTab}
           options={[
             { value: "chats", label: "对话" },
+            { value: "artifacts", label: "成果" },
             { value: "knowledge", label: "记忆与技能" },
             { value: "manage", label: "管理" },
           ]}
         />
         {tab === "chats" && <Chats agentId={a.id} />}
+        {tab === "artifacts" && <AgentArtifacts agentId={a.id} />}
         {tab === "knowledge" && <Knowledge agentId={a.id} />}
         {tab === "manage" && <Manage agent={a} />}
       </div>
+    </div>
+  );
+}
+
+function AgentArtifacts({ agentId }: { agentId: string }) {
+  const nav = useNavigate();
+  const q = useQuery({ queryKey: ["artifacts", { agentId }], queryFn: () => api.get<Artifact[]>(`/api/artifacts?agentId=${agentId}&limit=50`) });
+  if (q.isLoading) return <Loading />;
+  if (!q.data?.length) return <Empty title="还没有成果" hint="它发给你的文件和写的文档会收在这里" />;
+  return (
+    <div className="space-y-1.5 mb-6">
+      <ArtifactRows items={q.data} showAgent={false} />
+      {q.data.length >= 50 && (
+        <button className="px-1 text-xs text-muted hover:text-[var(--text)]" onClick={() => nav(`/artifacts?agent=${agentId}`)}>
+          查看全部
+        </button>
+      )}
     </div>
   );
 }

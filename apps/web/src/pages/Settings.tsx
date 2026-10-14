@@ -1,6 +1,6 @@
 import { startRegistration } from "@simplewebauthn/browser";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bell, Boxes, Brain, ChevronRight, ClipboardCheck, Gauge, LogOut, Palette, Search, Server, Settings2, Shield, Sparkles, type LucideIcon } from "lucide-react";
+import { Bell, Boxes, Brain, ChevronRight, ClipboardCheck, Gauge, Layers, LogOut, Palette, Search, Server, Settings2, Shield, Sparkles, type LucideIcon } from "lucide-react";
 import QRCode from "qrcode";
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
@@ -146,6 +146,11 @@ export default function Settings() {
               </nav>
               <div className="h-px bg-[var(--border)] mx-2.5" />
               <nav className="space-y-px">
+                <button onClick={() => nav("/artifacts")} className="w-full flex items-center gap-3 h-9 px-2.5 rounded-md text-left hover:bg-surface-2">
+                  <Layers className="size-4 text-muted" strokeWidth={1.8} />
+                  <span className="flex-1">成果</span>
+                  <ChevronRight className="size-4 text-muted" />
+                </button>
                 <button onClick={() => nav("/audit")} className="w-full flex items-center gap-3 h-9 px-2.5 rounded-md text-left hover:bg-surface-2">
                   <ClipboardCheck className="size-4 text-muted" strokeWidth={1.8} />
                   <span className="flex-1">审计</span>

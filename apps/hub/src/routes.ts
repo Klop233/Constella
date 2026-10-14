@@ -3,6 +3,7 @@ import path from "node:path";
 import type { FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { AgentInput, TEMPLATES } from "./agents.ts";
+import { MAX_ARTIFACT_TEXT, type ArtifactVersionRow } from "./artifacts.ts";
 import type { Hub } from "./app.ts";
 import { EffortSchema } from "./catalog.ts";
 import { config, nowIso } from "./config.ts";
@@ -32,7 +33,7 @@ class HttpError extends Error {
 }
 
 export function registerRoutes(hub: Hub): void {
-  const { app, auth, agents, runs, recovery, events, desktops, knowledge, learning, reflect, scheduler, notifier, newapi, models, catalog, settings, containers, db } = hub;
+  const { app, auth, agents, runs, artifacts, recovery, events, desktops, knowledge, learning, reflect, scheduler, notifier, newapi, models, catalog, settings, containers, db } = hub;
 
   app.setErrorHandler((err: any, _req, reply) => {
     const status = err instanceof HttpError ? err.status : err?.validation || err instanceof z.ZodError ? 400 : (err?.statusCode ?? 400);
@@ -357,6 +358,88 @@ export function registerRoutes(hub: Hub): void {
     const b = z.object({ value: z.union([z.literal(1), z.literal(-1)]) }).parse(req.body);
     const run = runs.setFeedback(id(req), b.value);
     if (run && ["done", "failed"].includes(run.status)) learning.maybeReflect(run);
+    return { ok: true };
+  });
+
+  // ── artifacts (files and documents agents delivered) ─────
+  const artifactOr404 = (artifactId: string) => {
+    const a = artifacts.get(artifactId);
+    if (!a) throw new HttpError(404, "成果不存在或已删除");
+    return a;
+  };
+  app.get("/api/artifacts", async (req) => {
+    const q = z
+      .object({
+        agentId: z.string().optional(),
+        conversationId: z.string().optional(),
+        kinds: z.string().max(200).optional(),
+        q: z.string().max(100).optional(),
+        limit: z.coerce.number().int().min(1).max(500).default(200),
+      })
+      .parse(req.query);
+    return artifacts.list({ ...q, kinds: q.kinds?.split(",").filter(Boolean) });
+  });
+  app.get("/api/artifacts/:id", async (req) => {
+    const a = artifacts.item(id(req));
+    if (!a) throw new HttpError(404, "成果不存在或已删除");
+    return { ...a, versions: artifacts.versions(a.id) };
+  });
+  const VersionQuery = z.object({ v: z.coerce.number().int().min(1).optional(), download: z.enum(["0", "1"]).optional() });
+  app.get("/api/artifacts/:id/content", async (req) => {
+    const a = artifactOr404(id(req));
+    return artifacts.text(a.id, VersionQuery.parse(req.query).v);
+  });
+  // The file itself. Only types the browser can't run as a page are served inline; text (HTML included) is
+  // served as plain text and everything else as a download, all sandboxed, so a delivered file can never act
+  // with the owner's session on this origin.
+  app.get("/api/artifacts/:id/file", async (req, reply) => {
+    const q = VersionQuery.parse(req.query);
+    const a = artifactOr404(id(req));
+    const v = artifacts.version(a.id, q.v);
+    const file = artifacts.filePath(a.id, v.version);
+    const size = fs.statSync(file).size;
+    const inline = q.download === "1" ? null : inlineType(v);
+    reply
+      .header("Content-Type", inline ?? v.mime)
+      .header("Content-Disposition", contentDisposition(inline ? "inline" : "attachment", v.filename))
+      .header("X-Content-Type-Options", "nosniff")
+      .header("Cache-Control", q.v ? "private, max-age=31536000, immutable" : "private, no-cache")
+      .header("Accept-Ranges", "bytes");
+    // Chrome won't show a PDF in a sandboxed document; PDFs are checked by their bytes when stored.
+    if (v.kind !== "pdf") reply.header("Content-Security-Policy", "sandbox");
+    const range = /^bytes=(\d*)-(\d*)$/.exec(String(req.headers.range ?? ""));
+    if (range && (range[1] || range[2])) {
+      const start = range[1] ? Number(range[1]) : Math.max(0, size - Number(range[2]));
+      const end = range[1] && range[2] ? Math.min(Number(range[2]), size - 1) : size - 1;
+      if (start > end) return reply.code(416).header("Content-Range", `bytes */${size}`).send();
+      reply.code(206).header("Content-Range", `bytes ${start}-${end}/${size}`).header("Content-Length", end - start + 1);
+      return reply.send(fs.createReadStream(file, { start, end }));
+    }
+    return reply.header("Content-Length", size).send(fs.createReadStream(file));
+  });
+  app.patch("/api/artifacts/:id", async (req) => {
+    const b = z.object({ title: z.string().trim().min(1).max(120) }).parse(req.body);
+    const a = artifacts.rename(artifactOr404(id(req)).id, b.title);
+    audit(db, actor(req), "artifact.rename", { id: a.id, title: a.title });
+    return a;
+  });
+  // The owner edits a text artifact in place, or brings back an older version; either way a new version.
+  app.post("/api/artifacts/:id/versions", { bodyLimit: 3 * 1024 * 1024 }, async (req) => {
+    const b = z
+      .union([z.object({ content: z.string().max(MAX_ARTIFACT_TEXT), note: z.string().trim().max(300).optional() }), z.object({ restore: z.number().int().min(1) })])
+      .parse(req.body);
+    const cur = artifactOr404(id(req));
+    const a =
+      "restore" in b
+        ? artifacts.restore(cur.id, b.restore)
+        : artifacts.saveText({ agentId: cur.agent_id, runId: null, conversationId: null, artifactId: cur.id, content: b.content, note: b.note, author: "user" });
+    audit(db, actor(req), "restore" in b ? "artifact.restore" : "artifact.edit", { id: a.id, version: a.version });
+    return a;
+  });
+  app.delete("/api/artifacts/:id", async (req) => {
+    const a = artifactOr404(id(req));
+    artifacts.remove(a.id);
+    audit(db, actor(req), "artifact.delete", { id: a.id, title: a.title });
     return { ok: true };
   });
 
@@ -779,6 +862,30 @@ export function registerRoutes(hub: Hub): void {
       ? db.prepare("SELECT * FROM audit WHERE id < ? ORDER BY id DESC LIMIT ?").all(q.before, q.limit)
       : db.prepare("SELECT * FROM audit ORDER BY id DESC LIMIT ?").all(q.limit);
   });
+}
+
+/** How a version may be shown in the browser: its own type for media and PDFs, plain text for text, else not at all. */
+function inlineType(v: ArtifactVersionRow): string | null {
+  switch (v.kind) {
+    case "image":
+    case "pdf":
+    case "audio":
+    case "video":
+      return v.mime;
+    case "svg":
+      return "image/svg+xml";
+    case "file":
+      return null;
+    default:
+      return "text/plain; charset=utf-8";
+  }
+}
+
+/** Content-Disposition with an ASCII fallback and the real (possibly Chinese) name per RFC 6266. */
+function contentDisposition(type: "inline" | "attachment", name: string): string {
+  const ascii = name.replace(/[^\x20-\x7e]|["\\]/g, "_");
+  const encoded = encodeURIComponent(name).replace(/['()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
+  return `${type}; filename="${ascii}"; filename*=UTF-8''${encoded}`;
 }
 
 /** Approval rows with a question's options parsed. */
