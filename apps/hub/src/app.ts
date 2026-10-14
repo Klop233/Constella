@@ -9,6 +9,7 @@ import { IdleAction, RunnerToHubSchema, type HubToRunner, type RunnerEvent } fro
 import Fastify, { type FastifyInstance } from "fastify";
 import type { WebSocket } from "ws";
 import { Agents } from "./agents.ts";
+import { Artifacts } from "./artifacts.ts";
 import { Auth } from "./auth.ts";
 import { EffortCatalog, EffortSchema, type Effort } from "./catalog.ts";
 import { config, nowIso } from "./config.ts";
@@ -39,6 +40,8 @@ export interface Hub {
   events: EventStore;
   agents: Agents;
   runs: RunManager;
+  /** Files and documents agents delivered, with their versions. */
+  artifacts: Artifacts;
   recovery: Recovery;
   knowledge: Knowledge;
   learning: Learning;
@@ -412,6 +415,7 @@ export async function createHub(opts: { dbPath?: string; webDist?: string; logge
   const learning = new Learning({ db, events, knowledge, llm: models, model: () => settings.reflectModel(), auto: () => settings.reflection() });
   const reflect = new Reflect({ db, llm: models, model: () => settings.reflectModel() });
   const scheduler = new Scheduler(db, events);
+  const artifacts = new Artifacts({ db, events });
 
   runs.onFinished((run) => desktops.releaseRun(run.id));
   runs.onFinished((run) => learning.maybeReflect(run));
@@ -452,7 +456,8 @@ export async function createHub(opts: { dbPath?: string; webDist?: string; logge
       .list(true)
       .map((a) => rel(knowledge.agentRepo(a.id)))
       .filter((p) => fs.existsSync(path.join(config.dataDir, p)));
-    execFileSync("tar", ["-czf", out, "-C", config.dataDir, rel(tmpDb), "shared", ...knowledgeDirs]);
+    const artifactDir = fs.existsSync(config.artifactsDir) ? [rel(config.artifactsDir)] : [];
+    execFileSync("tar", ["-czf", out, "-C", config.dataDir, rel(tmpDb), "shared", ...knowledgeDirs, ...artifactDir]);
     fs.rmSync(tmpDb);
     const all = fs.readdirSync(config.backupsDir).filter((f) => f.startsWith("constella-")).sort();
     for (const f of all.slice(0, Math.max(0, all.length - settings.backupKeep()))) fs.rmSync(path.join(config.backupsDir, f));
@@ -474,6 +479,7 @@ export async function createHub(opts: { dbPath?: string; webDist?: string; logge
     events,
     agents,
     runs,
+    artifacts,
     recovery,
     knowledge,
     learning,
@@ -560,6 +566,7 @@ export async function createHub(opts: { dbPath?: string; webDist?: string; logge
     notifier,
     scheduler,
     containers,
+    artifacts,
     browserHtml: () => settings.browserHtml(),
     instanceApproval: () => settings.instanceApproval(),
   });

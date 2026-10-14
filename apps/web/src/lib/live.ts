@@ -57,6 +57,7 @@ export function startLive(qc: QueryClient): () => void {
         "schedule.fired": [["schedules"]],
         notification: [["overview"], ["notifications"]],
         incident: [["overview"], ["incidents"], ["audit"]],
+        artifact: [["artifacts"], ["artifact"]],
       };
       for (const k of keys[type] ?? []) void qc.invalidateQueries({ queryKey: k });
     });

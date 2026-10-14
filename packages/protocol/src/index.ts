@@ -32,6 +32,15 @@ export function isTerminal(status: RunStatus): boolean {
   return TERMINAL.includes(status);
 }
 
+/**
+ * What an artifact (a file or document the agent delivered) holds, which decides how it is previewed.
+ * The first six are text: previewable as source, editable in place, readable back by the agent.
+ */
+export const TextArtifactKind = z.enum(["markdown", "html", "svg", "csv", "code", "text"]);
+export const ArtifactKind = z.enum([...TextArtifactKind.options, "image", "pdf", "audio", "video", "file"]);
+export type ArtifactKind = z.infer<typeof ArtifactKind>;
+export const TEXT_ARTIFACT_KINDS: readonly ArtifactKind[] = TextArtifactKind.options;
+
 /** Fields shared by every event; `seq` is per-run and drives SSE resume (Last-Event-ID). */
 const envelope = {
   id: z.string(),
@@ -111,6 +120,18 @@ export const AgentEvent = z.discriminatedUnion("type", [
     contextWindow: z.number().int().positive().optional(),
     /** Wall time of this model request (from the previous boundary to its usage report), for tokens/s. */
     durationMs: z.number().int().nonnegative().optional(),
+  }),
+  /** The agent delivered a file or document into the chat (a new artifact, or a new version of one). */
+  z.object({
+    ...envelope,
+    type: z.literal("artifact"),
+    artifactId: z.string(),
+    version: z.number().int().positive(),
+    title: z.string(),
+    kind: ArtifactKind,
+    filename: z.string(),
+    size: z.number().int().nonnegative(),
+    note: z.string().optional(),
   }),
   /** Something the hub did on its own for this run: repaired a runner, a supervisor stepped in, filed an incident. */
   z.object({

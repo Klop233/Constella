@@ -1,8 +1,8 @@
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
-import { Brain, CalendarClock, ChevronsUpDown, ClipboardCheck, Gauge, House, LogOut, Monitor, Palette, Plus, Search, Settings as SettingsIcon, Shield, SlidersHorizontal, Sparkles, ExternalLink, X } from "lucide-react";
+import { Brain, CalendarClock, ChevronsUpDown, ClipboardCheck, Gauge, House, Layers, LogOut, Monitor, Palette, Plus, Search, Settings as SettingsIcon, Shield, SlidersHorizontal, Sparkles, ExternalLink, X } from "lucide-react";
 import { lazy, StrictMode, Suspense, useEffect, useState, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
-import { BrowserRouter, NavLink, Route, Routes, useLocation, useNavigate } from "react-router";
+import { BrowserRouter, NavLink, Route, Routes, useLocation, useNavigate, useSearchParams } from "react-router";
 import { registerSW } from "virtual:pwa-register";
 import { cx, Loading, MenuDivider, MenuItem, navItemClass, Popover } from "./components/ui";
 import "./index.css";
@@ -25,6 +25,8 @@ const Settings = lazy(() => import("./pages/Settings"));
 const Reflect = lazy(() => import("./pages/Reflect"));
 const Usage = lazy(() => import("./pages/Usage"));
 const Audit = lazy(() => import("./pages/Audit"));
+const Artifacts = lazy(() => import("./pages/Artifacts"));
+const ArtifactViewer = lazy(() => import("./components/ArtifactViewer"));
 
 const qc = new QueryClient({
   defaultOptions: {
@@ -68,6 +70,7 @@ const TABS = [
 // Desktop sidebar: the mobile tabs minus 设置 (it lives in the account row), plus pages without a mobile tab.
 const NAV = [
   ...TABS.filter((t) => t.to !== "/settings"),
+  { to: "/artifacts", label: "成果", icon: Layers, end: false },
   { to: "/audit", label: "审计", icon: ClipboardCheck, end: false },
   { to: "/usage", label: "用量", icon: Gauge, end: false },
   { to: "/reflect", label: "回顾", icon: Sparkles, end: false },
@@ -108,6 +111,7 @@ function AccountMenu({ name }: { name: string }) {
           <>
             <div className="px-2.5 pt-1 pb-1.5 text-xs text-muted truncate">{name}</div>
             <MenuItem icon={<SettingsIcon />} label="设置" hint="Ctrl+," onClick={go("/settings")} />
+            <MenuItem icon={<Layers />} label="成果" onClick={go("/artifacts")} />
             <MenuItem icon={<ClipboardCheck />} label="审计" onClick={go("/audit")} />
             <MenuItem icon={<Gauge />} label="用量" onClick={go("/usage")} />
             <MenuItem icon={<Sparkles />} label="回顾" onClick={go("/reflect")} />
@@ -202,6 +206,17 @@ function Sidebar() {
   );
 }
 
+/** The artifact viewer, on whichever page the URL names one (?artifact=…). */
+function ArtifactPanel() {
+  const [params] = useSearchParams();
+  if (!params.get("artifact")) return null;
+  return (
+    <Suspense fallback={null}>
+      <ArtifactViewer />
+    </Suspense>
+  );
+}
+
 function Shell({ children }: { children: ReactNode }) {
   const loc = useLocation();
   const nav = useNavigate();
@@ -219,7 +234,8 @@ function Shell({ children }: { children: ReactNode }) {
   return (
     <div className="min-h-full">
       <Sidebar />
-      <div className="min-h-full flex flex-col max-w-2xl lg:max-w-none mx-auto lg:pl-64">
+      {/* While the artifact panel is open on a wide screen, the page makes room for it (--panel-w). */}
+      <div className="min-h-full flex flex-col max-w-2xl lg:max-w-none mx-auto lg:pl-64 lg:pr-[var(--panel-w,0px)]">
         <main className={cx("flex-1 w-full lg:max-w-4xl lg:mx-auto lg:px-6", !hideNav && "pb-20 lg:pb-8")}>{children}</main>
       </div>
       {!hideNav && (
@@ -234,6 +250,7 @@ function Shell({ children }: { children: ReactNode }) {
           </div>
         </nav>
       )}
+      <ArtifactPanel />
     </div>
   );
 }
@@ -327,6 +344,7 @@ function App() {
                 <Route path="/reflect" element={<Reflect />} />
                 <Route path="/usage" element={<Usage />} />
                 <Route path="/audit" element={<Audit />} />
+                <Route path="/artifacts" element={<Artifacts />} />
                 <Route path="*" element={<Home />} />
               </Routes>
             </Suspense>

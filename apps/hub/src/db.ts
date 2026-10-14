@@ -105,8 +105,9 @@ const MIGRATIONS: string[] = [
 ];
 
 /**
- * Model providers besides the built-in new-api, and the models picked from them. Created idempotently instead
- * of as a numbered migration, so it can't take the same slot as a migration added on another branch.
+ * Model providers besides the built-in new-api and the models picked from them; artifacts (files and documents
+ * agents delivered) and their versions. Created idempotently instead of as numbered migrations, so they can't
+ * take the same slot as a migration added on another branch.
  */
 const ENSURE = `
   CREATE TABLE IF NOT EXISTS providers (id TEXT PRIMARY KEY, name TEXT NOT NULL, base_url TEXT NOT NULL, created_at TEXT NOT NULL);
@@ -114,6 +115,18 @@ const ENSURE = `
     model TEXT NOT NULL, provider TEXT NOT NULL, bare INTEGER NOT NULL DEFAULT 0,
     test_ok INTEGER, test_ms INTEGER, test_error TEXT, tested_at TEXT, created_at TEXT NOT NULL,
     PRIMARY KEY (model, provider)
+  );
+  CREATE TABLE IF NOT EXISTS artifacts (
+    id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, conversation_id TEXT, run_id TEXT, title TEXT NOT NULL,
+    kind TEXT NOT NULL, language TEXT, filename TEXT NOT NULL, mime TEXT NOT NULL, size INTEGER NOT NULL,
+    version INTEGER NOT NULL, source_path TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS artifacts_agent ON artifacts(agent_id, updated_at);
+  CREATE INDEX IF NOT EXISTS artifacts_conversation ON artifacts(conversation_id, updated_at);
+  CREATE TABLE IF NOT EXISTS artifact_versions (
+    artifact_id TEXT NOT NULL, version INTEGER NOT NULL, run_id TEXT, kind TEXT NOT NULL, language TEXT,
+    filename TEXT NOT NULL, mime TEXT NOT NULL, size INTEGER NOT NULL, sha256 TEXT NOT NULL, note TEXT, author TEXT NOT NULL, source_path TEXT, created_at TEXT NOT NULL,
+    PRIMARY KEY (artifact_id, version)
   );
 `;
 
@@ -139,6 +152,9 @@ export function openDb(file: string): Db {
     }
   }
   db.exec(ENSURE);
+  // Per-conversation single-turn time limit (NULL = follow the setting, 0 = no limit); added like ENSURE for the same reason.
+  const cols = db.prepare("PRAGMA table_info(conversations)").all() as { name: string }[];
+  if (!cols.some((c) => c.name === "run_timeout_minutes")) db.exec("ALTER TABLE conversations ADD COLUMN run_timeout_minutes INTEGER");
   ensureInstanceKinds(db);
   return db;
 }
