@@ -58,7 +58,7 @@ Android（PWA，装到主屏幕）
         └──┬──────────┬──┘
    WS(runner协议)   docker API + VNC/CDP（内部网络 constella-net）
            │                     │
-  agent 容器 × N（空闲自动休眠）  desktop 容器 × M（按需启动，空闲自动停止）
+  agent 容器 × N（空闲自动休眠）  实例容器 × M（浏览器 / Linux 桌面 / 安卓，闲置暂停或停止）
   runner + Codex app-server     Xvnc+Xfce+Chromium(CDP)+cua-driver
   /home/agent: 记忆/技能/配置    持久化 home（浏览器登录态保留）
   /workspace                          │
@@ -84,24 +84,28 @@ Android（PWA，装到主屏幕）
   - 每个 run 有超时和 token 上限；
   - 容器设置 `restart: unless-stopped`。
 
-### 2. 桌面池
-- 镜像 `constella-desktop`：
-  - Debian 13 + Xfce 精简组件（参照 旧工具 的包清单）+ TigerVNC；
-  - Chromium，开放 CDP 端口 9222；
-  - 中文字体和输入法；
-  - cua-driver。
+### 2. 实例（桌面池）
+- 三种实例（`desktops.kind`），选项放在 `desktops.options`（屏幕尺寸、闲置处理；安卓另有 DPI、后端、ARM 转译、Google Play）：
+  - `browser` 纯浏览器：镜像 `constella-desktop`，`CONSTELLA_SESSION=browser`，只跑 xfwm4 和 Chromium（关掉会自动重开）；
+  - `desktop` Linux 桌面：同一个镜像，完整的 Xfce 会话；
+  - `android` 安卓：两个容器。`constella-android-<id>` 是系统本身（Redroid 或 SDK 模拟器），`constella-desktop-<id>` 是桥接容器（scrcpy 把画面投到 Xvnc，控制接口用 adb 实现），所以查看、接管、截图和 hub 的调用方式与另外两种一样。
+- **宿主能力检测**（`hostcaps.ts`）：hub 用临时容器检测 binder 能否挂载、特权容器能否改内核参数、`/dev/kvm` 能否使用、uid 映射是否够大，以及各镜像是否已构建、带了哪些组件（镜像 LABEL）。不能用的类型在 App 里置灰并写明原因；安卓后端在设置里选「自动 / Redroid / 模拟器 / 关闭」，每台安卓实例创建时定下后端，以后不变。
+- 专有组件（libndk_translation、MindTheGapps、Android SDK 系统镜像）只在用户本地用 `scripts/build-android-images.sh` 构建时按显式参数下载，不随项目分发。
 - 只连接内部网络 `constella-net`，不对外暴露任何端口。
-- **agent 的桌面策略**有三种：`无` / `固定绑定某台` / `按需借用`（从空闲池里租，没有空闲就按模板新建，用完释放）。
+- **agent 和实例**：每个 agent 绑定零个或多个实例（`agents.desktop_policy = {desktopIds}`，顺序即优先级），一个实例可以绑给多个 agent。agent 能用 `instance_create` / `instance_update` / `instance_restart` 自己新建（自动绑定给自己）、修改、重启绑定的实例，不能删除；新建和修改是否要主人同意在设置里分别开关，开着时一律交给主人，不走审批方式的自动判断。
+- **当前实例**：每个任务记住 desktop_* 和 browser_* 各自正在操作的实例；没有时按「本任务已租用 → 绑定顺序里第一个空闲」挑选，browser_* 只用带浏览器的实例并优先纯浏览器。`instance_use` 切换。一个任务可以同时租用多个实例。
 - **租约**：持有者只能是 `agent:<id>`、`human` 或空，任何时刻只有一方能操作。
-  - 你在 App 里点"接管"后，agent 的桌面工具调用一律返回"用户正在操作"，run 进入 `paused_by_user`。
+  - 你在 App 里点"接管"后，agent 的工具调用等你交还，run 进入 `paused_by_user`。
   - 点"交还"后 agent 继续，你可以附一句说明，比如"已登录"。
+- **闲置**：没人租用、没人在看的实例闲置一段时间后暂停（`docker pause`，保留内存，几秒恢复）或停止，全局设置、每个实例可覆盖。暂停或停止前保存最后一帧作为缩略图；打开查看或 agent 用到时自动恢复。任何时候都能手动重启。
 - **查看**：PWA 用 `@novnc/novnc`，连接 `wss://…/api/desktops/:id/vnc?ticket=`（一次性 ticket，30 秒有效），由 hub 把 WebSocket 桥接到 TCP，做法参考 旧工具 的 `display.py`。
-  - 默认只能看；接管后才能操作。
-  - 手机端支持双指缩放、触控板模式、键盘、剪贴板、横屏。
-  - 桌面列表显示定时刷新的缩略图。
-- **给 agent 的桌面工具**：hub 的 MCP 网关给每个 agent 一个带 token 的地址，提供两组工具，每次调用都检查租约并记审计日志。
-  - `browser`：Playwright MCP 通过 CDP 连接这台桌面的 Chromium。走 DOM 操作，优先使用，比点像素可靠；你接管时看到的是同一个浏览器，登录状态能延续。
-  - `computer`：转发给容器里的 cua-driver，只开放一组精选工具：截图、点击、输入、按键、滚动、拖拽、等待、打开应用、剪贴板。
+  - 默认只能看；接管后才能操作（hub 解析 RFB 消息，丢弃旁观者的输入）。
+  - 手机端支持双指缩放、触控板模式、键盘、剪贴板、横屏；安卓实例的工具栏是返回、主页、多任务，中文经输入法直接输入。
+  - 实例列表显示定时刷新的缩略图。
+- **给 agent 的工具**：hub 的 MCP 网关给每个 agent 一个带 token 的地址，每次调用都检查租约。
+  - `browser_*`：Playwright 通过 CDP 连接实例里的 Chromium。走 DOM 操作，优先使用，比点像素可靠；你接管时看到的是同一个浏览器，登录状态能延续。
+  - `desktop_*`：截图、点击、输入、按键、滚动、拖拽、等待、打开应用、剪贴板。桌面上由容器里的 xdotool 服务执行，安卓上由桥接容器用 adb 执行（点击是点按、拖动是滑动，中文经 ADBKeyboard 输入）。
+  - `android_ui`（界面元素列表，类似 browser_snapshot）、`android_apps`（列出、从网址或工作目录安装 APK）。
 
 ### 3. 自学习（不依赖具体引擎，可见、可撤销）
 - **存储**：
@@ -171,7 +175,7 @@ Android（PWA，装到主屏幕）
   deploy/docker-compose.yml          compose 项目名 constella
   deploy/.env.example                deploy/.env（0600，密钥，不进 git）
   scripts/                           migrate-旧工具.ts、backup.sh 等
-/srv/constella/{db,agents/<id>/{home,workspace},desktops/<id>/home,shared-skills,backups}
+/srv/constella/{db,agents/<id>/{home,workspace},desktops/<id>/{home,data,avd,adb},shared-skills,backups}
 ```
 
 ## 分阶段实施（每阶段结束都能实际用、都要验证）

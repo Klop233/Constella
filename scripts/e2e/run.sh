@@ -1,12 +1,19 @@
 #!/usr/bin/env bash
 # Spin up a throwaway hub (own data dir, port 8781), run the e2e suites, then remove everything it created.
 # Usage: scripts/e2e/run.sh [--keep]
+# Test other images than the live ones with HUB_IMAGE=… and CONSTELLA_*_IMAGE=… (e.g. CONSTELLA_DESKTOP_IMAGE);
+# ENV_FILE=… points at another deploy/.env (e.g. from a git worktree).
 set -uo pipefail
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 DATA=/srv/constella-test
 NAME=constella-hub-test
 PORT=8781
-set -a; . "$ROOT/deploy/.env"; set +a
+HUB_IMAGE=${HUB_IMAGE:-constella-hub:latest}
+# Instance images given by the caller win over deploy/.env.
+IMAGE_ENV=$(env | grep -E '^CONSTELLA_[A-Z_]*_IMAGE=' || true)
+set -a; . "${ENV_FILE:-$ROOT/deploy/.env}"; set +a
+IMAGE_ARGS=()
+while IFS= read -r kv; do [ -n "$kv" ] && IMAGE_ARGS+=(-e "$kv"); done <<< "$IMAGE_ENV"
 CODE=e2e-$(head -c 6 /dev/urandom | od -An -tx1 | tr -d ' \n')
 
 cleanup() {
@@ -26,7 +33,7 @@ docker run -d --name "$NAME" --network constella-net -p 127.0.0.1:$PORT:8780 \
   -e CONSTELLA_ORIGINS="http://localhost:$PORT" \
   -e NEWAPI_BASE_URL="$NEWAPI_BASE_URL" -e NEWAPI_API_KEY="$NEWAPI_API_KEY" -e TZ=Asia/Shanghai \
   -e CONSTELLA_HUB_WS="ws://$NAME:8780/api/runner" -e CONSTELLA_HUB_MCP="http://$NAME:8780/mcp" \
-  constella-hub:latest >/dev/null
+  "${IMAGE_ARGS[@]}" "$HUB_IMAGE" >/dev/null
 for i in $(seq 1 30); do curl -fs "localhost:$PORT/api/health" >/dev/null && break; sleep 1; done
 
 status=0

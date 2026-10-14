@@ -37,6 +37,14 @@ services:
       context: ../images/desktop
     profiles: ["images"]
 
+  # Screen and control for Android instances; the Android system images themselves depend on the host and are built
+  # with scripts/build-android-images.sh.
+  android-bridge-image:
+    image: constella-android-bridge:latest
+    build:
+      context: ../images/android-bridge
+    profiles: ["images"]
+
   # Public entry through Cloudflare Tunnel (set up with scripts/enable-public.sh)
   cloudflared:
     image: cloudflare/cloudflared:2025.9.1

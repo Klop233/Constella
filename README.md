@@ -1,6 +1,6 @@
 # Constella
 
-一个跑在自己服务器上的 agent 管理平台。手机上打开就能给好几个 agent 派活，它们在服务器上 24 小时干，需要用浏览器、点网页的时候各自有桌面可用；做过的事情会记下来，下次做得更顺。
+一个跑在自己服务器上的 agent 管理平台。手机上打开就能给好几个 agent 派活，它们在服务器上 24 小时干，需要用浏览器、桌面程序或安卓 App 的时候各自有实例可用；做过的事情会记下来，下次做得更顺。
 
 名字取自 constellation（星座）：每个 agent 是一颗星。
 
@@ -19,12 +19,13 @@ Constella 的思路是：**干活的部分不自己写**，直接用 OpenAI 开�
 - 危险操作会弹审批，手机收到推送，点一下批准或拒绝
 - 登录支持密码、两步验证、指纹 / 面容（通行密钥）
 
-**桌面**
-- 每个 agent 可以选：不用桌面、固定用一台、或者需要时临时借一台
-- 桌面是 Docker 里跑的 Linux（Xfce + Chromium），闲置 30 分钟自动停
-- 在 App 里能实时看到 agent 在桌面上干什么
-- 遇到登录、验证码这种得本人来的步骤，agent 会推送叫你，你点「接管」自己操作，弄完点「交还」，还能留句话给它
-- agent 操作网页优先按页面结构来（点按钮、填表单），比按坐标点像素靠谱
+**桌面（实例）**
+- 三种实例：**纯浏览器**（只有一个 Chromium，最省资源）、**Linux 桌面**（Xfce + Chromium，能运行别的程序）、**安卓**（能装 App，可选 ARM 转译和 Google Play）
+- 每个 agent 可以分到零个或多个实例，类型不限；agent 需要时也能自己新建、修改、重启实例，要不要你同意在设置里定
+- 闲置的实例可以暂停（冻结、保留内存，几秒恢复）或停止，全局设置，每个实例也能单独设
+- 在 App 里能实时看到 agent 在实例上干什么
+- 遇到登录、验证码、扫码这种得本人来的步骤，agent 会推送叫你，你点「接管」自己操作，弄完点「交还」，还能留句话给它
+- agent 操作网页优先按页面结构来（点按钮、填表单），安卓上先读界面元素再点，比按坐标点像素靠谱
 
 **文件和成果**
 - agent 做出的报告、表格、图片、PDF、压缩包会直接发到聊天里，点开就能预览，也能下载
@@ -58,7 +59,8 @@ constella-hub ─────────────── 管理服务：登�
     ├── constella-agent-xxx ── 每个 agent 一个容器，里面跑 Codex
     │       └── 通过 MCP 调 hub 提供的工具：记忆、发文件 / 成果、桌面、浏览器、定时任务、宿主机命令
     │
-    ├── constella-desktop-xxx ─ 桌面容器，按需启动
+    ├── constella-desktop-xxx ─ 实例：浏览器 / Linux 桌面（安卓实例在这里跑画面和控制）
+    ├── constella-android-xxx ─ 安卓实例的系统本身（Redroid 或模拟器）
     │
     └── new-api ────────────── 所有模型请求都走这里
 ```
@@ -94,12 +96,19 @@ chmod 600 .env
 **2. 构建并启动**
 
 ```bash
-docker compose --profile images build   # 构建 hub、agent、桌面三个镜像，第一次比较慢
+docker compose --profile images build   # 构建 hub、agent、桌面和安卓桥接镜像，第一次比较慢
 docker compose up -d hub
 curl http://127.0.0.1:8780/api/health   # 返回 ok 就是起来了
 ```
 
 hub 只监听本机 `127.0.0.1:8780`，外面要访问得再配一个入口（见下一步）。
+
+要用安卓实例的话，再按机器的情况构建一种（见下面「实例类型与宿主要求」）：
+
+```bash
+scripts/build-android-images.sh redroid --arm --gapps                          # 内核带 binder 的机器
+scripts/build-android-images.sh emulator --accept-android-sdk-license --playstore  # 有 /dev/kvm 的机器
+```
 
 **3. 配访问入口**
 
@@ -152,6 +161,33 @@ scripts/spikes/model-compat.sh gpt-6-astra kimi-k3 glm-5.3
 
 它会让每个模型做同一个多步小任务（写脚本、运行、保存结果、检查），然后统计哪些模型完成了。实测能用的模型，在 App 里选模型时会带 ✓。目前只支持走 API，不单独适配各家的 CLI 或订阅。
 
+## 实例类型与宿主要求
+
+hub 启动时会用临时容器检测这台机器能跑什么，结果在「设置 → 实例」里；建不了的类型会写明原因。改了宿主设置或构建了新镜像后，点那里的「检测」。
+
+| 类型 | 需要 | 大约占用内存 |
+|---|---|---|
+| 纯浏览器 | 只要 Docker | 0.3–1 GB |
+| Linux 桌面 | 只要 Docker | 0.4–1.5 GB |
+| 安卓 · Redroid | 宿主内核带 binder（binderfs），Docker 能起特权容器，并且特权容器能改内核参数 | 2–4 GB |
+| 安卓 · 模拟器 | 宿主有 `/dev/kvm`（硬件虚拟化） | 3–4 GB |
+
+两种安卓都支持时，默认用 Redroid（更轻、启动更快）；在「设置 → 实例 → 运行方式」里可以指定。
+
+**Redroid**
+- Ubuntu：`sudo apt install linux-modules-extra-$(uname -r) && sudo modprobe binder_linux devices=binder,hwbinder,vndbinder`，再把 `binder_linux` 写进 `/etc/modules-load.d/` 让它开机加载。Debian 等别的发行版要确认内核开了 `CONFIG_ANDROID_BINDERFS`。
+- 安卓启动时会设置几个全局内核参数（例如 `kernel.kptr_restrict`），所以它会改到宿主；非特权的 LXC 容器（比如 Proxmox 默认的 CT）不允许这样做，安卓起不来。这种情况用模拟器，或把 CT 改成特权容器。
+- 宿主的 uid 映射小于 90000 时（非特权 LXC 常见），App 里的网页内容（WebView）可能闪退，检测结果里会提示。
+- `--arm` 会下载 libndk_translation（Google 专有组件），让只有 ARM 版本的 App 能跑；`--gapps` 会下载 MindTheGapps。它们只在你本机构建时下载，不随项目分发。
+
+**模拟器**
+- 用 Google 的 Android SDK 模拟器和 x86_64 系统镜像（自带 ARM 转译）；构建时要加 `--accept-android-sdk-license`，表示你接受 [Android SDK 许可](https://developer.android.com/studio/terms)。
+- 在 Proxmox 的 LXC 里用：在宿主上 `pct set <CT 编号> --dev0 /dev/kvm,mode=0666`（Proxmox VE 8.1 起），重启 CT 后生效。
+
+**Google Play**：这些安卓都不是 Google 认证设备，第一次登录 Play 商店前，要在 [google.com/android/uncertified](https://www.google.com/android/uncertified/) 登记设备 ID。实例页面「更多 → Google 设备登记」里能看到这个 ID。
+
+**国内 App**：大多只有 ARM 版本，需要开 ARM 转译；银行、支付类 App 可能检测到模拟环境后拒绝运行。
+
 ## 已知问题和没做的
 
 - 只支持一个账号，自己用
@@ -170,7 +206,7 @@ pnpm test              # 单元测试
 scripts/e2e/run.sh     # 端到端测试
 ```
 
-`scripts/e2e/run.sh` 会单独起一个测试用的 hub（端口 8781，数据在 `/srv/constella-test`），用真实模型把主要流程跑一遍：对话、记忆、审批、停止、浏览器、桌面接管、定时、复盘和撤销。然后用桌面容器里的 Chromium 模拟手机和电脑把每个页面点一遍并截图。跑完自动清理，不影响正式数据。
+`scripts/e2e/run.sh` 会单独起一个测试用的 hub（端口 8781，数据在 `/srv/constella-test`），用真实模型把主要流程跑一遍：对话、记忆、审批、停止、agent 自己新建实例、浏览器、暂停和重启实例、接管、定时、复盘和撤销（机器能跑安卓时也测安卓）。要测还没上线的镜像，用 `HUB_IMAGE=…`、`CONSTELLA_DESKTOP_IMAGE=…` 这类环境变量指定。然后用桌面容器里的 Chromium 模拟手机和电脑把每个页面点一遍并截图。跑完自动清理，不影响正式数据。
 
 ## 目录
 
@@ -180,7 +216,7 @@ scripts/e2e/run.sh     # 端到端测试
 | `apps/runner` | agent 容器里的进程，负责驱动 Codex |
 | `apps/web` | 前端（React + Tailwind，桌面画面用 noVNC） |
 | `packages/protocol` | 前后端共用的事件格式和状态定义 |
-| `images` | hub、agent、桌面三个 Docker 镜像 |
+| `images` | hub、agent、桌面（浏览器 / Linux），以及安卓的桥接、Redroid、模拟器镜像 |
 | `deploy` | docker-compose 和配置模板 |
 | `scripts` | 部署、测试用的脚本 |
 | `docs` | 设计文档、开发进度、技术选型记录 |

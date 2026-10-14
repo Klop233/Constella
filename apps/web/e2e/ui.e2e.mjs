@@ -65,10 +65,14 @@ try {
 
   step("desktops");
   await page.getByRole("link", { name: "桌面" }).click();
-  await page.getByText("临时桌面").first().waitFor({ timeout: 15000 });
+  await page.getByText("测试浏览器").first().waitFor({ timeout: 15000 });
   await page.waitForTimeout(1500);
   await shot("06-desktops");
-  await page.getByText("临时桌面").first().click();
+  await page.getByLabel("新建实例").click();
+  await page.getByRole("dialog").getByText("Linux 桌面").waitFor();
+  await shot("06b-new-instance");
+  await page.keyboard.press("Escape");
+  await page.getByText("测试浏览器").first().click();
   await page.locator("canvas").first().waitFor({ timeout: 20000 });
   await page.waitForTimeout(2500);
   if (await page.getByRole("button", { name: "交还" }).isVisible()) {
@@ -84,7 +88,17 @@ try {
   await page.getByRole("button", { name: "交还" }).click();
   await page.getByRole("dialog").getByRole("button", { name: "交还" }).click();
   await page.getByRole("button", { name: "接管" }).waitFor({ timeout: 10000 });
+  await page.getByLabel("更多").click();
+  await page.getByRole("button", { name: "实例设置" }).click();
+  await page.getByRole("dialog").getByText("闲置时").waitFor();
+  await shot("08b-instance-settings");
+  await page.keyboard.press("Escape");
   await page.getByLabel("返回").click();
+
+  step("instance settings");
+  await page.goto(`${BASE}/settings?s=instances`, { waitUntil: "networkidle" });
+  await page.getByText("这台服务器能运行").waitFor();
+  await shot("08c-settings-instances");
 
   step("tasks");
   await page.getByRole("link", { name: "任务" }).click();
