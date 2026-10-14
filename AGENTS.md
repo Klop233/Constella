@@ -38,7 +38,7 @@
 | `containers.ts` | dockerode：agent / desktop 容器的创建、重建、休眠 |
 | `desktops.ts` | 桌面池、租约（同一时刻只有一方操作）、接管/交还、VNC 桥接与输入过滤、实例健康诊断（`diagnose`）与修复（`repair`） |
 | `mcp.ts` | 给 agent 的工具：`memory_*`、`ask_user`、`get_help`、`notify_user`、`schedule_*`、`send_file`、`artifact_*`、`desktop_*`、`browser_*`、`credentials_*`、`host_exec` |
-| `credentials.ts` / `credential-provider.ts` / `credential-routes.ts` | 凭据与隐私：密码库连接与解锁会话、agent 的访问申请、指定审批 agent 的审核与限时单次授权、`/api/credentials`；provider 接口的 Bitwarden 实现在 `credential-provider.ts`（见 [docs/credentials.md](docs/credentials.md)） |
+| `credentials.ts` / `credential-provider.ts` / `credential-routes.ts` | 凭据与隐私：密码库连接与解锁会话、agent 的访问申请、指定审批 agent 的审核与限时单次授权、`/api/credentials`；provider 接口的 Bitwarden 实现在 `credential-provider.ts`，官方区和第三方 / 自托管（Vaultwarden 等，可带自签名证书）共用（见 [docs/credentials.md](docs/credentials.md)） |
 | `artifacts.ts` | 成果：agent 交付到对话里的文件和文档，带版本，可预览、可原地编辑 |
 | `knowledge.ts` / `learning.ts` / `reflect.ts` | 记忆与技能（git，可撤销；含从别的助手导入记忆）/ 复盘与每周整理 / 回顾统计 |
 | `models.ts` / `newapi.ts` / `catalog.ts` | 模型提供方与 `model@provider` 引用 / new-api 管理接口 / 各模型支持的推理强度 |

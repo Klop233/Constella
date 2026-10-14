@@ -13,16 +13,54 @@ export interface CredentialProvider {
   items(connection: CredentialConnection): Promise<CredentialItem[]>;
   read(connection: CredentialConnection, itemId: string, fields: string[]): Promise<Record<string, string>>;
 }
+/** Runs `bw` with the prepared environment; injectable so the CLI contract can be tested. */
+export type CommandRunner = (env: NodeJS.ProcessEnv, args: string[]) => Promise<string>;
 interface VaultItem { id: string; name?: string; type?: number; login?: { username?: string; password?: string; totp?: string; uris?: { uri?: string }[] }; fields?: { name?: string; value?: string; type?: number }[] }
 const SESSION_MS = 15 * 60_000;
-/** CLI output is never included in errors: stderr can contain vault data and authentication material. */
+
+/** Hosts where plain HTTP is tolerable: the server never leaves the owner's own network. */
+const PRIVATE_HOST = /^(localhost|127\.\d+\.\d+\.\d+|\[::1\]|::1|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+|100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.\d+\.\d+|[a-z0-9-]+\.local)$/i;
+
+/** The vault base URL for the CLI: the official regions, or any Bitwarden-compatible server. */
+export function serverUrl(server: string): string {
+  if (server === "us") return "https://vault.bitwarden.com";
+  if (server === "eu") return "https://vault.bitwarden.eu";
+  return server.replace(/\/+$/, "");
+}
+
+/** Why a server value is unusable, or null when it is fine (official region, HTTPS, or private HTTP). */
+export function serverProblem(value: string): string | null {
+  if (value === "us" || value === "eu") return null;
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return "填 us、eu，或完整的服务器地址（带 https://）";
+  }
+  if (url.username || url.password || url.search || url.hash) return "服务器地址不要带用户名、密码或查询参数";
+  if (url.protocol === "https:") return null;
+  if (url.protocol === "http:" && PRIVATE_HOST.test(url.hostname)) return null;
+  return "第三方服务器要用 https://；只有内网地址（如 192.168.x.x、*.local）可以用 http://";
+}
+
+const defaultRun: CommandRunner = (env, args) =>
+  new Promise((resolve, reject) => {
+    execFile("bw", args, { env, timeout: 60_000, maxBuffer: 16 * 1024 * 1024, windowsHide: true }, (err, stdout) => {
+      // The CLI's own output can contain vault data and authentication material: never forward it.
+      if (err) reject(new Error("Bitwarden 操作失败，请检查连接、登录信息或解锁状态"));
+      else resolve(stdout.trim());
+    });
+  });
+
+/** Bitwarden Password Manager over the official CLI; also serves Bitwarden-compatible servers. */
 export class BitwardenProvider implements CredentialProvider {
   #secrets: SecretStore;
   #root: string;
+  #run: CommandRunner;
   #sessions = new Map<string, { key: string; expires: number; timer: NodeJS.Timeout }>();
   #epochs = new Map<string, number>();
   #queues = new Map<string, Promise<unknown>>();
-  constructor(secrets: SecretStore, root: string) { this.#secrets = secrets; this.#root = root; }
+  constructor(secrets: SecretStore, root: string, run: CommandRunner = defaultRun) { this.#secrets = secrets; this.#root = root; this.#run = run; }
   unlocked(id: string): boolean {
     const s = this.#sessions.get(id);
     if (s && s.expires > Date.now()) return true;
@@ -41,17 +79,40 @@ export class BitwardenProvider implements CredentialProvider {
     this.#queues.set(id, next);
     try { return await next; } finally { if (this.#queues.get(id) === next) this.#queues.delete(id); }
   }
-  async #command(c: CredentialConnection, args: string[], extra: Record<string, string> = {}): Promise<string> {
+  /** The connection's own CLI home, so two vaults never share cached state. */
+  #dir(c: CredentialConnection): string {
     if (!/^cred_[a-zA-Z0-9_-]+$/.test(c.id)) throw new Error("凭据连接无效");
     const dir = path.join(this.#root, c.id);
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
     fs.chmodSync(dir, 0o700);
-    const env: NodeJS.ProcessEnv = { PATH: process.env.PATH, HOME: dir, NODE_EXTRA_CA_CERTS: process.env.NODE_EXTRA_CA_CERTS, BITWARDENCLI_APPDATA_DIR: dir, BW_NOINTERACTION: "true", ...extra };
-    return new Promise((resolve, reject) => {
-      execFile("bw", args, { env, timeout: 60_000, maxBuffer: 16 * 1024 * 1024, windowsHide: true }, (err, stdout) => {
-        if (err) reject(new Error("Bitwarden 操作失败，请检查连接、登录信息或解锁状态"));
-        else resolve(stdout.trim());
-      });
+    return dir;
+  }
+  /** A third-party server's own CA, written where the CLI can read it (it keeps no copy in the DB). */
+  #caFile(c: CredentialConnection, dir: string): string | undefined {
+    const pem = this.#secrets.get(`credentials.${c.id}`, "caCert");
+    if (!pem) return undefined;
+    const file = path.join(dir, "ca.pem");
+    if (fs.existsSync(file) && fs.readFileSync(file, "utf8") === pem) return file;
+    fs.writeFileSync(file, pem, { mode: 0o600 });
+    fs.chmodSync(file, 0o600);
+    return file;
+  }
+  async #command(c: CredentialConnection, args: string[], extra: Record<string, string> = {}): Promise<string> {
+    const dir = this.#dir(c);
+    const ca = this.#caFile(c, dir);
+    const trust = ca ?? process.env.NODE_EXTRA_CA_CERTS;
+    const env: NodeJS.ProcessEnv = {
+      PATH: process.env.PATH,
+      HOME: dir,
+      BITWARDENCLI_APPDATA_DIR: dir,
+      BW_NOINTERACTION: "true",
+      ...(trust ? { NODE_EXTRA_CA_CERTS: trust } : {}),
+      ...extra,
+    };
+    return this.#run(env, args).catch(() => {
+      // Whatever the CLI or the runner said, it can contain vault data: replace it here as well, so
+      // no call path can leak it even if the runner's own message is unsanitized.
+      throw new Error("Bitwarden 操作失败，请检查连接、登录信息或解锁状态");
     });
   }
   async unlock(c: CredentialConnection, password: string): Promise<void> {
@@ -60,7 +121,7 @@ export class BitwardenProvider implements CredentialProvider {
     await this.#serial(c.id, async () => {
       const status = JSON.parse(await this.#command(c, ["status"])) as { status: string };
       if (status.status !== "unauthenticated") await this.#command(c, ["logout"]);
-      await this.#command(c, ["config", "server", c.server === "us" ? "https://vault.bitwarden.com" : c.server === "eu" ? "https://vault.bitwarden.eu" : c.server]);
+      await this.#command(c, ["config", "server", serverUrl(c.server)]);
       const scope = `credentials.${c.id}`;
       const clientId = this.#secrets.get(scope, "clientId");
       const clientSecret = this.#secrets.get(scope, "clientSecret");

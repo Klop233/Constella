@@ -5,14 +5,20 @@ import { audit, kvGet, kvSet, type Db } from "./db.ts";
 import type { EventStore } from "./events.ts";
 import type { RunManager } from "./runs.ts";
 import type { SecretStore } from "./secrets.ts";
-import { BitwardenProvider, type CredentialConnection, type CredentialProvider } from "./credential-provider.ts";
+import { BitwardenProvider, serverProblem, type CredentialConnection, type CredentialProvider } from "./credential-provider.ts";
 
 export const CredentialField = z.enum(["login.username", "login.password", "login.totp"]);
 export const CredentialRequestInput = z.object({ connectionId: z.string().max(80), itemId: z.string().min(1).max(100), fields: z.array(CredentialField).min(1).max(3), purpose: z.string().min(3).max(1000), target: z.string().min(1).max(2000) });
-export const CredentialConnectionInput = z.object({ name: z.string().trim().min(1).max(80), provider: z.literal("bitwarden"), server: z.string().max(2000).refine(v => {
-  if (v === "us" || v === "eu") return true;
-  try { const u = new URL(v); return u.protocol === "https:" && !u.username && !u.password && !u.search && !u.hash; } catch { return false; }
-}, "使用 us、eu 或 HTTPS 服务器地址"), clientId: z.string().min(1).max(500), clientSecret: z.string().min(1).max(2000) });
+export const CredentialConnectionInput = z.object({
+  name: z.string().trim().min(1).max(80),
+  provider: z.literal("bitwarden"),
+  /** "us" / "eu", or any Bitwarden-compatible server (Vaultwarden, self-hosted, …). */
+  server: z.string().trim().max(2000).refine((v) => serverProblem(v) === null, "服务器地址无效：官方区填 us / eu，第三方或自托管填完整地址（内网可用 http）"),
+  clientId: z.string().min(1).max(500),
+  clientSecret: z.string().min(1).max(2000),
+  /** PEM of the server's CA, for third-party servers with a certificate the host does not trust. */
+  caCert: z.string().max(20000).optional(),
+});
 export interface CredentialRequest {
   id: string; connectionId: string; itemId: string; itemName: string; agentId: string; runId: string;
   fields: string[]; purpose: string; target: string; status: "pending" | "approved" | "denied" | "expired" | "consumed" | "revoked";
@@ -65,12 +71,14 @@ export class Credentials {
     const b = CredentialConnectionInput.parse(input); const id = newId("cred");
     this.#d.db.prepare("INSERT INTO credential_connections (id,name,provider,server,created_at) VALUES (?,?,?,?,?)").run(id,b.name,b.provider,b.server,nowIso());
     this.#d.secrets.set(`credentials.${id}`, "clientId", b.clientId); this.#d.secrets.set(`credentials.${id}`, "clientSecret", b.clientSecret);
-    this.#log("connection.create", actor, undefined, { connection: b.name }); return this.#connection(id);
+    if (b.caCert?.trim()) this.#d.secrets.set(`credentials.${id}`, "caCert", b.caCert.trim());
+    this.#log("connection.create", actor, undefined, { connection: b.name, server: b.server }); return this.#connection(id);
   }
   remove(id: string, actor: string) {
     const c = this.#connection(id);
     this.lock(id, actor); this.#d.db.prepare("DELETE FROM credential_connections WHERE id = ?").run(id);
     this.#d.secrets.delete(`credentials.${id}`, "clientId"); this.#d.secrets.delete(`credentials.${id}`, "clientSecret");
+    this.#d.secrets.delete(`credentials.${id}`, "caCert");
     this.#log("connection.delete", actor, undefined, { connection: c.name });
   }
   async unlock(id: string, password: string, actor: string) {

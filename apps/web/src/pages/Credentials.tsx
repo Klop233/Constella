@@ -65,7 +65,7 @@ export default function Credentials() {
 }
 
 function Connections({ data, onAdd, onUnlock, onItems, act, busy }: { data: Connection[]; onAdd: () => void; onUnlock: (c: Connection) => void; onItems: (s: { connection: Connection; values: Item[] }) => void; act: (key: string, fn: () => Promise<unknown>, ok: string) => Promise<void>; busy: string | null }) {
- return <Section title="Bitwarden 连接" action={<Button size="sm" variant="secondary" onClick={onAdd}><Plus className="size-3.5" />添加连接</Button>}><div className="divide-y divide-line border border-line rounded-xl bg-surface">{data.length === 0 ? <Empty icon={<KeyRound className="size-6" />} title="还没有 Bitwarden 连接" hint="添加连接后，agent 才能申请访问凭据。" action={<Button size="sm" onClick={onAdd}>添加连接</Button>} /> : data.map(c => <div key={c.id} className="p-3.5 space-y-2.5"><div className="flex items-start gap-2"><KeyRound className="size-4 mt-0.5 text-muted" /><div className="min-w-0 flex-1"><div className="font-medium truncate">{c.name}</div><div className="text-xs text-muted">Bitwarden · {c.server}</div></div><Badge tone={tone(c.status)}>{c.status === "unlocked" ? <LockOpen className="size-3" /> : <Lock className="size-3" />}{statusLabel[c.status]}</Badge></div>{c.error && <div className="text-xs text-danger">{c.error}</div>}<div className="flex gap-1.5 justify-end">{c.status === "unlocked" ? <><Button size="sm" variant="soft" loading={busy === `sync-${c.id}`} onClick={() => void act(`sync-${c.id}`, () => api.post(`/api/credentials/connections/${c.id}/sync`), "已同步密码库")}><RefreshCw className="size-3.5" />同步</Button><Button size="sm" variant="soft" onClick={() => onItems({ connection: c, values: [] })}>查看项目</Button><Button size="sm" variant="secondary" onClick={() => void act(`lock-${c.id}`, () => api.post(`/api/credentials/connections/${c.id}/lock`), "连接已锁定")}><Lock className="size-3.5" />锁定</Button></> : <Button size="sm" onClick={() => onUnlock(c)}><Unlock className="size-3.5" />解锁</Button>}<Button size="sm" variant="ghost" className="text-danger" aria-label={`删除连接 ${c.name}`} onClick={() => { if (confirm(`确定删除“${c.name}”吗？`)) void act(`delete-${c.id}`, () => api.del(`/api/credentials/connections/${c.id}`), "连接已删除"); }}><Trash2 className="size-3.5" /></Button></div></div>)}</div></Section>;
+ return <Section title="Bitwarden 连接" action={<Button size="sm" variant="secondary" onClick={onAdd}><Plus className="size-3.5" />添加连接</Button>}><div className="divide-y divide-line border border-line rounded-xl bg-surface">{data.length === 0 ? <Empty icon={<KeyRound className="size-6" />} title="还没有 Bitwarden 连接" hint="添加连接后，agent 才能申请访问凭据。" action={<Button size="sm" onClick={onAdd}>添加连接</Button>} /> : data.map(c => <div key={c.id} className="p-3.5 space-y-2.5"><div className="flex items-start gap-2"><KeyRound className="size-4 mt-0.5 text-muted" /><div className="min-w-0 flex-1"><div className="font-medium truncate">{c.name}</div><div className="text-xs text-muted">Bitwarden · {serverText(c.server)}</div></div><Badge tone={tone(c.status)}>{c.status === "unlocked" ? <LockOpen className="size-3" /> : <Lock className="size-3" />}{statusLabel[c.status]}</Badge></div>{c.error && <div className="text-xs text-danger">{c.error}</div>}<div className="flex gap-1.5 justify-end">{c.status === "unlocked" ? <><Button size="sm" variant="soft" loading={busy === `sync-${c.id}`} onClick={() => void act(`sync-${c.id}`, () => api.post(`/api/credentials/connections/${c.id}/sync`), "已同步密码库")}><RefreshCw className="size-3.5" />同步</Button><Button size="sm" variant="soft" onClick={() => onItems({ connection: c, values: [] })}>查看项目</Button><Button size="sm" variant="secondary" onClick={() => void act(`lock-${c.id}`, () => api.post(`/api/credentials/connections/${c.id}/lock`), "连接已锁定")}><Lock className="size-3.5" />锁定</Button></> : <Button size="sm" onClick={() => onUnlock(c)}><Unlock className="size-3.5" />解锁</Button>}<Button size="sm" variant="ghost" className="text-danger" aria-label={`删除连接 ${c.name}`} onClick={() => { if (confirm(`确定删除“${c.name}”吗？`)) void act(`delete-${c.id}`, () => api.del(`/api/credentials/connections/${c.id}`), "连接已删除"); }}><Trash2 className="size-3.5" /></Button></div></div>)}</div></Section>;
 }
 
 function Requests({ requests, agents, act, busy }: { requests: Request[]; agents: Agent[]; act: (key: string, fn: () => Promise<unknown>, ok: string) => Promise<void>; busy: string | null }) {
@@ -93,32 +93,49 @@ function Requests({ requests, agents, act, busy }: { requests: Request[]; agents
 }
 function History({ entries }: { entries: AccessLog[] }) { return <Section title="访问历史"><div className="border border-line rounded-xl bg-surface divide-y divide-line">{entries.length === 0 ? <Empty title="暂无访问记录" /> : entries.map(e => <div key={e.id} className="px-3.5 py-2.5 flex items-center gap-3"><div className="flex-1"><div className="text-[13px]">{actionLabel[e.action] ?? e.action}</div><div className="text-xs text-muted">{e.agentId ? `agent ${e.agentId.slice(0, 8)}` : "系统"}{e.requestId ? ` · 请求 ${e.requestId.slice(0, 8)}` : ""}</div></div><span className="text-xs text-muted tabular-nums">{ago(e.createdAt)}</span></div>)}</div></Section>; }
 
+/** How a server reads in a list: the official regions, or the third-party address as given. */
+const serverText = (server: string) => (server === "us" ? "Bitwarden（美国）" : server === "eu" ? "Bitwarden（欧洲）" : server);
+/** Plain HTTP is only offered for a server on the owner's own network. */
+const privateHost = /^(localhost|127\.\d+\.\d+\.\d+|\[::1\]|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+|100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.\d+\.\d+|[a-z0-9-]+\.local)$/i;
+function serverOk(server: string) {
+  if (server === "us" || server === "eu") return true;
+  let url: URL;
+  try { url = new URL(server); } catch { return false; }
+  if (url.username || url.password || url.search || url.hash) return false;
+  return url.protocol === "https:" || (url.protocol === "http:" && privateHost.test(url.hostname));
+}
+
 function AddSheet({ open, onClose, onSaved }: { open: boolean; onClose: () => void; onSaved: () => void }) {
   const [name, setName] = useState("");
   const [preset, setPreset] = useState("us");
   const [customUrl, setCustomUrl] = useState("");
   const [clientId, setClientId] = useState("");
   const [clientSecret, setClientSecret] = useState("");
+  const [caCert, setCaCert] = useState("");
+  const [showCa, setShowCa] = useState(false);
   const [loading, setLoading] = useState(false);
   const server = preset === "custom" ? customUrl.trim() : preset;
-  const ready = !!name.trim() && !!clientId.trim() && !!clientSecret && /^https:\/\/[^\s]+$/.test(server);
+  const ready = !!name.trim() && !!clientId.trim() && !!clientSecret && serverOk(server);
   const submit = async () => {
     setLoading(true);
     try {
-      await api.post("/api/credentials/connections", { name: name.trim(), provider: "bitwarden", server, clientId: clientId.trim(), clientSecret });
+      await api.post("/api/credentials/connections", { name: name.trim(), provider: "bitwarden", server, clientId: clientId.trim(), clientSecret, ...(caCert.trim() ? { caCert: caCert.trim() } : {}) });
       toast("连接已添加，解锁后才能读取");
       onSaved(); onClose();
-      setName(""); setClientId(""); setClientSecret(""); setCustomUrl("");
+      setName(""); setClientId(""); setClientSecret(""); setCustomUrl(""); setCaCert(""); setShowCa(false);
     } catch (e) { toast(e instanceof Error ? e.message : String(e), "danger"); } finally { setLoading(false); }
   };
   return (
     <Sheet open={open} onClose={onClose} title="添加 Bitwarden 连接">
       <div className="space-y-3">
         <Field label="名称"><input className={inputClass} value={name} onChange={e => setName(e.target.value)} placeholder="例如：团队密码库" /></Field>
-        <Field label="服务器"><select className={selectClass} value={preset} onChange={e => setPreset(e.target.value)} aria-label="服务器"><option value="us">Bitwarden（美国）</option><option value="eu">Bitwarden（欧洲）</option><option value="custom">自托管</option></select></Field>
-        {preset === "custom" && <Field label="服务器 URL" hint="必须是以 https:// 开头的地址。"><input className={inputClass} value={customUrl} onChange={e => setCustomUrl(e.target.value)} placeholder="https://vault.example.com" /></Field>}
-        <Field label="Client ID" hint="Bitwarden 个人 API Key 的 client_id，在网页版的「安全 → 密钥」里生成。"><input className={inputClass} value={clientId} onChange={e => setClientId(e.target.value)} autoComplete="off" /></Field>
+        <Field label="服务器"><select className={selectClass} value={preset} onChange={e => setPreset(e.target.value)} aria-label="服务器"><option value="us">Bitwarden（美国）</option><option value="eu">Bitwarden（欧洲）</option><option value="custom">第三方 / 自托管</option></select></Field>
+        {preset === "custom" && <Field label="服务器地址" hint="Vaultwarden 等 Bitwarden 兼容服务填完整地址。内网地址（192.168.x.x、*.local）可以用 http://，其余必须 https://。"><input className={inputClass} value={customUrl} onChange={e => setCustomUrl(e.target.value)} placeholder="https://vault.example.com" /></Field>}
+        <Field label="Client ID" hint="Bitwarden 个人 API Key 的 client_id，在网页版的「安全 → 密钥」里生成；第三方服务在同一个位置。"><input className={inputClass} value={clientId} onChange={e => setClientId(e.target.value)} autoComplete="off" /></Field>
         <Field label="Client Secret" hint="只发送到服务器，之后不再显示。"><input className={inputClass} type="password" value={clientSecret} onChange={e => setClientSecret(e.target.value)} autoComplete="new-password" /></Field>
+        {preset === "custom" && (showCa
+          ? <Field label="服务器证书（可选）" hint="第三方服务器用自签名或私有 CA 时，把 PEM 证书贴在这里，只用于这个连接。"><textarea className={cx(inputClass, "h-24 font-mono text-[12px]")} value={caCert} onChange={e => setCaCert(e.target.value)} placeholder="-----BEGIN CERTIFICATE-----" /></Field>
+          : <button type="button" onClick={() => setShowCa(true)} className="text-xs text-muted hover:text-[var(--text)]">服务器证书不受信任？添加自签名证书</button>)}
         <div className="flex justify-end gap-2 pt-2"><Button variant="ghost" onClick={onClose}>取消</Button><Button loading={loading} disabled={!ready} onClick={() => void submit()}>保存连接</Button></div>
       </div>
     </Sheet>
