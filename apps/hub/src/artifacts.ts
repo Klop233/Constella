@@ -499,7 +499,7 @@ export class Artifacts {
   }
 
   /** Replace the bytes of an existing file artifact (an edited Word / Excel / PowerPoint file) as its next version. */
-  saveFile(input: { artifactId: string; bytes: Buffer; note?: string | null; author: "agent" | "user" }): ArtifactRow {
+  saveFile(input: { artifactId: string; bytes: Buffer; note?: string | null; author: "agent" | "user"; filename?: string; mime?: string }): ArtifactRow {
     const existing = this.get(input.artifactId);
     if (!existing) throw new Error("成果不存在");
     if (input.bytes.length > MAX_ARTIFACT_FILE) throw new Error(`文件太大（${mb(input.bytes.length)}），最大 ${mb(MAX_ARTIFACT_FILE)}`);
@@ -512,8 +512,8 @@ export class Artifacts {
         runId: null,
         conversationId: null,
         title: existing.title,
-        type: { kind: existing.kind, mime: existing.mime, language: existing.language ?? undefined },
-        filename: existing.filename,
+        type: { kind: existing.kind, mime: input.mime ?? existing.mime, language: existing.language ?? undefined },
+        filename: input.filename ?? existing.filename,
         size: input.bytes.length,
         sha256: createHash("sha256").update(input.bytes).digest("hex"),
         note: input.note,

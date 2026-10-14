@@ -13,6 +13,7 @@ import { Badge, Button, buttonClass, Empty, IconButton, inputClass, Loading, Men
 const PANEL_W = "min(50vw, 760px)";
 const coarsePointer = window.matchMedia("(pointer: coarse)").matches;
 const CSV_ROWS = 1000;
+const LEGACY_OFFICE = /\.(doc|xls|ppt)$/i;
 const OFFICE = /\.(docx|xlsx|pptx)$/i;
 
 /** The artifact named in the URL, in a side panel (full screen on phones). */
@@ -369,6 +370,7 @@ function Body({ id, ver, latest, baseVersion, onSaved, mode, text, loading, erro
         <iframe title={ver.filename} src={url} className="block w-full h-full border-0" />
       );
     case "file":
+      if (LEGACY_OFFICE.test(ver.filename)) return <LegacyOfficeView id={id} ver={ver} latest={latest} onSaved={onSaved} download={download} />;
       if (OFFICE.test(ver.filename)) return <OfficeView id={id} ver={ver} latest={latest} baseVersion={baseVersion} onSaved={onSaved} download={download} />;
       if (ARCHIVE.test(ver.filename)) return <ArchiveView id={id} ver={ver} download={download} />;
       return <Empty title={ver.filename} hint={`${bytes(ver.size)} · 这类文件不能在线预览，下载后用对应的软件打开`} action={download} />;
@@ -562,6 +564,47 @@ function OfficeView({ id, ver, latest, baseVersion, onSaved, download }: { id: s
         {!d.groups.length && <Empty title="没有可编辑的文字" action={download} />}
       </div>
     </div>
+  );
+}
+
+/** Old binary .doc / .xls / .ppt can't be read directly; offers to convert them to the modern format first. */
+function LegacyOfficeView({ id, ver, latest, onSaved, download }: { id: string; ver: ArtifactVersion; latest: boolean; onSaved: (v: number) => void; download: ReactNode }) {
+  const qc = useQueryClient();
+  const info = useQuery({ queryKey: ["artifact-convert", id], queryFn: () => api.get<{ to: string | null; available: boolean }>(`/api/artifacts/${id}/convert`), staleTime: 60_000 });
+  const [busy, setBusy] = useState(false);
+  const to = info.data?.to ?? "";
+  const convert = async () => {
+    setBusy(true);
+    try {
+      const next = await api.post<{ version: number }>(`/api/artifacts/${id}/convert`);
+      void qc.invalidateQueries({ queryKey: ["artifact", id] });
+      void qc.invalidateQueries({ queryKey: ["artifacts"] });
+      onSaved(next.version);
+      toast(`已转换，保存为第 ${next.version} 版`);
+    } catch (err) {
+      toast(err instanceof Error ? err.message : String(err), "danger");
+    } finally {
+      setBusy(false);
+    }
+  };
+  let hint = `${bytes(ver.size)} · 这是老格式的 Office 文件，要先转换成 .${to || "docx / xlsx / pptx"} 才能查看和编辑`;
+  if (info.data && !info.data.available) hint = `${bytes(ver.size)} · 老格式的 Office 文件不能在线预览，服务器上没有安装转换工具，请下载后用 Office 打开`;
+  else if (!latest) hint = `${bytes(ver.size)} · 老格式的 Office 文件；转换请先回到最新版`;
+  return (
+    <Empty
+      title={ver.filename}
+      hint={hint}
+      action={
+        <div className="flex items-center gap-2">
+          {info.data?.available && latest && (
+            <Button size="sm" variant="primary" loading={busy} onClick={convert}>
+              转换为 .{to} 并查看
+            </Button>
+          )}
+          {download}
+        </div>
+      }
+    />
   );
 }
 

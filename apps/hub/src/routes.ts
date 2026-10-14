@@ -5,6 +5,7 @@ import { DesktopKind, DesktopOptions, IdleAction } from "@constella/protocol";
 import { z } from "zod";
 import { AgentInput, TEMPLATES } from "./agents.ts";
 import { isArchiveName, listArchive } from "./archive.ts";
+import { convertLegacyOffice, findOffice, legacyOffice } from "./convert.ts";
 import { editOffice, officeKind, readOffice } from "./office.ts";
 import { MAX_ARTIFACT_TEXT, type ArtifactVersionRow } from "./artifacts.ts";
 import type { Hub } from "./app.ts";
@@ -469,6 +470,32 @@ export function registerRoutes(hub: Hub): void {
       throw new HttpError(422, err instanceof Error ? err.message : String(err));
     }
     const saved = artifacts.saveFile({ artifactId: a.id, bytes: Buffer.from(out), note: b.note ?? `修改了 ${b.edits.length} 处`, author: "user" });
+    audit(db, actor(req), "artifact.edit", { id: saved.id, version: saved.version });
+    return saved;
+  });
+  // Old .doc / .xls / .ppt: whether they can be converted here, and the conversion (saved as a new version).
+  app.get("/api/artifacts/:id/convert", async (req) => {
+    const a = artifactOr404(id(req));
+    const t = a.kind === "file" ? legacyOffice(a.filename) : null;
+    return { to: t?.to ?? null, available: !!t && (await findOffice()) !== null };
+  });
+  app.post("/api/artifacts/:id/convert", async (req) => {
+    const a = artifactOr404(id(req));
+    const v = artifacts.version(a.id);
+    const t = v.kind === "file" ? legacyOffice(v.filename) : null;
+    if (!t) throw new HttpError(400, "这个文件不需要转换");
+    const bytes = await convertLegacyOffice(artifacts.filePath(a.id, v.version), t.to).catch((err) => {
+      throw new HttpError(422, err instanceof Error ? err.message : String(err));
+    });
+    const mime = "application/vnd.openxmlformats-officedocument." + { docx: "wordprocessingml.document", xlsx: "spreadsheetml.sheet", pptx: "presentationml.presentation" }[t.to];
+    const saved = artifacts.saveFile({
+      artifactId: a.id,
+      bytes,
+      filename: v.filename.replace(/\.[^.]+$/, `.${t.to}`),
+      mime,
+      note: `由 .${t.from} 转换为 .${t.to}`,
+      author: "user",
+    });
     audit(db, actor(req), "artifact.edit", { id: saved.id, version: saved.version });
     return saved;
   });
