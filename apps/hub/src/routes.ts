@@ -266,15 +266,18 @@ export function registerRoutes(hub: Hub): void {
       )
       .all(id(req)),
   );
+  const RUN_TIMEOUTS = [0, 30, 60, 120, 240, 480];
   const ModelPatch = {
     model: z.string().min(1).max(200).nullable().optional(),
     effort: EffortSchema.nullable().optional(),
+    /** This conversation's single-turn time limit: minutes, 0 for none, null to follow the setting. */
+    runTimeoutMinutes: z.number().int().refine((v) => RUN_TIMEOUTS.includes(v), `只能是 ${RUN_TIMEOUTS.join(" / ")}`).nullable().optional(),
   };
   const SendBody = z.object({ text: z.string().min(1).max(20000), images: z.array(z.string()).max(8).optional(), ...ModelPatch });
   app.post("/api/agents/:id/messages", async (req) => {
     const b = SendBody.parse(req.body);
     await checkBudget(hub, id(req));
-    return runs.send({ agentId: id(req), text: b.text, images: b.images, model: b.model, effort: b.effort });
+    return runs.send({ agentId: id(req), text: b.text, images: b.images, model: b.model, effort: b.effort, runTimeoutMinutes: b.runTimeoutMinutes });
   });
   app.get("/api/agents/:id/today", async (req) => {
     const a = agents.get(id(req));
@@ -325,6 +328,7 @@ export function registerRoutes(hub: Hub): void {
     checkModel(b.model);
     if (b.title) db.prepare("UPDATE conversations SET title = ? WHERE id = ?").run(b.title, id(req));
     if (b.model !== undefined || b.effort !== undefined) runs.setConversationModel(id(req), b);
+    if (b.runTimeoutMinutes !== undefined) runs.setConversationTimeout(id(req), b.runTimeoutMinutes);
     return { ok: true };
   });
   app.delete("/api/conversations/:id", async (req) => {
@@ -343,7 +347,7 @@ export function registerRoutes(hub: Hub): void {
     if (!conv) throw new HttpError(404, "conversation not found");
     const b = SendBody.parse(req.body);
     await checkBudget(hub, conv.agent_id);
-    return runs.send({ agentId: conv.agent_id, conversationId: conv.id, text: b.text, images: b.images, model: b.model, effort: b.effort });
+    return runs.send({ agentId: conv.agent_id, conversationId: conv.id, text: b.text, images: b.images, model: b.model, effort: b.effort, runTimeoutMinutes: b.runTimeoutMinutes });
   });
   app.post("/api/runs/:id/interrupt", async (req) => {
     await runs.interrupt(id(req), actor(req));
@@ -693,7 +697,7 @@ export function registerRoutes(hub: Hub): void {
     autoResume: z.boolean().optional(),
     browserHtml: z.boolean().optional(),
     maxAutoResumes: z.number().int().min(1).max(10).optional(),
-    runTimeoutMinutes: minutes([30, 60, 120, 240, 480]).optional(),
+    runTimeoutMinutes: minutes(RUN_TIMEOUTS).optional(),
     runWatchdogMinutes: minutes([0, 5, 10, 20, 30, 60]).optional(),
     approvalMode: z.enum(["ask", "smart", "auto"]).optional(),
     agentIdleMinutes: minutes([0, 10, 30, 60, 120, 360]).optional(),

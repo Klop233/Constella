@@ -62,3 +62,9 @@ export function duration(ms: number): string {
   if (s < 3600) return `${Math.floor(s / 60)} 分 ${s % 60} 秒`;
   return `${Math.floor(s / 3600)} 小时 ${Math.floor((s % 3600) / 60)} 分`;
 }
+
+export const fmtMinutes = (m: number) => (m % 60 === 0 && m >= 60 ? `${m / 60} 小时` : `${m} 分钟`);
+
+/** Single-turn time limits the hub accepts; 0 is no limit. */
+export const RUN_TIMEOUTS = [0, 30, 60, 120, 240, 480];
+export const runTimeoutLabel = (m: number) => (m === 0 ? "不限制" : fmtMinutes(m));
