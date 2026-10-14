@@ -1,7 +1,8 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowUp, Bot, Brain, History, Lightbulb, Loader2, Trash2, Undo2, UserRound } from "lucide-react";
+import { ArrowUp, Bot, Brain, ClipboardPaste, History, Lightbulb, Loader2, Trash2, Undo2, UserRound } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router";
+import { MemoryImport } from "../components/MemoryImport";
 import { Button, Empty, Header, Loading, Sheet, cx, toast } from "../components/ui";
 import { api } from "../lib/api";
 import { timeAgo } from "../lib/format";
@@ -36,6 +37,7 @@ export default function Learning() {
   const [busy, setBusy] = useState(false);
   const [text, setText] = useState("");
   const [asking, setAsking] = useState(false);
+  const [importing, setImporting] = useState(false);
   const refresh = () => {
     void qc.invalidateQueries({ queryKey: ["learning"] });
     void qc.invalidateQueries({ queryKey: ["knowledge"] });
@@ -87,7 +89,17 @@ export default function Learning() {
   const mine = k ? items(k.memory.agent) : [];
   return (
     <div className="min-h-[calc(100dvh-5rem)] lg:min-h-dvh flex flex-col">
-      <Header title="学习" sub="agent 记下的记忆和技能，每一次改动都可以撤销" />
+      <Header
+        title="学习"
+        sub="agent 记下的记忆和技能，每一次改动都可以撤销"
+        right={
+          agent && (
+            <Button size="sm" variant="ghost" onClick={() => setImporting(true)}>
+              <ClipboardPaste className="size-3.5" /> 导入记忆
+            </Button>
+          )
+        }
+      />
       <div className="flex-1 px-4 pb-4 space-y-8 lg:max-w-3xl">
         <div className="flex gap-1 overflow-x-auto no-scrollbar -mx-4 px-4">
           {agents.data?.map((a) => (
@@ -172,6 +184,8 @@ export default function Learning() {
           </div>
         </div>
       )}
+
+      {agent && <MemoryImport open={importing} onClose={() => setImporting(false)} agentId={agent.id} agentName={agent.name} />}
 
       <Sheet open={!!open} onClose={() => setOpen(null)} title={open?.kind === "skill" ? "技能变更" : "记忆变更"}>
         {open && (

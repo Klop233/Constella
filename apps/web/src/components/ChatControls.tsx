@@ -1,9 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
-import { Check, ChevronDown, Search } from "lucide-react";
+import { Check, ChevronDown, Search, Timer } from "lucide-react";
 import { useRef, useState, type KeyboardEvent, type PointerEvent, type ReactNode } from "react";
 import { api } from "../lib/api";
 import { effortLabel, fitIndex, modelEfforts } from "../lib/effort";
-import { tokens } from "../lib/format";
+import { RUN_TIMEOUTS, runTimeoutLabel, tokens } from "../lib/format";
 import { useModelLabel, useModels } from "../lib/models";
 import type { Effort, Run } from "../lib/types";
 import { conversationUsage, type LatestStats } from "./RunView";
@@ -100,6 +100,49 @@ export function EffortPicker({ value, agentEffort, model, onChange }: { value: E
               </button>
             )}
           </div>
+        </div>
+      )}
+    </Popover>
+  );
+}
+
+/** Per-conversation single-turn time limit; `null` follows the setting, 0 lets a turn run as long as it needs. */
+export function RunTimeoutPicker({ value, onChange }: { value: number | null; onChange: (v: number | null) => void }) {
+  const settings = useQuery({ queryKey: ["settings"], queryFn: () => api.get<{ runTimeoutMinutes: number }>("/api/settings"), staleTime: 60_000 });
+  const inherited = settings.data?.runTimeoutMinutes;
+  const item = (v: number | null, title: string, close: () => void, sub?: string) => (
+    <button
+      key={v ?? "default"}
+      type="button"
+      onClick={() => {
+        onChange(v);
+        close();
+      }}
+      className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md text-left text-[13px] hover:bg-surface-2"
+    >
+      <span className="flex-1 min-w-0">
+        <span className="block truncate">{title}</span>
+        {sub && <span className="block text-xs text-muted truncate">{sub}</span>}
+      </span>
+      {value === v && <Check className="size-4 text-accent shrink-0" />}
+    </button>
+  );
+  return (
+    <Popover
+      label="单轮最长运行"
+      className="w-56 max-w-[calc(100vw-2rem)]"
+      trigger={
+        <>
+          <Timer className={cx("size-4", value !== null && "text-accent")} />
+          {value !== null && <span className="hidden sm:inline">{runTimeoutLabel(value)}</span>}
+        </>
+      }
+    >
+      {(close) => (
+        <div className="p-1.5">
+          <div className="px-2.5 pt-1 pb-1.5 text-xs text-muted">单轮最长运行，只对这个对话生效</div>
+          {item(null, "跟随设置", close, inherited === undefined ? undefined : runTimeoutLabel(inherited))}
+          {RUN_TIMEOUTS.map((m) => item(m, runTimeoutLabel(m), close))}
         </div>
       )}
     </Popover>

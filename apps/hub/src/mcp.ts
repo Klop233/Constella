@@ -2,7 +2,9 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
+import { TextArtifactKind } from "@constella/protocol";
 import type { AgentRow, Agents } from "./agents.ts";
+import { isTextKind, MAX_ARTIFACT_TEXT, type ArtifactRow, type Artifacts } from "./artifacts.ts";
 import type { Containers } from "./containers.ts";
 import type { Db } from "./db.ts";
 import type { Desktops } from "./desktops.ts";
@@ -21,6 +23,7 @@ export interface McpDeps {
   notifier: Notifier;
   scheduler: Scheduler;
   containers: Containers;
+  artifacts: Artifacts;
   /** Whether agents may read page HTML directly (browser_html). */
   browserHtml: () => boolean;
 }
@@ -29,6 +32,9 @@ type ToolResult = { content: ({ type: "text"; text: string } | { type: "image"; 
 
 const text = (t: string): ToolResult => ({ content: [{ type: "text", text: t }] });
 const fail = (t: string): ToolResult => ({ content: [{ type: "text", text: t }], isError: true });
+
+/** How much of a text artifact one artifact_read returns. */
+const READ_CHUNK = 60_000;
 
 /** How long ask_user waits for the owner; stays under the engine's MCP tool timeout (960 s). */
 const ASK_WAIT_MS = 14 * 60_000;
@@ -129,6 +135,119 @@ function buildServer(agent: AgentRow, d: McpDeps): McpServer {
           ? `主人暂时没有回复。按推荐选项「${options[rec]!.label}」继续推进；如果主人之后改选，会以新消息告诉你。`
           : "主人暂时没有回复。先完成不依赖这个决定的部分；如果非等不可，结束本轮并用一句话说明在等哪个决定，主人回答后会以新消息告诉你。",
       );
+    }),
+  );
+
+  // ── files & artifacts ────────────────────────────────────
+  /** Show what was just delivered in the run's chat, and tell the agent how to refer to it. */
+  const delivered = (runId: string, a: ArtifactRow, note?: string) => {
+    d.runs.appendFor(runId, { type: "artifact", runId, artifactId: a.id, version: a.version, title: a.title, kind: a.kind, filename: a.filename, size: a.size, ...(note?.trim() ? { note: note.trim().slice(0, 300) } : {}) });
+    return text(
+      a.version === 1
+        ? `已发到聊天：「${a.title}」（成果 id ${a.id}，${a.filename}，${bytes(a.size)}）。之后要更新它，用这个 id 生成新版本。`
+        : `已发到聊天：「${a.title}」第 ${a.version} 版（成果 id ${a.id}，${a.filename}，${bytes(a.size)}）。`,
+    );
+  };
+  server.registerTool(
+    "send_file",
+    {
+      description:
+        "把文件发到聊天里交给主人：报告、表格、文档、图片、PDF、音视频、压缩包等任何文件。主人能在聊天里直接预览和下载，发过的文件都收进「成果」库并保留每个版本。" +
+        "主人看不到你的容器，做出了主人要拿走的文件就用它发送，不要只在回复里写路径。path 是容器里的路径（/workspace 或 /home/agent 下，相对路径按 /workspace 算；目录先打包）。" +
+        "更新以前发过的文件时传 artifact_id 生成新版本；同一对话里用同一路径、同一标题重新发送也会自动成为新版本。",
+      inputSchema: {
+        path: z.string().min(1).max(1000),
+        title: z.string().max(120).optional().describe("给主人看的标题，默认用文件名"),
+        note: z.string().max(300).optional().describe("一句话说明：这是什么，或这一版改了什么"),
+        artifact_id: z.string().max(40).optional().describe("要更新的成果 id"),
+      },
+    },
+    guard(async ({ path: p, title, note, artifact_id }) => {
+      const r = run();
+      const a = await d.artifacts.fromFile({ agentId: agent.id, runId: r.id, conversationId: r.conversation_id, path: p, title, note, artifactId: artifact_id });
+      return delivered(r.id, a, note);
+    }),
+  );
+  server.registerTool(
+    "artifact_save",
+    {
+      description:
+        "创建一个文本类成果，或整体重写已有成果（传 artifact_id，生成新版本）。成果直接显示在聊天里，主人能预览、编辑、下载，每个版本都保留。" +
+        "适合篇幅较长、主人会反复看或修改的内容：报告、方案、文章、单页 HTML 应用或可视化、脚本、数据表；简短的回答直接写在回复里。" +
+        "type：markdown 文档；html 单文件网页（CSS、JS 内联，可引用 CDN）；svg 图；code 代码（填 language）；csv 表格；text 纯文本。只改局部用 artifact_edit。",
+      inputSchema: {
+        title: z.string().min(1).max(120),
+        type: TextArtifactKind,
+        content: z.string().min(1).max(MAX_ARTIFACT_TEXT),
+        language: z.string().max(30).optional().describe("type=code 时的语言，如 python、typescript、bash"),
+        artifact_id: z.string().max(40).optional().describe("要重写的成果 id"),
+        note: z.string().max(300).optional().describe("这一版改了什么"),
+      },
+    },
+    guard(async ({ title, type, content, language, artifact_id, note }) => {
+      const r = run();
+      const a = d.artifacts.saveText({ agentId: agent.id, runId: r.id, conversationId: r.conversation_id, artifactId: artifact_id, title, kind: type, language, content, note, author: "agent" });
+      return delivered(r.id, a, note);
+    }),
+  );
+  server.registerTool(
+    "artifact_edit",
+    {
+      description:
+        "修改文本类成果的局部，生成新版本：edits 里每一项把 old 替换成 new，old 必须和最新版本里的原文一字不差、且只出现一次（多带点上下文）。主人可能在界面上直接改过内容，拿不准时先 artifact_read。",
+      inputSchema: {
+        artifact_id: z.string().max(40),
+        edits: z
+          .array(z.object({ old: z.string().min(1).max(MAX_ARTIFACT_TEXT), new: z.string().max(MAX_ARTIFACT_TEXT) }))
+          .min(1)
+          .max(50),
+        note: z.string().max(300).optional().describe("这一版改了什么"),
+      },
+    },
+    guard(async ({ artifact_id, edits, note }) => {
+      const r = run();
+      const a = d.artifacts.edit({ agentId: agent.id, artifactId: artifact_id, edits, note, runId: r.id, conversationId: r.conversation_id });
+      return delivered(r.id, a, note);
+    }),
+  );
+  server.registerTool(
+    "artifact_list",
+    { description: "列出你交付过的成果（最近更新的在前），可按标题或文件名搜索。", inputSchema: { query: z.string().max(100).optional(), limit: z.number().int().min(1).max(100).default(30) } },
+    guard(async ({ query, limit }) => {
+      const list = d.artifacts.list({ agentId: agent.id, q: query, limit });
+      if (!list.length) return text(query ? "没有匹配的成果" : "还没有成果");
+      return text(
+        list
+          .map((a) => `${a.id} | ${a.title} | ${a.kind}${a.language ? `/${a.language}` : ""} | 第 ${a.version} 版 | ${bytes(a.size)} | ${a.updated_at.slice(0, 16).replace("T", " ")} | 对话：${a.conversation_title ?? "—"}`)
+          .join("\n"),
+      );
+    }),
+  );
+  server.registerTool(
+    "artifact_read",
+    {
+      description:
+        "读取一个成果。文本类直接返回内容（默认最新版本，可指定 version；很长时用 offset 分段读）。图片、PDF、表格文件等用 save_to 复制到你的容器里（如 /workspace/in/report.pdf）再处理。",
+      inputSchema: {
+        artifact_id: z.string().max(40),
+        version: z.number().int().min(1).optional(),
+        offset: z.number().int().min(0).default(0).describe("从第几个字符开始读"),
+        save_to: z.string().max(1000).optional(),
+      },
+    },
+    guard(async ({ artifact_id, version, offset, save_to }) => {
+      const a = d.artifacts.owned(agent.id, artifact_id);
+      const v = d.artifacts.version(a.id, version);
+      const head = `「${a.title}」第 ${v.version} 版${v.version < a.version ? `（最新是第 ${a.version} 版）` : ""}${v.author === "user" ? "（主人编辑）" : ""} · ${v.kind} · ${v.filename} · ${bytes(v.size)}${v.note ? ` · ${v.note}` : ""}`;
+      if (save_to) {
+        const out = d.artifacts.exportTo(agent.id, a.id, v.version, save_to);
+        return text(`${head}\n已保存到 ${out.container}`);
+      }
+      if (!isTextKind(v.kind)) return text(`${head}\n这不是文本文件；用 save_to 复制到你的容器里再处理。`);
+      const { text: body } = d.artifacts.text(a.id, v.version);
+      const chunk = body.slice(offset, offset + READ_CHUNK);
+      const rest = body.length - offset - chunk.length;
+      return text(`${head}\n\n${chunk}${rest > 0 ? `\n\n…（还有 ${rest} 个字符，用 offset=${offset + chunk.length} 继续读）` : ""}`);
     }),
   );
 
@@ -410,6 +529,10 @@ function buildServer(agent: AgentRow, d: McpDeps): McpServer {
     );
   }
   return server;
+}
+
+function bytes(n: number): string {
+  return n >= 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1)} MB` : n >= 1024 ? `${(n / 1024).toFixed(1)} KB` : `${n} B`;
 }
 
 function describeAction(a: { type: string; x?: number; y?: number; text?: string; keys?: string; direction?: string }): string {
