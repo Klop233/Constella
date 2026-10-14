@@ -125,6 +125,11 @@ export class Settings {
     return kvGet(this.#db, "settings.autoResume") !== "false";
   }
 
+  /** Agents read page HTML directly when using the browser (on unless turned off). */
+  browserHtml(): boolean {
+    return kvGet(this.#db, "settings.browserHtml") !== "false";
+  }
+
   /** How approvals are decided; "smart" (ask only for destructive actions) unless chosen otherwise. */
   approvalMode(): ApprovalMode {
     const v = kvGet(this.#db, "settings.approvalMode");
@@ -150,6 +155,7 @@ export class Settings {
       defaultModel: this.defaultModel(),
       reflectModel: this.reflectModel(),
       autoResume: this.autoResume(),
+      browserHtml: this.browserHtml(),
       approvalMode: this.approvalMode(),
       newapiBaseUrl: config.newapi.baseUrl,
       newapiAdminConfigured: !!admin,
@@ -211,7 +217,10 @@ export async function createHub(opts: { dbPath?: string; webDist?: string; logge
       const desktopNote =
         policy.mode === "none"
           ? "你没有分配桌面，不能使用 desktop_* / browser_* 工具；需要上网时用命令行（curl 等）。"
-          : "desktop_* / browser_*：操作你的图形桌面和浏览器。网页任务优先用 browser_*（按页面结构操作，更可靠），其他程序用 desktop_screenshot + desktop_action。遇到登录、验证码、支付等必须由用户本人完成的步骤，调用 desktop_request_help。";
+          : "desktop_* / browser_*：操作你的图形桌面和浏览器。网页任务优先用 browser_*（按页面结构操作，更可靠），其他程序用 desktop_screenshot + desktop_action。遇到登录、验证码、支付等必须由用户本人完成的步骤，调用 desktop_request_help。" +
+            (settings.browserHtml()
+              ? "\n    读网页上的信息（正文、列表、表格、价格、链接地址、表单当前值等）时，优先用 browser_html 直接读取 HTML：比截图更快更准，一次拿到整页，不用来回滚动截图；页面很长时用 selector 只读需要的部分。browser_snapshot 适合找要点击的元素；要看布局、图片、图表或验证码时再截图。几种方式按需配合。"
+              : "");
       return {
         model: a.model,
         effort: (a.effort ?? undefined) as "low" | "medium" | "high" | "xhigh" | undefined,
@@ -354,7 +363,7 @@ export async function createHub(opts: { dbPath?: string; webDist?: string; logge
     });
   });
 
-  registerMcp(app, { db, agents, runs, knowledge, desktops, notifier, scheduler, containers });
+  registerMcp(app, { db, agents, runs, knowledge, desktops, notifier, scheduler, containers, browserHtml: () => settings.browserHtml() });
   registerRoutes(hub);
 
   const webDist = opts.webDist ?? process.env.CONSTELLA_WEB_DIST ?? path.resolve(import.meta.dirname, "../../web/dist");

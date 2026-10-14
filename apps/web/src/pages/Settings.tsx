@@ -16,6 +16,7 @@ interface SettingsView {
   defaultModel: string;
   reflectModel: string;
   autoResume: boolean;
+  browserHtml: boolean;
   approvalMode: "ask" | "smart" | "auto";
   newapiBaseUrl: string;
   newapiAdminConfigured: boolean;
@@ -148,6 +149,11 @@ function GeneralSection({ s, save }: { s: SettingsView; save: Save }) {
       <SettingGroup title="任务">
         <SettingRow title="中断后自动继续" desc="任务被重启、Codex 崩溃、网络或限流等临时故障打断，或单轮跑满 2 小时时，等一会儿自动在原对话里接着做。连续自动继续 3 次仍被打断就停下，不会无限重试。">
           <Toggle checked={s.autoResume} onChange={(v) => void save({ autoResume: v }, v ? "已开启自动继续" : "已关闭自动继续")} label="中断后自动继续" />
+        </SettingRow>
+      </SettingGroup>
+      <SettingGroup title="浏览器">
+        <SettingRow title="直接读取网页 HTML" desc="agent 用浏览器查信息时优先直接读页面 HTML，正文、表格、价格、链接比看截图更快更准；要看布局、图片或验证码时照样截图。对新对话生效。">
+          <Toggle checked={s.browserHtml} onChange={(v) => void save({ browserHtml: v }, v ? "已开启读取网页 HTML" : "已关闭读取网页 HTML")} label="直接读取网页 HTML" />
         </SettingRow>
       </SettingGroup>
       <SettingGroup title="审批">

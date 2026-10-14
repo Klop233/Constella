@@ -557,11 +557,13 @@ export function registerRoutes(hub: Hub): void {
         telegramBotToken: z.string().optional(),
         telegramChatId: z.string().optional(),
         autoResume: z.boolean().optional(),
+        browserHtml: z.boolean().optional(),
         approvalMode: z.enum(["ask", "smart", "auto"]).optional(),
       })
       .parse(req.body);
     if (b.approvalMode) kvSet(db, "settings.approvalMode", b.approvalMode);
     if (b.autoResume !== undefined) kvSet(db, "settings.autoResume", String(b.autoResume));
+    if (b.browserHtml !== undefined) kvSet(db, "settings.browserHtml", String(b.browserHtml));
     if (b.defaultModel) kvSet(db, "settings.defaultModel", b.defaultModel);
     if (b.reflectModel) kvSet(db, "settings.reflectModel", b.reflectModel);
     if (b.newapiAdminToken !== undefined) b.newapiAdminToken ? hub.secrets.set("settings", "newapiAdminToken", b.newapiAdminToken) : hub.secrets.delete("settings", "newapiAdminToken");

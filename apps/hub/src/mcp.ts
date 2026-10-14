@@ -8,6 +8,7 @@ import type { Db } from "./db.ts";
 import type { Desktops } from "./desktops.ts";
 import type { Knowledge } from "./knowledge.ts";
 import type { Notifier } from "./notify.ts";
+import { HTML_DEFAULT_LIMIT, readPageHtml } from "./pagehtml.ts";
 import type { RunManager, RunRow } from "./runs.ts";
 import type { Scheduler } from "./scheduler.ts";
 
@@ -20,6 +21,8 @@ export interface McpDeps {
   notifier: Notifier;
   scheduler: Scheduler;
   containers: Containers;
+  /** Whether agents may read page HTML directly (browser_html). */
+  browserHtml: () => boolean;
 }
 
 type ToolResult = { content: ({ type: "text"; text: string } | { type: "image"; data: string; mimeType: string })[]; isError?: boolean };
@@ -300,9 +303,28 @@ function buildServer(agent: AgentRow, d: McpDeps): McpServer {
       return text(await pageState(p));
     }),
   );
+  if (d.browserHtml()) {
+    server.registerTool(
+      "browser_html",
+      {
+        description:
+          "读取当前网页的 HTML。默认已清理：去掉脚本、样式、未显示的元素和样式类属性，链接转为绝对地址，表单显示当前填写的值（密码打码），iframe 和 shadow DOM 里的内容也会带上。" +
+          "获取页面信息（正文、列表、表格、价格、链接地址、表单状态）时优先用它：比截图更快更准，一次拿到整页，不用滚动。" +
+          "selector（CSS）只读页面的一部分；includeHidden=true 包含折叠、未显示的内容；raw=true 返回未清理的原始 HTML（含脚本里的嵌入数据，如 JSON-LD）；内容过长时按提示用 offset 继续读。",
+        inputSchema: {
+          selector: z.string().max(500).optional(),
+          includeHidden: z.boolean().default(false),
+          raw: z.boolean().default(false),
+          offset: z.number().int().min(0).default(0),
+          limit: z.number().int().min(1000).max(100_000).default(HTML_DEFAULT_LIMIT),
+        },
+      },
+      guard(async (o) => text(await readPageHtml((await page()).page, o))),
+    );
+  }
   server.registerTool(
     "browser_screenshot",
-    { description: "截取当前网页可见区域。", inputSchema: {} },
+    { description: d.browserHtml() ? "截取当前网页可见区域。适合看布局、图片、图表或验证码；读文字和数据用 browser_html 更快更准。" : "截取当前网页可见区域。", inputSchema: {} },
     guard(async () => {
       const { page: p } = await page();
       const buf = await p.screenshot({ type: "jpeg", quality: 70, timeout: 20_000 });
