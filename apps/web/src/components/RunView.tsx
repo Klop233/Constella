@@ -228,7 +228,7 @@ function StepRow({ step, ended }: { step: Step; ended: boolean }) {
     );
   }
   return (
-    <Link to={`/desktops/${step.desktopId}`} className="flex items-center gap-2 py-1 text-[12.5px] text-muted hover:text-[var(--text)]">
+    <Link to={`/instances/${step.desktopId}`} className="flex items-center gap-2 py-1 text-[12.5px] text-muted hover:text-[var(--text)]">
       <Monitor className="size-3.5 shrink-0" /> {step.action}
     </Link>
   );

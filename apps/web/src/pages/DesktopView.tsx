@@ -185,7 +185,7 @@ export default function DesktopView() {
           </button>
           <div className="flex-1 min-w-0">
             <div className="text-sm font-medium truncate">
-              {d?.name ?? "桌面"}
+              {d?.name ?? "实例"}
               {d && <span className="ml-1.5 text-[11px] font-normal opacity-70">{KIND_INFO[d.kind].label}</span>}
             </div>
             <div className="text-[11px] opacity-70 truncate">
@@ -310,7 +310,7 @@ export default function DesktopView() {
         </div>
       )}
 
-      <Sheet open={menu} onClose={() => setMenu(false)} title={d?.name ?? "桌面"}>
+      <Sheet open={menu} onClose={() => setMenu(false)} title={d?.name ?? "实例"}>
         <div className="space-y-2 text-[var(--text)]">
           <Button className="w-full" onClick={() => (setFit(!fit), setMenu(false))}>
             <Maximize className="size-4" /> {fit ? "原始大小（拖动查看）" : "适应屏幕"}
@@ -419,7 +419,7 @@ export default function DesktopView() {
             className={cx(inputClass, "min-h-32")}
             value={pasteText}
             onChange={(e) => setPasteText(e.target.value)}
-            placeholder={android ? "内容会直接输入到当前输入框" : "内容会放进桌面剪贴板并按 Ctrl+V"}
+            placeholder={android ? "内容会直接输入到当前输入框" : "内容会放进剪贴板并按 Ctrl+V"}
           />
           <Button
             variant="primary"

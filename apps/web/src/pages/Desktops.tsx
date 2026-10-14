@@ -35,7 +35,7 @@ export default function Desktops() {
       setCreating(false);
       void qc.invalidateQueries({ queryKey: ["desktops"] });
       void qc.invalidateQueries({ queryKey: ["agents"] });
-      nav(`/desktops/${d.id}`);
+      nav(`/instances/${d.id}`);
     } catch (err) {
       toast(err instanceof Error ? err.message : String(err), "danger");
     } finally {
@@ -46,7 +46,7 @@ export default function Desktops() {
   return (
     <div>
       <Header
-        title="桌面"
+        title="实例"
         sub="浏览器、Linux 桌面和安卓实例，随时查看和接管"
         right={
           <IconButton label="新建实例" onClick={open}>
@@ -77,7 +77,7 @@ export default function Desktops() {
               const Icon = KIND_INFO[d.kind].icon;
               const users = agents.data?.filter((a) => d.agentIds.includes(a.id)) ?? [];
               return (
-                <Card key={d.id} className="overflow-hidden" onClick={() => nav(`/desktops/${d.id}`)}>
+                <Card key={d.id} className="overflow-hidden" onClick={() => nav(`/instances/${d.id}`)}>
                   <InstanceThumb d={d} width={640} className="aspect-[16/10]" />
                   <div className="px-4 py-3 flex items-center gap-2">
                     <Icon className="size-4 text-muted shrink-0" aria-label={KIND_INFO[d.kind].label} />

@@ -433,7 +433,7 @@ export class Desktops {
     if (l.holder === "agent") {
       this.#displaced.set(id, l);
       this.#runs.transition(l.runId, "paused_by_user");
-      if (!help) this.#runs.appendFor(l.runId, { type: "desktop.action", runId: l.runId, desktopId: id, action: "用户接管了桌面" });
+      if (!help) this.#runs.appendFor(l.runId, { type: "desktop.action", runId: l.runId, desktopId: id, action: "用户接管了实例" });
     }
     if (help) this.#helpEvent(id, help, "taken");
     this.#setLease(id, { holder: "human", since: nowIso() });
@@ -452,7 +452,7 @@ export class Desktops {
     if (prev && run && !["done", "failed", "cancelled"].includes(run.status)) {
       this.#setLease(id, { ...prev, since: nowIso() });
       this.#runs.transition(prev.runId, "running");
-      if (!help) this.#runs.appendFor(prev.runId, { type: "desktop.action", runId: prev.runId, desktopId: id, action: `用户交还了桌面${note ? `：${note}` : ""}` });
+      if (!help) this.#runs.appendFor(prev.runId, { type: "desktop.action", runId: prev.runId, desktopId: id, action: `用户交还了实例${note ? `：${note}` : ""}` });
     } else {
       this.#setLease(id, { holder: "none" });
     }
@@ -463,7 +463,7 @@ export class Desktops {
 
   waitForHandback(id: string, timeoutMs = HELP_TIMEOUT_MS): Promise<string> {
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error("等待用户交还桌面超时")), timeoutMs);
+      const timer = setTimeout(() => reject(new Error("等待用户交还实例超时")), timeoutMs);
       const list = this.#handbackWaiters.get(id) ?? [];
       list.push((note) => {
         clearTimeout(timer);
@@ -481,7 +481,7 @@ export class Desktops {
     const help = { helpId: newId("help"), runId };
     this.#help.set(id, help);
     this.#helpEvent(id, help, "requested", { reason });
-    notify(`${agentName} 需要你帮忙操作桌面`, reason, `/desktops/${id}`);
+    notify(`${agentName} 需要你帮忙操作实例`, reason, `/instances/${id}`);
     this.#events.publish("desktop.help", { id, reason });
     try {
       return await this.waitForHandback(id);

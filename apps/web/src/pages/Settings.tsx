@@ -892,7 +892,7 @@ const PALETTES: { value: Appearance["palette"]; label: string; swatch: [string, 
 
 const SIDEBAR_ITEMS = [
   { to: "/", label: "首页" },
-  { to: "/desktops", label: "桌面" },
+  { to: "/instances", label: "实例" },
   { to: "/tasks", label: "任务" },
   { to: "/learning", label: "学习" },
   { to: "/artifacts", label: "成果" },
@@ -1394,7 +1394,7 @@ function SystemSection({ s, save }: { s: SettingsView; save: Save }) {
         <SettingRow title="agent 闲置休眠" desc="agent 容器这么久没活干就停掉省内存，下次发消息时自动启动（多等几秒）。">
           <Choice label="agent 闲置休眠" value={s.agentIdleMinutes} options={idle} onChange={(v) => void save({ agentIdleMinutes: v })} />
         </SettingRow>
-        <SettingRow title="实例闲置" desc="浏览器、桌面和安卓实例闲置后暂停还是停止，在「实例」里设置。">
+        <SettingRow title="实例闲置" desc="浏览器、Linux 桌面和安卓实例闲置后暂停还是停止，在设置的「实例」里设置。">
           <Link className="text-[13px] text-accent" to="/settings?s=instances">
             去设置
           </Link>

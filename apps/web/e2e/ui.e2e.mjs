@@ -64,7 +64,7 @@ try {
   await shot("05-knowledge");
 
   step("desktops");
-  await page.getByRole("link", { name: "桌面" }).click();
+  await page.getByRole("link", { name: "实例" }).click();
   await page.getByText("测试浏览器").first().waitFor({ timeout: 15000 });
   await page.waitForTimeout(1500);
   await shot("06-desktops");
@@ -164,7 +164,7 @@ try {
   const wide = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: "zh-CN", colorScheme: "dark", storageState: await context.storageState() });
   const wp = await wide.newPage();
   wp.on("pageerror", (e) => errors.push(e.message));
-  for (const [name, url] of [["d1-home", "/"], ["d2-desktops", "/desktops"], ["d3-settings", "/settings"], ["d4-learning", "/learning"]]) {
+  for (const [name, url] of [["d1-home", "/"], ["d2-instances", "/instances"], ["d3-settings", "/settings"], ["d4-learning", "/learning"]]) {
     await wp.goto(BASE + url, { waitUntil: "networkidle" });
     await wp.waitForTimeout(1200);
     await wp.screenshot({ path: path.join(SHOTS, `${name}.png`) });
