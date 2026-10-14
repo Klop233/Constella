@@ -83,6 +83,7 @@ describe("intelligent UI setting", () => {
       expect(note).toContain("ui.setState");
     }
     expect(balanced).toContain("最多一个");
+    expect(balanced).toContain("计算器");
     expect(rich).toContain("可以有多个");
   });
 
