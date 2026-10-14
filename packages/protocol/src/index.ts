@@ -140,11 +140,45 @@ export const DesktopLease = z.union([
 ]);
 export type DesktopLease = z.infer<typeof DesktopLease>;
 
-export const DesktopPolicy = z.union([
+/** What an instance runs: a bare browser, a Linux (Xfce) desktop, or an Android device. */
+export const DesktopKind = z.enum(["browser", "desktop", "android"]);
+export type DesktopKind = z.infer<typeof DesktopKind>;
+
+/** How an Android instance runs: Redroid (container, needs binder) or the SDK emulator (needs KVM). */
+export const AndroidBackend = z.enum(["redroid", "emulator"]);
+export type AndroidBackend = z.infer<typeof AndroidBackend>;
+
+/** What happens to an instance nobody has used for a while: freeze it (keeps memory), stop it, or leave it running. */
+export const IdleAction = z.enum(["pause", "stop", "none"]);
+export type IdleAction = z.infer<typeof IdleAction>;
+
+/** Per-instance settings; missing fields fall back to the kind's defaults and the global idle settings. */
+export const DesktopOptions = z.object({
+  width: z.number().int().min(320).max(3840).optional(),
+  height: z.number().int().min(320).max(3840).optional(),
+  /** Android only. */
+  dpi: z.number().int().min(120).max(640).optional(),
+  /** Android only; fixed when the instance is created (the backends' data isn't interchangeable). */
+  backend: AndroidBackend.optional(),
+  /** Android only: run ARM-only apps through native-bridge translation. */
+  armTranslation: z.boolean().optional(),
+  /** Android only: Google Play services and store. */
+  googlePlay: z.boolean().optional(),
+  idleAction: IdleAction.optional(),
+  idleMinutes: z.number().int().min(0).max(1440).optional(),
+});
+export type DesktopOptions = z.infer<typeof DesktopOptions>;
+
+/** The instances an agent may use, in order of preference (any kinds). */
+export const DesktopPolicy = z.object({ desktopIds: z.array(z.string()).max(32) });
+export type DesktopPolicy = z.infer<typeof DesktopPolicy>;
+
+/** Policy shapes from before instance kinds; still found in old databases and agent exports. */
+export const LegacyDesktopPolicy = z.union([
   z.object({ mode: z.literal("none") }),
   z.object({ mode: z.literal("fixed"), desktopId: z.string() }),
   z.object({ mode: z.literal("on_demand") }),
 ]);
-export type DesktopPolicy = z.infer<typeof DesktopPolicy>;
+export type LegacyDesktopPolicy = z.infer<typeof LegacyDesktopPolicy>;
 
 export * from "./runner.ts";

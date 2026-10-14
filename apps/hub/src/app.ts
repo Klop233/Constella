@@ -5,7 +5,7 @@ import cookie from "@fastify/cookie";
 import rateLimit from "@fastify/rate-limit";
 import fastifyStatic from "@fastify/static";
 import websocket from "@fastify/websocket";
-import { RunnerToHubSchema, type DesktopPolicy, type HubToRunner, type RunnerEvent } from "@constella/protocol";
+import { IdleAction, RunnerToHubSchema, type HubToRunner, type RunnerEvent } from "@constella/protocol";
 import Fastify, { type FastifyInstance } from "fastify";
 import type { WebSocket } from "ws";
 import { Agents } from "./agents.ts";
@@ -16,6 +16,7 @@ import { Containers } from "./containers.ts";
 import { audit, kvGet, openDb, type Db } from "./db.ts";
 import { Desktops } from "./desktops.ts";
 import { EventStore } from "./events.ts";
+import { HostCapabilities, type AndroidBackendSetting } from "./hostcaps.ts";
 import { Knowledge } from "./knowledge.ts";
 import { Learning, defaultReflectModel } from "./learning.ts";
 import { registerMcp } from "./mcp.ts";
@@ -43,6 +44,8 @@ export interface Hub {
   learning: Learning;
   reflect: Reflect;
   desktops: Desktops;
+  /** What this host can run (instance kinds, Android backends), probed with throwaway containers. */
+  hostcaps: HostCapabilities;
   containers: Containers;
   scheduler: Scheduler;
   notifier: Notifier;
@@ -204,6 +207,27 @@ export class Settings {
     return this.#num("desktopIdleMinutes", config.desktopIdleMinutes);
   }
 
+  /** What idle instances do unless they say otherwise: stop (frees memory) unless chosen otherwise. */
+  desktopIdleAction(): IdleAction {
+    const v = IdleAction.safeParse(kvGet(this.#db, "settings.desktopIdleAction"));
+    return v.success ? v.data : "stop";
+  }
+
+  /** Which Android backend new instances use; "auto" picks whatever the host supports. */
+  androidBackend(): AndroidBackendSetting {
+    const v = kvGet(this.#db, "settings.androidBackend");
+    return v === "redroid" || v === "emulator" || v === "off" ? v : "auto";
+  }
+
+  instanceLimits(): { total: number; android: number } {
+    return { total: this.#num("maxInstances", 10), android: this.#num("maxAndroidInstances", 3) };
+  }
+
+  /** Whether agents need the owner's approval to create / change (incl. restart) instances. */
+  instanceApproval(): { create: boolean; update: boolean } {
+    return { create: this.#bool("instanceApproval.create", true), update: this.#bool("instanceApproval.update", true) };
+  }
+
   reflection(): { enabled: boolean; minToolCalls: number } {
     return { enabled: this.#bool("autoReflect", true), minToolCalls: this.#num("reflectMinToolCalls", 3) };
   }
@@ -262,6 +286,11 @@ export class Settings {
       approvalMode: this.approvalMode(),
       agentIdleMinutes: this.agentIdleMinutes(),
       desktopIdleMinutes: this.desktopIdleMinutes(),
+      desktopIdleAction: this.desktopIdleAction(),
+      androidBackend: this.androidBackend(),
+      maxInstances: this.instanceLimits().total,
+      maxAndroidInstances: this.instanceLimits().android,
+      instanceApproval: this.instanceApproval(),
       autoReflect: this.reflection().enabled,
       reflectMinToolCalls: this.reflection().minToolCalls,
       notifyOn: this.notifyOn(),
@@ -330,14 +359,11 @@ export async function createHub(opts: { dbPath?: string; webDist?: string; logge
     sendToRunner: (agentId, msg) => runners.send(agentId, msg),
     startPayload: (agentId) => {
       const a = agents.get(agentId);
-      const policy = JSON.parse(a.desktop_policy) as DesktopPolicy;
       const desktopNote =
-        policy.mode === "none"
-          ? "你没有分配桌面，不能使用 desktop_* / browser_* 工具；需要上网时用命令行（curl 等）。"
-          : "desktop_* / browser_*：操作你的图形桌面和浏览器。网页任务优先用 browser_*（按页面结构操作，更可靠），其他程序用 desktop_screenshot + desktop_action。遇到登录、验证码、支付等必须由用户本人完成的步骤，调用 desktop_request_help。" +
-            (settings.browserHtml()
-              ? "\n    读网页上的信息（正文、列表、表格、价格、链接地址、表单当前值等）时，优先用 browser_html 直接读取 HTML：比截图更快更准，一次拿到整页，不用来回滚动截图；页面很长时用 selector 只读需要的部分。browser_snapshot 适合找要点击的元素；要看布局、图片、图表或验证码时再截图。几种方式按需配合。"
-              : "");
+        desktops.agentNote(agentId) +
+        (settings.browserHtml()
+          ? "\n    读网页上的信息（正文、列表、表格、价格、链接地址、表单当前值等）时，优先用 browser_html 直接读取 HTML：比截图更快更准，一次拿到整页，不用来回滚动截图；页面很长时用 selector 只读需要的部分。browser_snapshot 适合找要点击的元素；要看布局、图片、图表或验证码时再截图。几种方式按需配合。"
+          : "");
       return {
         model: a.model,
         effort: a.effort ?? undefined,
@@ -369,7 +395,20 @@ export async function createHub(opts: { dbPath?: string; webDist?: string; logge
     connected: (agentId) => runners.connected(agentId),
     secretValues: allSecretValues,
   });
-  const desktops = new Desktops({ db, events, containers, runs, idleMinutes: () => settings.desktopIdleMinutes() });
+  const hostcaps = new HostCapabilities({ docker: containers.docker, androidBackend: () => settings.androidBackend() });
+  const desktops = new Desktops({
+    db,
+    events,
+    containers,
+    runs,
+    caps: hostcaps,
+    settings: {
+      idleMinutes: () => settings.desktopIdleMinutes(),
+      idleAction: () => settings.desktopIdleAction(),
+      maxInstances: () => settings.instanceLimits().total,
+      maxAndroid: () => settings.instanceLimits().android,
+    },
+  });
   const learning = new Learning({ db, events, knowledge, llm: models, model: () => settings.reflectModel(), auto: () => settings.reflection() });
   const reflect = new Reflect({ db, llm: models, model: () => settings.reflectModel() });
   const scheduler = new Scheduler(db, events);
@@ -440,6 +479,7 @@ export async function createHub(opts: { dbPath?: string; webDist?: string; logge
     learning,
     reflect,
     desktops,
+    hostcaps,
     containers,
     scheduler,
     notifier,
@@ -510,7 +550,19 @@ export async function createHub(opts: { dbPath?: string; webDist?: string; logge
     });
   });
 
-  registerMcp(app, { db, agents, runs, knowledge, desktops, notifier, scheduler, containers, browserHtml: () => settings.browserHtml() });
+  registerMcp(app, {
+    db,
+    agents,
+    runs,
+    knowledge,
+    desktops,
+    hostcaps,
+    notifier,
+    scheduler,
+    containers,
+    browserHtml: () => settings.browserHtml(),
+    instanceApproval: () => settings.instanceApproval(),
+  });
   registerRoutes(hub);
 
   const webDist = opts.webDist ?? process.env.CONSTELLA_WEB_DIST ?? path.resolve(import.meta.dirname, "../../web/dist");
@@ -559,6 +611,7 @@ export async function bootHub(hub: Hub): Promise<void> {
   hub.recovery.start();
   hub.runners.startHeartbeat();
   hub.desktops.startReaper();
+  void hub.hostcaps.refresh().catch((err) => console.error("host capability probe", err));
   hub.scheduler.start();
   void hub.models.seed();
   // Runners that don't reconnect by themselves after a hub restart (container gone) get brought back.

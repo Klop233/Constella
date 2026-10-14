@@ -5,7 +5,12 @@ import { z } from "zod";
 import type { AgentRow, Agents } from "./agents.ts";
 import type { Containers } from "./containers.ts";
 import type { Db } from "./db.ts";
-import type { Desktops } from "./desktops.ts";
+import fs from "node:fs";
+import path from "node:path";
+import { DesktopKind } from "@constella/protocol";
+import { config } from "./config.ts";
+import { KIND_LABEL, type DesktopRow, type Desktops, type ToolFamily } from "./desktops.ts";
+import type { HostCapabilities } from "./hostcaps.ts";
 import type { Knowledge } from "./knowledge.ts";
 import type { Notifier } from "./notify.ts";
 import { HTML_DEFAULT_LIMIT, readPageHtml } from "./pagehtml.ts";
@@ -21,8 +26,11 @@ export interface McpDeps {
   notifier: Notifier;
   scheduler: Scheduler;
   containers: Containers;
+  hostcaps: HostCapabilities;
   /** Whether agents may read page HTML directly (browser_html). */
   browserHtml: () => boolean;
+  /** Whether creating / changing (incl. restarting) an instance needs the owner's approval. */
+  instanceApproval: () => { create: boolean; update: boolean };
 }
 
 type ToolResult = { content: ({ type: "text"; text: string } | { type: "image"; data: string; mimeType: string })[]; isError?: boolean };
@@ -62,10 +70,27 @@ function buildServer(agent: AgentRow, d: McpDeps): McpServer {
         return fail(err instanceof Error ? err.message : String(err));
       }
     };
-  const desktop = async () => {
+  const desktop = async (family: ToolFamily = "screen") => {
     const r = run();
-    const id = await d.desktops.acquire(agent.id, r.id);
+    const id = await d.desktops.acquire(agent.id, r.id, family);
     return { id, runId: r.id };
+  };
+  /** Which instance a result came from, so the agent can tell its instances apart. */
+  const on = (id: string) => `\n（实例：${d.desktops.describe(d.desktops.row(id))}）`;
+  const mineOrFail = (id: string): DesktopRow => {
+    const row = d.desktops.boundTo(agent.id).find((x) => x.id === id);
+    if (!row) throw new Error("这个实例没有绑定给你，用 instance_list 查看可用的实例");
+    return row;
+  };
+  /** Refuse to restart an instance out from under someone else. */
+  const notInUseByOthers = (row: DesktopRow, runId: string) => {
+    const l = JSON.parse(row.lease) as { holder: string; runId?: string };
+    if (l.holder === "human") throw new Error(`${d.desktops.describe(row)}主人正在操作，不能修改或重启`);
+    if (l.holder === "agent" && l.runId !== runId) throw new Error(`${d.desktops.describe(row)}正被另一个任务使用，不能修改或重启`);
+  };
+  const approve = async (need: boolean, runId: string, summary: string, reason: string) => {
+    if (!need) return;
+    if (!(await d.runs.requestHubApproval(runId, "desktop", summary, reason))) throw new Error("主人没有同意");
   };
   const logAction = (runId: string, desktopId: string, action: string) =>
     d.runs.appendFor(runId, { type: "desktop.action", runId, desktopId, action });
@@ -184,21 +209,122 @@ function buildServer(agent: AgentRow, d: McpDeps): McpServer {
     }),
   );
 
-  // ── desktop (pixels) ─────────────────────────────────────
+  // ── instances ────────────────────────────────────────────
+  const androidOptions = {
+    armTranslation: z.boolean().optional().describe("安卓：运行只有 ARM 版本的 App（多数国内 App 需要）"),
+    googlePlay: z.boolean().optional().describe("安卓：带 Google Play 服务和商店"),
+    width: z.number().int().min(320).max(3840).optional(),
+    height: z.number().int().min(320).max(3840).optional(),
+    dpi: z.number().int().min(120).max(640).optional().describe("安卓屏幕密度"),
+  };
+  server.registerTool(
+    "instance_list",
+    { description: "列出绑定给你的实例（纯浏览器 / Linux 桌面 / 安卓）：状态、谁在用、哪个是你当前操作的；以及这台服务器能新建哪些类型。", inputSchema: {} },
+    guard(async () => {
+      const r = currentRun(d.db, agent.id);
+      const states: Record<string, string> = { running: "运行中", paused: "已暂停", stopped: "已停止", missing: "未启动", starting: "启动中", error: "异常" };
+      const lines = await Promise.all(
+        d.desktops.boundTo(agent.id).map(async (row) => {
+          const l = JSON.parse(row.lease) as { holder: string; runId?: string };
+          const who = l.holder === "human" ? "主人在操作" : l.holder === "agent" ? (l.runId === r?.id ? "你在用" : "另一个任务在用") : "空闲";
+          const cur = r && d.desktops.current(r.id) === row.id ? "，当前" : "";
+          const o = d.desktops.options(row);
+          const extra = row.kind === "android" ? `，${o.backend === "emulator" ? "模拟器" : "Redroid"}${o.armTranslation ? "，ARM 转译" : ""}${o.googlePlay ? "，Google Play" : ""}` : "";
+          return `- ${d.desktops.describe(row)}：${states[await d.desktops.state(row.id)] ?? "未知"}，${who}${extra}${cur}`;
+        }),
+      );
+      const caps = d.hostcaps.snapshot();
+      const kinds = (Object.keys(KIND_LABEL) as (keyof typeof KIND_LABEL)[]).map((k) => {
+        const a = caps.kinds[k];
+        if (!a.ok) return `- ${KIND_LABEL[k]}（${k}）：不能建，${a.reason ?? ""}`;
+        if (k !== "android") return `- ${KIND_LABEL[k]}（${k}）：可以`;
+        const b = caps.android.backend!;
+        const bc = caps.android[b];
+        return `- 安卓（android）：可以，${b === "redroid" ? "Redroid" : "模拟器"}；ARM 转译${bc.arm ? "可用" : "不可用"}，Google Play ${bc.googlePlay ? "可用" : "不可用"}`;
+      });
+      return text(`${lines.length ? lines.join("\n") : "目前没有实例绑定给你。"}\n\n可以新建的类型：\n${kinds.join("\n")}`);
+    }),
+  );
+  server.registerTool(
+    "instance_use",
+    { description: "切换当前操作的实例：之后的 desktop_* 操作它；它带浏览器时 browser_* 也操作它。", inputSchema: { id: z.string() } },
+    guard(async ({ id }) => {
+      const row = d.desktops.use(agent.id, run().id, id);
+      return text(`已切换到${d.desktops.describe(row)}。`);
+    }),
+  );
+  server.registerTool(
+    "instance_create",
+    {
+      description:
+        "新建一个实例并绑定给你，成为当前实例。kind：browser（纯浏览器，最轻）、desktop（Linux 桌面，可运行其他程序）、android（安卓）。每个实例都占用服务器内存，确实需要时再建；可能需要主人审批。",
+      inputSchema: { kind: DesktopKind, name: z.string().min(1).max(40), ...androidOptions, reason: z.string().max(300).describe("为什么需要这个实例") },
+    },
+    guard(async ({ kind, name, reason, ...options }) => {
+      const r = run();
+      await approve(d.instanceApproval().create, r.id, `新建${KIND_LABEL[kind]}实例「${name}」`, reason);
+      const row = await d.desktops.create({ name, kind, options });
+      d.desktops.setAgents(row.id, [...d.desktops.agentIds(row.id), agent.id]);
+      d.desktops.use(agent.id, r.id, row.id);
+      d.runs.appendFor(r.id, { type: "desktop.action", runId: r.id, desktopId: row.id, action: `新建${KIND_LABEL[kind]}实例「${name}」` });
+      return text(`已新建并切换到${d.desktops.describe(row)}。第一次使用时会自动启动${kind === "android" ? "（安卓启动需要一两分钟）" : ""}。`);
+    }),
+  );
+  server.registerTool(
+    "instance_update",
+    {
+      description: "修改你绑定的实例：名字、屏幕尺寸、安卓的 ARM 转译 / Google Play、闲置时的处理。运行中的实例会重启以生效。可能需要主人审批。",
+      inputSchema: {
+        id: z.string(),
+        name: z.string().min(1).max(40).optional(),
+        ...androidOptions,
+        idleAction: z.enum(["pause", "stop", "none"]).optional().describe("闲置时：pause 暂停（保留内存，恢复快）、stop 停止、none 一直运行"),
+        idleMinutes: z.number().int().min(0).max(1440).optional(),
+        reason: z.string().max(300),
+      },
+    },
+    guard(async ({ id, name, reason, ...options }) => {
+      const r = run();
+      const row = mineOrFail(id);
+      notInUseByOthers(row, r.id);
+      const changed = Object.entries({ name, ...options }).filter(([, v]) => v !== undefined).map(([k, v]) => `${k}=${v}`);
+      if (!changed.length) return fail("没有要修改的内容");
+      await approve(d.instanceApproval().update, r.id, `修改实例 ${d.desktops.describe(row)}：${changed.join("，")}`, reason);
+      const res = await d.desktops.update(id, { name, options: Object.values(options).some((v) => v !== undefined) ? options : undefined });
+      d.runs.appendFor(r.id, { type: "desktop.action", runId: r.id, desktopId: id, action: `修改实例：${changed.join("，")}` });
+      return text(`已修改${res.restarted ? "，实例已重启" : ""}。${on(id)}`);
+    }),
+  );
+  server.registerTool(
+    "instance_restart",
+    { description: "重启你绑定的实例（卡死、无响应、画面异常时）。会关闭里面正在运行的程序；可能需要主人审批。", inputSchema: { id: z.string(), reason: z.string().max(300) } },
+    guard(async ({ id, reason }) => {
+      const r = run();
+      const row = mineOrFail(id);
+      notInUseByOthers(row, r.id);
+      await approve(d.instanceApproval().update, r.id, `重启实例 ${d.desktops.describe(row)}`, reason);
+      await d.desktops.restart(id);
+      d.runs.appendFor(r.id, { type: "desktop.action", runId: r.id, desktopId: id, action: "重启实例" });
+      return text(`已重启。${on(id)}`);
+    }),
+  );
+
+  // ── screen (pixels; any instance) ────────────────────────
   server.registerTool(
     "desktop_screenshot",
-    { description: "截取桌面画面（1280×800 坐标系）。操作前先截图确认位置。", inputSchema: {} },
+    { description: "截取当前实例的屏幕。坐标以截图为准；操作前先截图确认位置。", inputSchema: {} },
     guard(async () => {
       const { id } = await desktop();
       const shot = await d.desktops.screenshot(id, { quality: 70 });
-      return { content: [{ type: "image", data: shot.data.toString("base64"), mimeType: "image/jpeg" }, { type: "text", text: `屏幕尺寸 ${shot.screen}` }] };
+      return { content: [{ type: "image", data: shot.data.toString("base64"), mimeType: "image/jpeg" }, { type: "text", text: `屏幕尺寸 ${shot.screen}${on(id)}` }] };
     }),
   );
   server.registerTool(
     "desktop_action",
     {
       description:
-        "在桌面上执行键鼠操作。type: click/double_click/right_click/move/drag(x,y→x2,y2)/type(text)/key(keys，如 ctrl+l、Enter)/scroll(direction, amount)/wait(seconds)。坐标基于截图。",
+        "在当前实例上执行键鼠操作。type: click/double_click/right_click/move/drag(x,y→x2,y2)/type(text)/key(keys，如 ctrl+l、Enter)/scroll(direction, amount)/wait(seconds)。坐标基于截图。" +
+        "安卓实例上：click 是点按，drag 是滑动，scroll 是按方向滑动，right_click 是返回，key 支持 back、home、recents、enter、delete，type 可以直接输入中文。",
       inputSchema: {
         type: z.enum(["click", "double_click", "right_click", "middle_click", "move", "drag", "type", "key", "scroll", "wait"]),
         x: z.number().int().optional(),
@@ -216,22 +342,22 @@ function buildServer(agent: AgentRow, d: McpDeps): McpServer {
       const { id, runId } = await desktop();
       await d.desktops.action(id, a);
       logAction(runId, id, describeAction(a));
-      return text("完成。需要确认结果时请再截图。");
+      return text(`完成。需要确认结果时请再截图。${on(id)}`);
     }),
   );
   server.registerTool(
     "desktop_open_app",
-    { description: "在桌面上启动程序，例如 xfce4-terminal、chromium。", inputSchema: { app: z.string().max(200) } },
+    { description: "在当前实例上启动程序：Linux 桌面上是命令，例如 xfce4-terminal；安卓上是包名，例如 com.android.settings（用 android_apps 查包名）。纯浏览器实例不支持。", inputSchema: { app: z.string().max(200) } },
     guard(async ({ app }) => {
       const { id, runId } = await desktop();
       await d.desktops.launch(id, app);
       logAction(runId, id, `打开 ${app}`);
-      return text("已启动");
+      return text(`已启动${on(id)}`);
     }),
   );
   server.registerTool(
     "desktop_clipboard",
-    { description: "读取桌面剪贴板；提供 text 时改为写入。", inputSchema: { text: z.string().max(20000).optional() } },
+    { description: "读取当前实例的剪贴板；提供 text 时改为写入。安卓上提供 text 会直接输入到当前输入框，不支持读取。", inputSchema: { text: z.string().max(20000).optional() } },
     guard(async ({ text: t }) => {
       const { id } = await desktop();
       return text(await d.desktops.clipboard(id, t));
@@ -241,19 +367,47 @@ function buildServer(agent: AgentRow, d: McpDeps): McpServer {
     "desktop_request_help",
     {
       description:
-        "需要用户本人操作时调用（登录、验证码、扫码、支付确认等）。会推送通知并在聊天里显示接管请求，请用户接管桌面，并一直等到用户交还（最多 15 分钟），返回用户留言。",
+        "需要用户本人操作当前实例时调用（登录、验证码、扫码、支付确认等）。会推送通知并在聊天里显示接管请求，请用户接管，并一直等到用户交还（最多 15 分钟），返回用户留言。",
       inputSchema: { reason: z.string().max(300) },
     },
     guard(async ({ reason }) => {
       const { id, runId } = await desktop();
       const note = await d.desktops.requestHelp(id, runId, agent.name, reason, (t, b, u) => void d.notifier.send(t, b, u, { urgent: true }));
-      return text(`用户已交还桌面。${note ? `用户留言：${note}` : ""}请先截图确认当前状态再继续。`);
+      return text(`用户已交还。${note ? `用户留言：${note}` : ""}请先截图确认当前状态再继续。${on(id)}`);
+    }),
+  );
+
+  // ── android ──────────────────────────────────────────────
+  server.registerTool(
+    "android_ui",
+    { description: "读取当前安卓实例屏幕上的界面元素（文字、描述、resource-id、是否可点、中心坐标），用来决定点哪里；比截图更准。", inputSchema: {} },
+    guard(async () => {
+      const { id } = await desktop();
+      return text(`${await d.desktops.androidUi(id)}${on(id)}`);
+    }),
+  );
+  server.registerTool(
+    "android_apps",
+    {
+      description: "不带参数时列出当前安卓实例上装的 App（包名和名称）。install 提供 APK 的网址，或你工作目录里的文件路径（如 /workspace/app.apk）时安装它。",
+      inputSchema: { install: z.string().max(2000).optional() },
+    },
+    guard(async ({ install }) => {
+      const { id, runId } = await desktop();
+      if (!install) {
+        const apps = await d.desktops.androidApps(id);
+        return text(`${apps.map((a) => `${a.package}${a.label ? ` — ${a.label}` : ""}`).join("\n") || "没有自己安装的 App"}${on(id)}`);
+      }
+      const apk = await readApk(agent.id, install);
+      const pkg = await d.desktops.androidInstall(id, apk);
+      logAction(runId, id, `安装 App ${pkg || path.basename(install)}`);
+      return text(`已安装 ${pkg}${on(id)}`);
     }),
   );
 
   // ── browser (DOM) ────────────────────────────────────────
   const page = async () => {
-    const { id, runId } = await desktop();
+    const { id, runId } = await desktop("web");
     return { page: await d.desktops.page(id), id, runId };
   };
   const pageState = async (p: Awaited<ReturnType<typeof page>>["page"]) => {
@@ -263,7 +417,7 @@ function buildServer(agent: AgentRow, d: McpDeps): McpServer {
   };
   server.registerTool(
     "browser_open",
-    { description: "在桌面浏览器中打开网址（与用户接管时看到的是同一个浏览器，登录状态共享）。", inputSchema: { url: z.string().url(), newTab: z.boolean().default(false) } },
+    { description: "在浏览器实例（或 Linux 桌面实例）的浏览器中打开网址（与用户接管时看到的是同一个浏览器，登录状态共享）。", inputSchema: { url: z.string().url(), newTab: z.boolean().default(false) } },
     guard(async ({ url, newTab }) => {
       let { page: p, id, runId } = await page();
       if (newTab) p = await p.context().newPage();
@@ -368,7 +522,7 @@ function buildServer(agent: AgentRow, d: McpDeps): McpServer {
     "browser_tabs",
     { description: "列出浏览器标签页；提供 index 时切换到该标签。", inputSchema: { index: z.number().int().min(0).optional() } },
     guard(async ({ index }) => {
-      const { id } = await desktop();
+      const { id } = await desktop("web");
       const pages = await d.desktops.pages(id);
       if (index !== undefined) {
         const p = pages[index];
@@ -410,6 +564,28 @@ function buildServer(agent: AgentRow, d: McpDeps): McpServer {
     );
   }
   return server;
+}
+
+const MAX_APK_BYTES = 500 * 1024 ** 2;
+
+/** An APK from a URL or the agent's workspace (paths under /workspace map to its workspace dir on the host). */
+async function readApk(agentId: string, src: string): Promise<Buffer> {
+  if (/^https?:\/\//.test(src)) {
+    const res = await fetch(src, { signal: AbortSignal.timeout(300_000), redirect: "follow" });
+    if (!res.ok) throw new Error(`下载失败：${res.status}`);
+    if (Number(res.headers.get("content-length") ?? 0) > MAX_APK_BYTES) throw new Error("APK 太大（超过 500 MB）");
+    const buf = Buffer.from(await res.arrayBuffer());
+    if (buf.length > MAX_APK_BYTES) throw new Error("APK 太大（超过 500 MB）");
+    return buf;
+  }
+  const workspace = path.join(config.agentsDir, agentId, "workspace");
+  const rel = src.startsWith("/workspace/") ? src.slice("/workspace/".length) : src;
+  const file = path.resolve(workspace, rel);
+  if (!file.startsWith(workspace + path.sep)) throw new Error("只能安装工作目录 /workspace 里的文件，或提供网址");
+  const st = fs.statSync(file, { throwIfNoEntry: false });
+  if (!st?.isFile()) throw new Error(`找不到文件 ${src}`);
+  if (st.size > MAX_APK_BYTES) throw new Error("APK 太大（超过 500 MB）");
+  return fs.readFileSync(file);
 }
 
 function describeAction(a: { type: string; x?: number; y?: number; text?: string; keys?: string; direction?: string }): string {

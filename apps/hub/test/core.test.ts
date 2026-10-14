@@ -261,7 +261,7 @@ describe("desktop takeover requests", () => {
     const desktops = new Desktops({ db, events, containers: {} as any, runs });
     const r = await runs.send({ agentId: "ag1", text: "登录网站" });
     await new Promise((res) => setTimeout(res, 10));
-    const dt = desktops.create("桌面");
+    const dt = await desktops.create({ name: "桌面", kind: "desktop" });
     db.prepare("UPDATE desktops SET lease = ? WHERE id = ?").run(JSON.stringify({ holder: "agent", agentId: "ag1", runId: r.runId, since: new Date().toISOString() }), dt.id);
     const pushed: string[] = [];
     const help = desktops.requestHelp(dt.id, r.runId, "助理", "需要扫码登录", (t) => pushed.push(t));

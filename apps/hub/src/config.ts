@@ -39,12 +39,24 @@ export const config = {
     network: env("CONSTELLA_DOCKER_NETWORK", "constella-net"),
     agentImage: env("CONSTELLA_AGENT_IMAGE", "constella-agent:latest"),
     desktopImage: env("CONSTELLA_DESKTOP_IMAGE", "constella-desktop:latest"),
+    /** Android instances: the bridge (screen, input, control API) plus one backend image per variant. */
+    androidBridgeImage: env("CONSTELLA_ANDROID_BRIDGE_IMAGE", "constella-android-bridge:latest"),
+    redroidImage: env("CONSTELLA_REDROID_IMAGE", "constella-redroid:latest"),
+    redroidGappsImage: env("CONSTELLA_REDROID_GAPPS_IMAGE", "constella-redroid:gapps"),
+    emulatorImage: env("CONSTELLA_EMULATOR_IMAGE", "constella-emulator:latest"),
+    emulatorPlaystoreImage: env("CONSTELLA_EMULATOR_PLAYSTORE_IMAGE", "constella-emulator:playstore"),
     /** How agent containers reach the hub. */
     hubWsUrl: env("CONSTELLA_HUB_WS", "ws://constella-hub:8780/api/runner"),
     hubMcpUrl: env("CONSTELLA_HUB_MCP", "http://constella-hub:8780/mcp"),
   },
   agentIdleMinutes: Number(env("CONSTELLA_AGENT_IDLE_MINUTES", "30")),
   desktopIdleMinutes: Number(env("CONSTELLA_DESKTOP_IDLE_MINUTES", "30")),
+  /** Memory limit per instance container, by kind (MB). */
+  instanceMemoryMb: {
+    browser: Number(env("CONSTELLA_MEM_BROWSER_MB", "2048")),
+    desktop: Number(env("CONSTELLA_MEM_DESKTOP_MB", "3072")),
+    android: Number(env("CONSTELLA_MEM_ANDROID_MB", "4096")),
+  },
   runWatchdogMinutes: Number(env("CONSTELLA_RUN_WATCHDOG_MINUTES", "10")),
   runTimeoutMinutes: Number(env("CONSTELLA_RUN_TIMEOUT_MINUTES", "120")),
   timezone: env("TZ", "Asia/Shanghai"),

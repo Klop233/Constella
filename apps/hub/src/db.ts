@@ -139,7 +139,36 @@ export function openDb(file: string): Db {
     }
   }
   db.exec(ENSURE);
+  ensureInstanceKinds(db);
   return db;
+}
+
+/**
+ * Instance kinds (browser / desktop / android) with per-instance options, and agents bound to any number of
+ * instances. Idempotent like ENSURE: adds the columns when missing and rewrites agent policies still in the old
+ * none / fixed / on_demand shape (on_demand agents keep every desktop that wasn't pinned to another agent).
+ */
+function ensureInstanceKinds(db: Db): void {
+  const cols = (db.prepare("PRAGMA table_info(desktops)").all() as { name: string }[]).map((c) => c.name);
+  if (!cols.includes("kind")) db.exec("ALTER TABLE desktops ADD COLUMN kind TEXT NOT NULL DEFAULT 'desktop'");
+  if (!cols.includes("options")) db.exec("ALTER TABLE desktops ADD COLUMN options TEXT NOT NULL DEFAULT '{}'");
+  const agents = db.prepare("SELECT id, desktop_policy FROM agents").all() as { id: string; desktop_policy: string }[];
+  const legacy = agents.filter((a) => "mode" in (JSON.parse(a.desktop_policy) as object));
+  if (!legacy.length) return;
+  const desktops = db.prepare("SELECT id, pinned_agent_id FROM desktops ORDER BY created_at").all() as { id: string; pinned_agent_id: string | null }[];
+  const update = db.prepare("UPDATE agents SET desktop_policy = ? WHERE id = ?");
+  tx(db, () => {
+    for (const a of legacy) {
+      const p = JSON.parse(a.desktop_policy) as { mode: string; desktopId?: string };
+      const ids =
+        p.mode === "fixed" && p.desktopId
+          ? desktops.some((d) => d.id === p.desktopId) ? [p.desktopId] : []
+          : p.mode === "on_demand"
+            ? desktops.filter((d) => !d.pinned_agent_id || d.pinned_agent_id === a.id).map((d) => d.id)
+            : [];
+      update.run(JSON.stringify({ desktopIds: ids }), a.id);
+    }
+  });
 }
 
 export function tx<T>(db: Db, fn: () => T): T {

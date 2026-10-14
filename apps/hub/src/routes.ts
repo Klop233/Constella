@@ -1,13 +1,14 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { FastifyReply, FastifyRequest } from "fastify";
+import { DesktopKind, DesktopOptions, IdleAction } from "@constella/protocol";
 import { z } from "zod";
 import { AgentInput, TEMPLATES } from "./agents.ts";
 import type { Hub } from "./app.ts";
 import { EffortSchema } from "./catalog.ts";
 import { config, nowIso } from "./config.ts";
 import { audit, kvSet } from "./db.ts";
-import type { DesktopAction } from "./desktops.ts";
+import { DesktopError, type DesktopAction } from "./desktops.ts";
 import { isTrusted } from "./trusted.ts";
 import { loadUsage, rangeStart, usageStats } from "./usage.ts";
 import { contextBreakdown } from "./context.ts";
@@ -22,6 +23,8 @@ declare module "fastify" {
 
 const PUBLIC = [/^\/api\/health$/, /^\/api\/auth\/(status|setup|login|passkey\/login\/(options|verify))$/, /^\/api\/runner/, /^\/api\/desktops\/[^/]+\/vnc$/];
 
+const DESKTOP_STATUS: Record<string, number> = { not_found: 404, busy: 409, limit: 409, unavailable: 409, confirm: 409 };
+
 class HttpError extends Error {
   status: number;
   constructor(status: number, message: string) {
@@ -34,7 +37,14 @@ export function registerRoutes(hub: Hub): void {
   const { app, auth, agents, runs, recovery, events, desktops, knowledge, learning, reflect, scheduler, notifier, newapi, models, catalog, settings, containers, db } = hub;
 
   app.setErrorHandler((err: any, _req, reply) => {
-    const status = err instanceof HttpError ? err.status : err?.validation || err instanceof z.ZodError ? 400 : (err?.statusCode ?? 400);
+    const status =
+      err instanceof HttpError
+        ? err.status
+        : err instanceof DesktopError
+          ? (DESKTOP_STATUS[err.code] ?? 400)
+          : err?.validation || err instanceof z.ZodError
+            ? 400
+            : (err?.statusCode ?? 400);
     const message = err instanceof z.ZodError ? err.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("；") : (err?.message ?? "error");
     if (status >= 500) console.error(err);
     reply.code(status).send({ error: message, code: err?.code });
@@ -405,24 +415,33 @@ export function registerRoutes(hub: Hub): void {
   });
   app.post("/api/incidents/:id/dismiss", async (req) => recovery.dismiss(id(req), actor(req)));
 
-  // ── desktops ─────────────────────────────────────────────
+  // ── desktops (instances) ─────────────────────────────────
   app.get("/api/desktops", async () => desktops.list());
+  app.get("/api/desktops/capabilities", async () => hub.hostcaps.snapshot());
+  app.post("/api/desktops/capabilities/refresh", async () => {
+    await hub.hostcaps.refresh();
+    return hub.hostcaps.snapshot();
+  });
   app.post("/api/desktops", async (req) => {
-    const b = z.object({ name: z.string().min(1).max(40), pinnedAgentId: z.string().nullable().optional() }).parse(req.body);
-    const d = desktops.create(b.name, b.pinnedAgentId ?? null);
-    audit(db, actor(req), "desktop.create", { id: d.id });
+    const b = z
+      .object({ name: z.string().min(1).max(40), kind: DesktopKind.default("desktop"), options: DesktopOptions.optional(), agentIds: z.array(z.string()).max(50).optional() })
+      .parse(req.body);
+    const d = await desktops.create({ name: b.name, kind: b.kind, options: b.options });
+    if (b.agentIds?.length) desktops.setAgents(d.id, b.agentIds);
+    audit(db, actor(req), "desktop.create", { id: d.id, kind: d.kind });
     return d;
   });
   app.patch("/api/desktops/:id", async (req) => {
-    desktops.rename(id(req), z.object({ name: z.string().min(1).max(40) }).parse(req.body).name);
-    return { ok: true };
+    const b = z
+      .object({ name: z.string().min(1).max(40).optional(), options: DesktopOptions.optional(), agentIds: z.array(z.string()).max(50).optional(), confirmDataLoss: z.boolean().optional() })
+      .parse(req.body);
+    desktops.row(id(req));
+    const out = await desktops.update(id(req), { name: b.name, options: b.options }, { confirmDataLoss: b.confirmDataLoss });
+    if (b.agentIds) desktops.setAgents(id(req), b.agentIds);
+    audit(db, actor(req), "desktop.update", { id: id(req), fields: Object.keys(b), ...out });
+    return { ok: true, ...out };
   });
   app.delete("/api/desktops/:id", async (req) => {
-    const pinned = agents.list().filter((a) => {
-      const p = JSON.parse(a.desktop_policy);
-      return p.mode === "fixed" && p.desktopId === id(req);
-    });
-    if (pinned.length) throw new HttpError(409, `先修改这些 agent 的桌面设置：${pinned.map((a) => a.name).join("、")}`);
     await desktops.remove(id(req));
     audit(db, actor(req), "desktop.delete", { id: id(req) });
     return { ok: true };
@@ -432,16 +451,39 @@ export function registerRoutes(hub: Hub): void {
     return { ok: true };
   });
   app.post("/api/desktops/:id/stop", async (req) => {
-    if (desktops.lease(id(req)).holder !== "none") throw new HttpError(409, "桌面正在使用中");
+    if (desktops.lease(id(req)).holder !== "none") throw new HttpError(409, "实例正在使用中");
     await desktops.stop(id(req));
+    return { ok: true };
+  });
+  app.post("/api/desktops/:id/pause", async (req) => {
+    if (desktops.lease(id(req)).holder !== "none") throw new HttpError(409, "实例正在使用中");
+    await desktops.pause(id(req));
+    return { ok: true };
+  });
+  app.post("/api/desktops/:id/resume", async (req) => {
+    await desktops.resume(id(req));
+    return { ok: true };
+  });
+  app.post("/api/desktops/:id/restart", async (req) => {
+    await desktops.restart(id(req));
+    audit(db, actor(req), "desktop.restart", { id: id(req) });
     return { ok: true };
   });
   app.get("/api/desktops/:id/screenshot", async (req, reply) => {
     const w = Number((req.query as { width?: string }).width ?? 480);
-    const shot = await desktops.screenshot(id(req), { width: Math.min(Math.max(w, 160), 1280), quality: 60 });
+    const img = await desktops.thumbnail(id(req), Math.min(Math.max(w, 160), 1280));
+    if (!img) return reply.code(404).send({ error: "暂无画面" });
     reply.header("Content-Type", "image/jpeg").header("Cache-Control", "no-store");
-    return reply.send(shot.data);
+    return reply.send(img);
   });
+  /** Owner-only input outside VNC (Android navigation keys); needs the owner to hold the instance. */
+  app.post("/api/desktops/:id/action", async (req) => {
+    if (desktops.lease(id(req)).holder !== "human") throw new HttpError(409, "请先接管");
+    const b = z.object({ type: z.enum(["key"]), keys: z.string().min(1).max(40) }).parse(req.body);
+    await desktops.action(id(req), b);
+    return { ok: true };
+  });
+  app.get("/api/desktops/:id/android/gsf-id", async (req) => ({ id: await desktops.androidGsfId(id(req)) }));
   app.post("/api/desktops/:id/takeover", async (req) => {
     desktops.takeover(id(req), actor(req));
     return { ok: true };
@@ -452,13 +494,14 @@ export function registerRoutes(hub: Hub): void {
     return { ok: true };
   });
   app.post("/api/desktops/:id/clipboard", async (req) => {
-    if (desktops.lease(id(req)).holder !== "human") throw new HttpError(409, "请先接管桌面");
+    if (desktops.lease(id(req)).holder !== "human") throw new HttpError(409, "请先接管");
     const b = z.object({ text: z.string().max(20000) }).parse(req.body);
     await desktops.clipboard(id(req), b.text);
     return { ok: true };
   });
   app.post("/api/desktops/:id/ticket", async (req) => {
-    desktops.row(id(req));
+    // Opening the viewer counts as use: thaw a paused instance so the screen is live.
+    await desktops.wake(id(req));
     return { ticket: auth.issueTicket("vnc", { desktopId: id(req), userId: req.userId }) };
   });
   app.get("/api/desktops/:id/vnc", { websocket: true }, (socket, req) => {
@@ -683,6 +726,11 @@ export function registerRoutes(hub: Hub): void {
     approvalMode: z.enum(["ask", "smart", "auto"]).optional(),
     agentIdleMinutes: minutes([0, 10, 30, 60, 120, 360]).optional(),
     desktopIdleMinutes: minutes([0, 10, 30, 60, 120, 360]).optional(),
+    desktopIdleAction: IdleAction.optional(),
+    androidBackend: z.enum(["auto", "redroid", "emulator", "off"]).optional(),
+    maxInstances: z.number().int().min(1).max(50).optional(),
+    maxAndroidInstances: z.number().int().min(0).max(20).optional(),
+    instanceApproval: z.object({ create: z.boolean(), update: z.boolean() }).partial().optional(),
     autoReflect: z.boolean().optional(),
     reflectMinToolCalls: z.number().int().min(1).max(50).optional(),
     notifyOn: z.object({ done: z.boolean(), failed: z.boolean(), approval: z.boolean(), stuck: z.boolean() }).partial().optional(),
@@ -695,13 +743,14 @@ export function registerRoutes(hub: Hub): void {
     checkModel(b.defaultModel);
     checkModel(b.reflectModel);
     const set = (key: string, v: unknown) => v !== undefined && kvSet(db, `settings.${key}`, String(v));
-    for (const key of ["approvalMode", "autoResume", "browserHtml", "maxAutoResumes", "runTimeoutMinutes", "runWatchdogMinutes", "agentIdleMinutes", "desktopIdleMinutes", "autoReflect", "reflectMinToolCalls", "backupKeep", "modelNameFormat"] as const)
+    for (const key of ["approvalMode", "autoResume", "browserHtml", "maxAutoResumes", "runTimeoutMinutes", "runWatchdogMinutes", "agentIdleMinutes", "desktopIdleMinutes", "desktopIdleAction", "androidBackend", "maxInstances", "maxAndroidInstances", "autoReflect", "reflectMinToolCalls", "backupKeep", "modelNameFormat"] as const)
       set(key, b[key]);
     if (b.defaultModel) kvSet(db, "settings.defaultModel", b.defaultModel);
     if (b.reflectModel) kvSet(db, "settings.reflectModel", b.reflectModel);
     if (b.defaultEffort !== undefined) kvSet(db, "settings.defaultEffort", b.defaultEffort ?? "");
     for (const [k, v] of Object.entries(b.notifyOn ?? {})) set(`notify.${k}`, v);
     for (const [k, v] of Object.entries(b.quietHours ?? {})) set(`quiet.${k}`, v);
+    for (const [k, v] of Object.entries(b.instanceApproval ?? {})) set(`instanceApproval.${k}`, v);
     if (b.newapiAdminToken !== undefined) b.newapiAdminToken ? hub.secrets.set("settings", "newapiAdminToken", b.newapiAdminToken) : hub.secrets.delete("settings", "newapiAdminToken");
     if (b.newapiAdminUserId) kvSet(db, "settings.newapiAdminUserId", b.newapiAdminUserId);
     if (b.telegramBotToken !== undefined) b.telegramBotToken ? hub.secrets.set("settings", "telegramBotToken", b.telegramBotToken) : hub.secrets.delete("settings", "telegramBotToken");

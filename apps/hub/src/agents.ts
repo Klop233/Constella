@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { DesktopPolicy, ApprovalPolicy } from "@constella/protocol";
+import { DesktopPolicy, LegacyDesktopPolicy, ApprovalPolicy } from "@constella/protocol";
 import { z } from "zod";
 import { EffortSchema } from "./catalog.ts";
 import { config, newId, nowIso } from "./config.ts";
@@ -46,7 +46,7 @@ export const TEMPLATES: Template[] = [
     emoji: "✨",
     description: "日常问答、写作、整理资料、提醒，偶尔上网查东西",
     persona: "你是用户的私人助理，做事主动、结论先行、回答简洁。遇到需要用户本人决定的事才询问，其余自己查清楚再给结果。",
-    desktopPolicy: { mode: "on_demand" },
+    desktopPolicy: { desktopIds: [] },
     approvalPolicy: "auto",
     hostAccess: false,
   },
@@ -57,7 +57,7 @@ export const TEMPLATES: Template[] = [
     description: "在浏览器里替你操作网站：查询、填表、下单前整理信息",
     persona:
       "你擅长在浏览器中完成网页任务。优先用 browser_* 工具按页面结构操作，必要时再用 desktop_* 截图点击。遇到登录、验证码、支付等需要用户本人的步骤，调用 desktop_request_help 请用户接管，不要尝试绕过。",
-    desktopPolicy: { mode: "on_demand" },
+    desktopPolicy: { desktopIds: [] },
     approvalPolicy: "auto",
     hostAccess: false,
   },
@@ -68,7 +68,7 @@ export const TEMPLATES: Template[] = [
     description: "管理这台服务器：查看状态、排查故障、改配置（宿主机命令需审批）",
     persona:
       "你是谨慎的运维工程师。先用只读命令了解现状，再给出变更方案；任何修改前先备份。宿主机上的命令通过 host_exec 执行，会经过用户审批，请写清楚每条命令的目的。",
-    desktopPolicy: { mode: "none" },
+    desktopPolicy: { desktopIds: [] },
     approvalPolicy: "auto",
     hostAccess: true,
   },
@@ -78,7 +78,7 @@ export const TEMPLATES: Template[] = [
     emoji: "🔬",
     description: "多来源查资料、对比、写成带出处的报告",
     persona: "你是研究员。查资料时交叉验证多个来源，结论要注明出处链接；区分事实与推测；最后给出简明结论和可执行建议。",
-    desktopPolicy: { mode: "on_demand" },
+    desktopPolicy: { desktopIds: [] },
     approvalPolicy: "auto",
     hostAccess: false,
   },
@@ -92,7 +92,8 @@ export const AgentInput = z.object({
   model: z.string().min(1).optional(),
   effort: EffortSchema.nullable().optional(),
   approvalPolicy: ApprovalPolicy.optional(),
-  desktopPolicy: DesktopPolicy.optional(),
+  /** Instance bindings; old-style policies (e.g. in agent exports) come in unbound. */
+  desktopPolicy: z.union([DesktopPolicy, LegacyDesktopPolicy.transform(() => ({ desktopIds: [] }))]).optional(),
   hostAccess: z.boolean().optional(),
   budgetDailyUsd: z.number().positive().nullable().optional(),
 });
@@ -323,7 +324,8 @@ ${secrets.length ? `- 可用的环境变量密钥（只用于调用，不要输�
         model: a.model,
         effort: a.effort,
         approvalPolicy: a.approval_policy,
-        desktopPolicy: JSON.parse(a.desktop_policy).mode === "fixed" ? { mode: "on_demand" } : JSON.parse(a.desktop_policy),
+        // Instances are local to this hub, so bindings don't travel.
+        desktopPolicy: { desktopIds: [] },
         hostAccess: !!a.host_access,
       },
       memory: memory.agent,
