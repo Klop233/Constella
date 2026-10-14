@@ -457,6 +457,35 @@ export class Artifacts {
     }
   }
 
+  /** Replace the bytes of an existing file artifact (an edited Word / Excel / PowerPoint file) as its next version. */
+  saveFile(input: { artifactId: string; bytes: Buffer; note?: string | null; author: "agent" | "user" }): ArtifactRow {
+    const existing = this.get(input.artifactId);
+    if (!existing) throw new Error("成果不存在");
+    if (input.bytes.length > MAX_ARTIFACT_FILE) throw new Error(`文件太大（${mb(input.bytes.length)}），最大 ${mb(MAX_ARTIFACT_FILE)}`);
+    const tmp = this.#tmp(existing.id);
+    fs.writeFileSync(tmp, input.bytes, { flag: "wx" });
+    try {
+      return this.#commit({
+        existing,
+        agentId: existing.agent_id,
+        runId: null,
+        conversationId: null,
+        title: existing.title,
+        type: { kind: existing.kind, mime: existing.mime, language: existing.language ?? undefined },
+        filename: existing.filename,
+        size: input.bytes.length,
+        sha256: createHash("sha256").update(input.bytes).digest("hex"),
+        note: input.note,
+        author: input.author,
+        sourcePath: null,
+        tmp,
+      });
+    } catch (err) {
+      fs.rmSync(tmp, { force: true });
+      throw err;
+    }
+  }
+
   /** Apply find-and-replace edits to the latest text of one of the agent's artifacts. */
   edit(input: { agentId: string; artifactId: string; edits: { old: string; new: string }[]; note?: string; runId: string | null; conversationId: string | null }): ArtifactRow {
     const a = this.owned(input.agentId, input.artifactId);

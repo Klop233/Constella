@@ -5,6 +5,7 @@ import { DesktopKind, DesktopOptions, IdleAction } from "@constella/protocol";
 import { z } from "zod";
 import { AgentInput, TEMPLATES } from "./agents.ts";
 import { isArchiveName, listArchive } from "./archive.ts";
+import { editOffice, officeKind, readOffice } from "./office.ts";
 import { MAX_ARTIFACT_TEXT, type ArtifactVersionRow } from "./artifacts.ts";
 import type { Hub } from "./app.ts";
 import { EffortSchema } from "./catalog.ts";
@@ -423,6 +424,51 @@ export function registerRoutes(hub: Hub): void {
     });
     reply.header("Cache-Control", q.v ? "private, max-age=31536000, immutable" : "private, no-cache");
     return listing;
+  });
+  // Word / Excel / PowerPoint: read the text, and save text changes back as a new version.
+  const officeOf = (artifactId: string, version?: number) => {
+    const a = artifactOr404(artifactId);
+    const v = artifacts.version(a.id, version);
+    const kind = v.kind === "file" ? officeKind(v.filename) : null;
+    if (!kind) throw new HttpError(400, "这不是 Word / Excel / PowerPoint 文件");
+    return { a, v, kind, bytes: fs.readFileSync(artifacts.filePath(a.id, v.version)) };
+  };
+  app.get("/api/artifacts/:id/office", async (req) => {
+    const q = VersionQuery.parse(req.query);
+    const { kind, bytes } = officeOf(id(req), q.v);
+    try {
+      return readOffice(kind, bytes);
+    } catch (err) {
+      throw new HttpError(422, err instanceof Error ? err.message : String(err));
+    }
+  });
+  app.post("/api/artifacts/:id/office", { bodyLimit: 3 * 1024 * 1024 }, async (req) => {
+    const b = z
+      .object({
+        base: z.number().int().min(1),
+        note: z.string().trim().max(300).optional(),
+        edits: z
+          .array(
+            z.union([
+              z.object({ type: z.literal("text"), group: z.number().int().min(0), index: z.number().int().min(0), text: z.string().max(20000) }),
+              z.object({ type: z.literal("cell"), sheet: z.number().int().min(0), row: z.number().int().min(1), col: z.number().int().min(1), value: z.string().max(20000) }),
+            ]),
+          )
+          .min(1)
+          .max(5000),
+      })
+      .parse(req.body);
+    const { a, kind, bytes } = officeOf(id(req));
+    if (b.base !== a.version) throw new HttpError(409, "这个文件已经有了新版本，刷新后再改");
+    let out: Uint8Array;
+    try {
+      out = editOffice(kind, bytes, b.edits);
+    } catch (err) {
+      throw new HttpError(422, err instanceof Error ? err.message : String(err));
+    }
+    const saved = artifacts.saveFile({ artifactId: a.id, bytes: Buffer.from(out), note: b.note ?? `修改了 ${b.edits.length} 处`, author: "user" });
+    audit(db, actor(req), "artifact.edit", { id: saved.id, version: saved.version });
+    return saved;
   });
   // The file itself. Only types the browser can't run as a page are served inline; text (HTML included) is
   // served as plain text and everything else as a download, all sandboxed, so a delivered file can never act
