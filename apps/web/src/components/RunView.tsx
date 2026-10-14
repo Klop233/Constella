@@ -31,6 +31,7 @@ const MIN_TIMED_MS = 250;
 /** Match the prefixes in apps/hub/src/runs.ts: runs the hub started itself, an adopted option, a late answer. */
 const RESUME_PREFIX = "［自动继续］";
 const ADOPT_PREFIX = "［采用方案］";
+const SUPERVISOR_PREFIX = "［监督员］";
 const ANSWER_PREFIX = "［主人的选择］";
 /** Sent for an empty message after a task ended abnormally. */
 export const CONTINUE_TEXT = "继续完成上次中断的任务。";
@@ -427,6 +428,17 @@ function TurnStart({ run }: { run: Run }) {
       <div className="space-y-1.5">
         <TurnDivider>
           <Check className="size-3" /> 采用方案「{title}」 · {time}
+        </TurnDivider>
+        {instruction && <div className="text-[12.5px] text-muted text-center line-clamp-3 whitespace-pre-wrap">{instruction}</div>}
+      </div>
+    );
+  }
+  if (p.startsWith(SUPERVISOR_PREFIX)) {
+    const instruction = p.slice(SUPERVISOR_PREFIX.length).trim();
+    return (
+      <div className="space-y-1.5">
+        <TurnDivider>
+          <Eye className="size-3" /> 监督员让它接着做 · {time}
         </TurnDivider>
         {instruction && <div className="text-[12.5px] text-muted text-center line-clamp-3 whitespace-pre-wrap">{instruction}</div>}
       </div>

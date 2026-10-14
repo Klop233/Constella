@@ -16,13 +16,14 @@ import { currentSubscription, disablePush, enablePush, pushSupported } from "../
 import { KIND_INFO, KINDS } from "../lib/instances";
 import type { Agent, AuditEntry, Effort, HostCaps, IdleAction, Schedule } from "../lib/types";
 
-type NotifyKind = "done" | "failed" | "approval" | "stuck";
+type NotifyKind = "done" | "failed" | "approval" | "stuck" | "panic";
 
 interface SettingsView {
   defaultModel: string;
   reflectModel: string;
   defaultEffort: Effort | null;
   autoResume: boolean;
+  endingReview: boolean;
   maxAutoResumes: number;
   runTimeoutMinutes: number;
   runWatchdogMinutes: number;
@@ -249,6 +250,12 @@ function GeneralSection({ s, save }: { s: SettingsView; save: Save }) {
         </SettingRow>
         <SettingRow title="卡住处理" desc="任务这么久没有任何动静（没有输出、没有工具调用、引擎也没在思考）时，监督员介入：判断后继续等、结束卡住的命令、提醒 agent、重启这一轮或重建容器；处理不了才请你决定。">
           <Choice label="卡住处理" value={s.runWatchdogMinutes} options={minuteOptions([5, 10, 20, 30, 60, 0], "不处理")} onChange={(v) => void save({ runWatchdogMinutes: v })} />
+        </SettingRow>
+        <SettingRow
+          title="没做完就停下时拉回"
+          desc="任务只有做完才能结束。每轮结束时监督员复核，没做完就停下的记为 panic 并推送给你：还有路可走就先让维修员看一眼，再让它接着做；停下来等你的，让它在任务里等；连续拉回 2 次仍没做完，才生成报告请你决定。"
+        >
+          <Toggle checked={s.endingReview} onChange={(v) => void save({ endingReview: v }, v ? "已开启没做完时拉回" : "已关闭没做完时拉回")} label="没做完就停下时拉回" />
         </SettingRow>
       </SettingGroup>
       <SettingGroup title="回答">
@@ -1038,6 +1045,7 @@ const NOTIFY_KINDS: { kind: NotifyKind; title: string; desc: string }[] = [
   { kind: "done", title: "任务完成", desc: "运行超过 1 分钟的任务，以及定时、自动继续的任务完成时。" },
   { kind: "failed", title: "任务失败", desc: "任务出错停下、生成了诊断报告时（会被自动继续的中断不推送）。" },
   { kind: "stuck", title: "任务卡住", desc: "监督员处理不了、需要你决定时。" },
+  { kind: "panic", title: "Panic", desc: "agent 任务没做完就停下时：每次都推送，监督员会先让它接着做；连续拉回两次仍没做完，再请你决定。" },
 ];
 
 function NotifySection({ s, save }: { s: SettingsView; save: Save }) {
@@ -1393,8 +1401,8 @@ function InstancesSection({ s, save }: { s: SettingsView; save: Save }) {
         <SettingRow title="agent 新建实例要我同意" desc="关掉后 agent 需要时直接新建（仍受上面的上限限制）。">
           <Toggle label="agent 新建实例要我同意" checked={s.instanceApproval.create} onChange={(v) => void save({ instanceApproval: { create: v } })} />
         </SettingRow>
-        <SettingRow title="agent 修改或重启实例要我同意" desc="agent 只能改分给它的实例，不能删除实例。">
-          <Toggle label="agent 修改或重启实例要我同意" checked={s.instanceApproval.update} onChange={(v) => void save({ instanceApproval: { update: v } })} />
+        <SettingRow title="agent 修改实例要我同意" desc="agent 只能改分给它的实例，不能删除实例。实例卡住时的修复（重启、重建容器，数据保留）不需要同意。">
+          <Toggle label="agent 修改实例要我同意" checked={s.instanceApproval.update} onChange={(v) => void save({ instanceApproval: { update: v } })} />
         </SettingRow>
       </SettingGroup>
     </>

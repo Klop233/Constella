@@ -76,11 +76,19 @@ export interface RunDeps {
   repairRunner?(agentId: string, error: string): Promise<string[]>;
   /** Record something that went wrong; unresolved ones are diagnosed and offered to the owner with options. */
   incident?(input: IncidentInput): void;
+  /**
+   * A second look at a turn that ended "done": did it get the job done, or did the agent give up on something it
+   * could still do? Null when there is nothing to look at; otherwise resolves true when the ending stands (the
+   * "done" notification goes out) and false when the reviewer took it from there (pulled the agent back, or
+   * handed it to the owner).
+   */
+  reviewDone?(run: RunRow): Promise<boolean> | null;
   /** Wait before the 1st, 2nd, 3rd automatic continuation without progress (tests pass zeros). */
   resumeDelaysMs?: number[];
 }
 
-export type NotifyKind = "done" | "failed" | "approval" | "stuck";
+/** `panic`: a task stopped before it was done. */
+export type NotifyKind = "done" | "failed" | "approval" | "stuck" | "panic";
 
 export interface RunLimits {
   /** A turn running longer than this is stopped and continued in a fresh one (0 = never). */
@@ -100,6 +108,8 @@ const DEFAULT_LIMITS: RunLimits = { runTimeoutMinutes: config.runTimeoutMinutes,
 export const RESUME_PREFIX = "［自动继续］";
 /** Prompt of a run started because the owner adopted an option from an incident report. */
 export const ADOPT_PREFIX = "［采用方案］";
+/** Prompt of a run the supervisor started: the agent ended a turn without finishing and gets pulled back. */
+export const SUPERVISOR_PREFIX = "［监督员］";
 /** Message carrying the owner's answer to a question the agent had stopped waiting for. */
 export const ANSWER_PREFIX = "［主人的选择］";
 export const resumeText = (why: string) => `${RESUME_PREFIX}上次任务因为${why}中断了，请从中断的地方继续完成。`;
@@ -350,10 +360,16 @@ export class RunManager {
     const run = this.get(runId)!;
     const conv = this.conversation(run.conversation_id);
     const long = Date.now() - Date.parse(run.created_at) > 60_000;
+    const notifyDone = () => {
+      if (long || conv?.source !== "user") this.#d.notify(`${this.#agentName(run.agent_id)} 完成了任务`, run.prompt.slice(0, 100), `/c/${run.conversation_id}`, "done");
+    };
+    // Before the hooks, so they can tell a turn under review from one that is simply over.
+    const review = status === "done" ? this.#review(run) : null;
     if (status === "failed" && opts.notify !== false) {
       this.#notifyFailed(run, error);
-    } else if (status === "done" && (long || conv?.source !== "user")) {
-      this.#d.notify(`${this.#agentName(run.agent_id)} 完成了任务`, run.prompt.slice(0, 100), `/c/${run.conversation_id}`, "done");
+    } else if (status === "done") {
+      if (review) void review.then((stands) => stands && notifyDone(), notifyDone);
+      else notifyDone();
     }
     for (const hook of this.#finishedHooks) {
       try {
@@ -368,6 +384,15 @@ export class RunManager {
       this.#recover(runId, onCancel.reason, onCancel.text);
     }
     return true;
+  }
+
+  #review(run: RunRow): Promise<boolean> | null {
+    try {
+      return this.#d.reviewDone?.(run) ?? null;
+    } catch (err) {
+      console.error("review failed", run.id, err);
+      return null;
+    }
   }
 
   /** Called for every event a runner reports. */

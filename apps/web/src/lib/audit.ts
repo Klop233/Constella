@@ -23,12 +23,16 @@ export const AUDIT_ACTION: Record<string, string> = {
   "run.interrupt": "停止任务",
   "run.auto_resume": "安排自动继续",
   "run.auto_resume_stalled": "自动继续没有进展，已暂停",
+  "run.ending_review": "监督员：复核任务结束",
   "desktop.create": "新建实例",
   "desktop.update": "修改实例",
   "desktop.restart": "重启实例",
   "desktop.delete": "删除实例",
   "desktop.takeover": "接管实例",
   "desktop.handback": "交还实例",
+  "instance.repair": "修复实例",
+  "instance.repair_failed": "修复实例没有成功",
+  "instance.reset": "清空重建实例",
   "schedule.create": "新建定时任务",
   "schedule.update": "修改定时任务",
   "schedule.delete": "删除定时任务",
@@ -47,6 +51,9 @@ export const AUDIT_ACTION: Record<string, string> = {
   "incident.engine_error": "出错，生成诊断报告",
   "incident.stalled": "停滞，生成诊断报告",
   "incident.stuck": "记录任务卡住",
+  "incident.panic": "记录 panic（没做完就停下）",
+  "incident.instance": "记录实例故障",
+  "incident.help": "记录 agent 求助",
   "incident.diagnosed": "诊断完成",
   "incident.adopt": "采用方案",
   "incident.dismiss": "忽略报告",
@@ -56,6 +63,7 @@ export const AUDIT_ACTION: Record<string, string> = {
   "supervisor.restart": "监督员：重启这一轮",
   "supervisor.rebuild": "监督员：重建 agent 容器",
   "supervisor.escalate": "监督员：请你决定",
+  "helper.call": "维修员：处理求助",
   "artifact.create": "保存交互界面为成果",
   "artifact.rename": "重命名成果",
   "artifact.edit": "编辑成果",
@@ -69,6 +77,7 @@ export const AUDIT_FIELD: Record<string, string> = {
   reflectModel: "复盘模型",
   defaultEffort: "默认推理强度",
   autoResume: "自动继续",
+  endingReview: "没做完就停下时拉回",
   maxAutoResumes: "连续无进展上限",
   runTimeoutMinutes: "单轮最长运行",
   runWatchdogMinutes: "卡住处理",
@@ -126,6 +135,11 @@ const DETAIL_KEY: Record<string, string> = {
   error: "错误",
   reason: "原因",
   assessment: "评估",
+  problem: "问题",
+  diagnosis: "诊断",
+  verdict: "结论",
+  by: "发起",
+  desktopId: "实例编号",
   did: "已做的处理",
   option: "方案",
   options: "方案",
@@ -153,10 +167,10 @@ const DETAIL_KEY: Record<string, string> = {
 };
 
 const SUB_FIELD: Record<string, Record<string, string>> = {
-  notifyOn: { approval: "审批和选择", done: "任务完成", failed: "任务失败", stuck: "任务卡住" },
+  notifyOn: { approval: "审批和选择", done: "任务完成", failed: "任务失败", stuck: "任务卡住", panic: "Panic" },
   quietHours: { enabled: "开关", start: "开始", end: "结束" },
   desktopPolicy: { desktopIds: "实例", mode: "方式", desktopId: "实例" },
-  instanceApproval: { create: "新建", update: "修改或重启" },
+  instanceApproval: { create: "新建", update: "修改" },
   options: {
     width: "屏幕宽",
     height: "屏幕高",
@@ -184,6 +198,8 @@ const VALUE_TEXT: Record<string, Record<string, string>> = {
   "options.idleAction": { pause: "暂停", stop: "停止", none: "一直运行" },
   androidBackend: { auto: "自动", redroid: "Redroid", emulator: "模拟器", off: "关闭" },
   "options.backend": { redroid: "Redroid", emulator: "模拟器" },
+  verdict: { completed: "做完了", needs_owner: "停下来等你", gave_up: "没做完就放弃" },
+  by: { agent: "agent 求助", review: "监督员复核" },
 };
 
 export const APPROVAL_KIND: Record<string, string> = {
@@ -199,7 +215,7 @@ export const INCIDENT_STATUS: Record<string, string> = { analyzing: "分析中",
 
 export const APPROVAL_STATUS: Record<string, string> = { pending: "待处理", approved: "已批准", denied: "已拒绝" };
 
-const ACTOR: Record<string, string> = { system: "系统", supervisor: "监督员", watchdog: "超时保护", policy: "自动审批" };
+const ACTOR: Record<string, string> = { system: "系统", supervisor: "监督员", helper: "维修员", watchdog: "超时保护", policy: "自动审批" };
 
 export interface AuditChange {
   from?: unknown;
@@ -265,7 +281,7 @@ export function auditVia(detail: Record<string, unknown>): { ip?: string; device
 }
 
 const LEAD_KEYS = ["name", "title", "device"];
-const TAIL_KEYS = ["assessment", "did", "option", "answer", "note", "reason", "error", "ref"];
+const TAIL_KEYS = ["problem", "assessment", "diagnosis", "did", "option", "answer", "note", "reason", "error", "ref"];
 
 const clip = (s: string, n = 80) => (s.length > n ? `${s.slice(0, n)}…` : s);
 

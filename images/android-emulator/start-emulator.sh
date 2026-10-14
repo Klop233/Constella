@@ -31,6 +31,10 @@ set_cfg hw.gpu.mode swiftshader_indirect
 set_cfg disk.dataPartition.size 8G
 set_cfg fastboot.forceColdBoot yes
 
+# This container is the only user of the AVD, so a lock still here was left by a run that got killed (a hard stop);
+# the emulator would refuse to boot ("A snapshot operation ... is pending") until it is gone.
+find "$AVD" -maxdepth 1 \( -name '*.lock' -o -name '*.lock.tmp-*' \) -exec rm -rf {} + 2>/dev/null || true
+
 # The emulator's adbd listens on 127.0.0.1:5557; the bridge reaches it on this container's 5555.
 socat TCP-LISTEN:5555,fork,reuseaddr TCP:127.0.0.1:5557 &
 exec emulator -avd constella -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect \

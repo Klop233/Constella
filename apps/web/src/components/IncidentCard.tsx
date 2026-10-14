@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { Check, ChevronRight, Eye, Loader2, Stethoscope, Wrench } from "lucide-react";
+import { Check, ChevronRight, Eye, LifeBuoy, Loader2, Monitor, Siren, Stethoscope, Wrench } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router";
 import { api } from "../lib/api";
@@ -12,6 +12,22 @@ export const INCIDENT_KIND: Record<Incident["kind"], string> = {
   engine_error: "出错",
   stalled: "自动继续停下",
   stuck: "卡住",
+  panic: "Panic",
+  instance: "实例故障",
+  help: "求助",
+};
+
+/** What the collapsed `error` holds for kinds where it isn't an error message. */
+const DETAIL_LABEL: Partial<Record<Incident["kind"], string>> = { instance: "诊断详情", help: "求助原文", panic: "agent 最后的回复" };
+
+const KIND_ICON: Record<Incident["kind"], typeof Eye> = {
+  start_failure: Wrench,
+  engine_error: Stethoscope,
+  stalled: Stethoscope,
+  stuck: Eye,
+  panic: Siren,
+  instance: Monitor,
+  help: LifeBuoy,
 };
 
 const STATUS: Record<Incident["status"], { label: string; tone: "warn" | "muted" | "ok" | "accent" }> = {
@@ -23,7 +39,7 @@ const STATUS: Record<Incident["status"], { label: string; tone: "warn" | "muted"
 };
 
 export function IncidentIcon({ incident, className }: { incident: Pick<Incident, "kind" | "status">; className?: string }) {
-  const Icon = incident.kind === "stuck" ? Eye : incident.kind === "start_failure" ? Wrench : Stethoscope;
+  const Icon = KIND_ICON[incident.kind] ?? Stethoscope;
   return <Icon className={cx("size-4 shrink-0", incident.status === "open" || incident.status === "analyzing" ? "text-warn" : "text-muted", className)} />;
 }
 
@@ -66,6 +82,7 @@ export function IncidentCard({ incident, showAgent = true, showLink = true, clas
             · {incident.agent_emoji} {incident.agent_name}
           </span>
         )}
+        {showAgent && !incident.agent_name && incident.desktop_name && <span className="text-muted truncate hidden sm:inline">· {incident.desktop_name}</span>}
         <span className="ml-auto flex items-center gap-2 shrink-0">
           <span className="text-xs text-muted">{timeAgo(incident.created_at)}</span>
           <IncidentStatus incident={incident} />
@@ -93,7 +110,7 @@ export function IncidentCard({ incident, showAgent = true, showLink = true, clas
       {incident.error && (
         <div className="mt-2">
           <button type="button" onClick={() => setShowError(!showError)} className="flex items-center gap-1 text-xs text-muted hover:text-[var(--text)]">
-            错误信息 <ChevronRight className={cx("size-3.5 transition", showError && "rotate-90")} />
+            {DETAIL_LABEL[incident.kind] ?? "错误信息"} <ChevronRight className={cx("size-3.5 transition", showError && "rotate-90")} />
           </button>
           {showError && <pre className="mt-1 text-xs font-mono whitespace-pre-wrap break-all bg-surface-2 rounded-lg p-2.5 max-h-48 overflow-auto">{incident.error}</pre>}
         </div>
@@ -119,7 +136,7 @@ export function IncidentCard({ incident, showAgent = true, showLink = true, clas
         </div>
       )}
 
-      {(pending || (showLink && incident.conversation_id) || incident.resolution) && (
+      {(pending || (showLink && (incident.conversation_id || incident.desktop_id)) || incident.resolution) && (
         <div className="mt-2.5 flex items-center gap-3 text-xs text-muted">
           {pending ? (
             <button type="button" disabled={busy !== null} onClick={() => void act("dismiss")} className="hover:text-[var(--text)] disabled:opacity-50">
@@ -133,10 +150,19 @@ export function IncidentCard({ incident, showAgent = true, showLink = true, clas
               </span>
             )
           )}
-          {showLink && incident.conversation_id && (
-            <Link to={`/c/${incident.conversation_id}`} className="ml-auto shrink-0 hover:text-[var(--text)]">
-              查看对话 ›
-            </Link>
+          {showLink && (incident.conversation_id || incident.desktop_id) && (
+            <span className="ml-auto flex items-center gap-3 shrink-0">
+              {incident.desktop_id && incident.desktop_name && (
+                <Link to={`/instances/${incident.desktop_id}`} className="hover:text-[var(--text)]">
+                  查看实例 ›
+                </Link>
+              )}
+              {incident.conversation_id && (
+                <Link to={`/c/${incident.conversation_id}`} className="hover:text-[var(--text)]">
+                  查看对话 ›
+                </Link>
+              )}
+            </span>
           )}
         </div>
       )}

@@ -11,7 +11,7 @@ process.env.CONSTELLA_DATA_DIR = tmp;
 
 const { openDb } = await import("../src/db.ts");
 const { EventStore } = await import("../src/events.ts");
-const { Desktops, DesktopError, boundIds } = await import("../src/desktops.ts");
+const { Desktops, DesktopError, boundIds, clearStaleLocks } = await import("../src/desktops.ts");
 const { HostCapabilities } = await import("../src/hostcaps.ts");
 const { registerMcp } = await import("../src/mcp.ts");
 const { config } = await import("../src/config.ts");
@@ -32,13 +32,28 @@ function policy(db: Db, id: string): unknown {
 /** Containers stand-in: every container "exists" in the given state; records lifecycle calls. */
 function fakeContainers(initial = "running") {
   const states = new Map<string, string>();
+  const infos = new Map<string, Record<string, unknown>>();
   const calls: string[] = [];
+  const logs = new Map<string, string>();
   return {
     calls,
     states,
+    infos,
+    logLines: logs,
     desktopName: (id: string) => `constella-desktop-${id}`,
     androidName: (id: string) => `constella-android-${id}`,
     state: async (name: string) => states.get(name) ?? initial,
+    info: async (name: string) => ({
+      state: states.get(name) ?? initial,
+      restartCount: 0,
+      restarting: false,
+      startedAt: null,
+      exitCode: null,
+      oomKilled: false,
+      health: null,
+      ...infos.get(name),
+    }),
+    logs: async (name: string) => logs.get(name) ?? "",
     pause: async (name: string) => void (calls.push(`pause ${name}`), states.set(name, "paused")),
     unpause: async (name: string) => void (calls.push(`unpause ${name}`), states.set(name, "running")),
     stop: async (name: string) => void (calls.push(`stop ${name}`), states.set(name, "stopped")),
@@ -331,6 +346,8 @@ describe("instance tools over MCP", () => {
     let approval = { create: true, update: true };
     let answer = false;
     const asked: string[] = [];
+    const repairs: unknown[] = [];
+    const helped: string[] = [];
     const app = Fastify();
     registerMcp(app, {
       db,
@@ -341,6 +358,13 @@ describe("instance tools over MCP", () => {
       },
       desktops,
       hostcaps: caps(),
+      recovery: {
+        repairInstance: async (id: string, ctx: { by: string; runId: string }) => {
+          repairs.push({ id, by: ctx.by, runId: ctx.runId });
+          return { ok: true, steps: ["停止了实例", "重新启动，确认已经可以正常使用"], before: { ok: false }, after: { ok: true } };
+        },
+        help: async (input: { problem: string }) => (helped.push(input.problem), { text: "维修员诊断：实例好了\n下一步：继续", diagnosis: "实例好了", did: [] }),
+      },
       browserHtml: () => false,
       instanceApproval: () => approval,
     } as any);
@@ -374,9 +398,100 @@ describe("instance tools over MCP", () => {
 
       const notMine = await call("instance_update", { id: "dt-other", name: "x", reason: "r" });
       expect(notMine.isError).toBe(true);
+
+      // Repairing never waits for the owner, even with the change approval on.
+      const restarted = await call("instance_restart", { id: row!.id, reason: "android_ui 超时" });
+      expect(restarted.isError).toBeFalsy();
+      expect(restarted.content[0]!.text).toContain("已修复");
+      expect(repairs).toEqual([{ id: row!.id, by: "agent", runId: "r1" }]);
+      expect(asked).toHaveLength(1);
+
+      expect(names).toContain("get_help");
+      const help = await call("get_help", { problem: "android_ui 一直超时，重启也没用" });
+      expect(help.content[0]!.text).toContain("维修员诊断");
+      expect(helped).toEqual(["android_ui 一直超时，重启也没用"]);
     } finally {
       await client.close();
       await app.close();
     }
   });
+});
+
+describe("instance health and repair", () => {
+  const FATAL = "FATAL        | A snapshot operation for 'constella' is pending and timeout has expired. Exiting...";
+
+  /** fetch stand-in for the control service's /health. */
+  async function withHealth<T>(ok: () => boolean, fn: () => Promise<T>): Promise<T> {
+    const real = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      ok() ? new Response(JSON.stringify({ ok: true, ready: true })) : new Response(JSON.stringify({ ok: false, ready: false, reason: "正在连接安卓设备" }), { status: 503 })) as any;
+    try {
+      return await fn();
+    } finally {
+      globalThis.fetch = real;
+    }
+  }
+
+  it("removes only the lock files a killed emulator leaves behind", () => {
+    const dir = fs.mkdtempSync(path.join(tmp, "avd-"));
+    for (const f of ["snapshot.lock.lock", "hardware-qemu.ini.lock", "multiinstance.lock", "snapshot.lock.tmp-z97Oxq", "userdata-qemu.img.qcow2", "config.ini"]) fs.writeFileSync(path.join(dir, f), "x");
+    expect(clearStaleLocks(dir).sort()).toEqual(["hardware-qemu.ini.lock", "multiinstance.lock", "snapshot.lock.lock", "snapshot.lock.tmp-z97Oxq"]);
+    expect(fs.readdirSync(dir).sort()).toEqual(["config.ini", "userdata-qemu.img.qcow2"]);
+    expect(clearStaleLocks(path.join(dir, "missing"))).toEqual([]);
+  });
+
+  it("tells a crash loop from a deliberately stopped instance, with the evidence", async () => {
+    const containers = fakeContainers("running");
+    const s = setup({ containers, caps: caps({ backend: "emulator" }) });
+    const r = await s.desktops.create({ name: "安卓助手专用机", kind: "android" });
+    containers.infos.set(`constella-android-${r.id}`, { state: "stopped", restarting: true, restartCount: 94, startedAt: new Date().toISOString() });
+    containers.logLines.set(`constella-android-${r.id}`, `INFO | booting\n${FATAL}\n`);
+    const h = await withHealth(() => false, () => s.desktops.diagnose(r.id));
+    expect(h).toMatchObject({ ok: false, state: "broken", crashLoop: true });
+    expect(h.problem).toContain("反复退出（Docker 已自动重启 94 次）");
+    expect(h.problem).toContain("锁文件");
+    expect(h.detail).toContain("正在连接安卓设备");
+    expect(h.detail).toContain("snapshot operation");
+
+    containers.states.set(`constella-desktop-${r.id}`, "stopped");
+    containers.infos.set(`constella-android-${r.id}`, { state: "stopped" });
+    expect(await withHealth(() => false, () => s.desktops.diagnose(r.id))).toMatchObject({ ok: true, state: "stopped" });
+  });
+
+  it("repairs by stopping properly, clearing stale locks and starting; recreates the containers when that isn't enough", async () => {
+    const containers = fakeContainers("running");
+    const s = setup({ containers, caps: caps({ backend: "emulator" }) });
+    const r = await s.desktops.create({ name: "x", kind: "android" });
+    const avd = path.join(config.desktopsDir, r.id, "avd", "constella.avd");
+    fs.mkdirSync(avd, { recursive: true });
+    fs.writeFileSync(path.join(avd, "snapshot.lock.lock"), "1");
+    // Healthy again once it has been started.
+    const res = await withHealth(() => containers.calls.includes(`ensure ${r.id}`), () => s.desktops.repair(r.id));
+    expect(res.ok).toBe(true);
+    expect(containers.calls).toEqual([`stop constella-desktop-${r.id}`, `stop constella-android-${r.id}`, `ensure ${r.id}`]);
+    expect(res.steps.join("；")).toContain("snapshot.lock.lock");
+    expect(fs.existsSync(path.join(avd, "snapshot.lock.lock"))).toBe(false);
+    expect(s.db.prepare("SELECT 1 FROM audit WHERE action = 'instance.repair'").get()).toBeTruthy();
+  }, 10_000);
+
+  it("falls back to recreating the containers, and says so when even that fails", async () => {
+    const containers = fakeContainers("running");
+    const s = setup({ containers, caps: caps() });
+    const r = await s.desktops.create({ name: "x", kind: "browser" });
+    // Never healthy: both attempts time out (30 s each for a browser), so shorten the wait.
+    const real = Date.now;
+    let offset = 0;
+    Date.now = () => real() + offset;
+    const timer = setInterval(() => (offset += 10_000), 5);
+    try {
+      const res = await withHealth(() => false, () => s.desktops.repair(r.id));
+      expect(res.ok).toBe(false);
+      expect(containers.calls.filter((c) => c.startsWith("remove"))).toEqual([`remove constella-desktop-${r.id}`]);
+      expect(containers.calls.filter((c) => c.startsWith("ensure"))).toHaveLength(2);
+      expect(s.db.prepare("SELECT 1 FROM audit WHERE action = 'instance.repair_failed'").get()).toBeTruthy();
+    } finally {
+      clearInterval(timer);
+      Date.now = real;
+    }
+  }, 20_000);
 });

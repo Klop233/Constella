@@ -8,7 +8,7 @@ import type { WebSocket } from "ws";
 import { config, newId, nowIso } from "./config.ts";
 import { audit, type Db } from "./db.ts";
 import type { EventStore } from "./events.ts";
-import type { Containers, DesktopSpec } from "./containers.ts";
+import { ANDROID_STOP_SECONDS, type ContainerInfo, type Containers, type DesktopSpec } from "./containers.ts";
 import type { HostCapabilities } from "./hostcaps.ts";
 import type { RunManager } from "./runs.ts";
 
@@ -69,6 +69,44 @@ export function boundIds(policy: string | undefined): string[] {
   }
 }
 
+/** How an instance is doing, from its containers and its control service (not just "the container is up"). */
+export interface InstanceHealth {
+  /** Usable now, or deliberately paused / stopped (it starts on first use). */
+  ok: boolean;
+  state: "running" | "paused" | "stopped" | "missing" | "starting" | "broken";
+  /** One line saying what is wrong, when it isn't ok. */
+  problem?: string;
+  /** Keeps exiting and being restarted by Docker: it won't come up by itself. */
+  crashLoop: boolean;
+  /** The evidence: container states and restart counts, the control service's answer, telling log lines. */
+  detail: string;
+}
+
+export interface RepairResult {
+  ok: boolean;
+  steps: string[];
+  before: InstanceHealth;
+  after: InstanceHealth;
+}
+
+/** Log lines worth showing when an instance misbehaves. */
+const TELLING = /FATAL|ERROR|panic|Killed|Out of memory|hanging thread|timed out/i;
+
+/**
+ * Lock files the emulator leaves in its virtual device when it is killed instead of shut down. Only safe to
+ * remove while the emulator isn't running; returns the names removed.
+ */
+export function clearStaleLocks(avdDir: string): string[] {
+  let names: string[];
+  try {
+    names = fs.readdirSync(avdDir).filter((n) => n.endsWith(".lock") || n.includes(".lock.tmp-"));
+  } catch {
+    return [];
+  }
+  for (const n of names) fs.rmSync(path.join(avdDir, n), { recursive: true, force: true });
+  return names;
+}
+
 export type DesktopErrorCode = "not_found" | "unavailable" | "limit" | "busy" | "invalid" | "confirm";
 
 export class DesktopError extends Error {
@@ -102,6 +140,9 @@ export class Desktops {
   #current = new Map<string, Partial<Record<ToolFamily, string>>>();
   /** Open VNC viewers per instance; watched instances aren't idled. */
   #viewers = new Map<string, number>();
+  /** Instances being started or repaired right now (a booting instance isn't broken). */
+  #starting = new Set<string>();
+  #repairs = new Map<string, Promise<RepairResult>>();
   #timer: NodeJS.Timeout | null = null;
 
   constructor(deps: {
@@ -179,7 +220,8 @@ export class Desktops {
     return [
       "实例（instance_* / browser_* / desktop_* / android_*）：平台提供三类图形实例——纯浏览器、Linux 桌面、安卓。",
       bound.length ? `    绑定给你的实例：${bound.map((r) => this.describe(r)).join("；")}。` : "    目前没有实例绑定给你。",
-      `    instance_list 查看实例和状态；instance_use 切换当前操作的实例；instance_create 新建实例（自动绑定给你${creatable.length ? `，这台服务器能建：${creatable.join("、")}` : "；这台服务器目前建不了任何实例"}）；instance_update 修改、instance_restart 重启卡住的实例。新建、修改和重启可能需要主人审批。`,
+      `    instance_list 查看实例和状态；instance_use 切换当前操作的实例；instance_create 新建实例（自动绑定给你${creatable.length ? `，这台服务器能建：${creatable.join("、")}` : "；这台服务器目前建不了任何实例"}）；instance_update 修改配置；instance_restart 修复卡住或没响应的实例（重启并确认恢复，不需要审批）。新建和修改可能需要主人审批。`,
+      "    实例没响应、截图或 android_ui 超时、报错里带「实例诊断」时：先 instance_restart；修不好就 get_help（平台维修员能看到容器日志并动手修），或用 instance_create / instance_use 换一台继续。不要因为实例出故障就结束任务。",
       "    browser_*：操作浏览器或 Linux 桌面实例里的浏览器（按页面结构，更可靠），网页任务优先用它。desktop_*：截图和键鼠操作当前实例的屏幕（安卓上 click 是点按、drag 是滑动，key 支持 back/home/recents）。android_ui 读取安卓界面结构，android_apps 列出或安装 App。",
       "    遇到登录、验证码、扫码、支付等必须由用户本人完成的步骤，调用 desktop_request_help。",
     ].join("\n");
@@ -322,19 +364,178 @@ export class Desktops {
 
   async start(id: string): Promise<void> {
     const r = this.row(id);
-    await this.#containers.ensureDesktop(this.spec(r));
-    this.#touch(id);
-    await this.#waitHealthy(id, r.kind === "android" ? 240 : 30);
+    this.#starting.add(id);
+    try {
+      await this.#clearLocksIfDown(r);
+      await this.#containers.ensureDesktop(this.spec(r));
+      this.#touch(id);
+      await this.#waitHealthy(id, r.kind === "android" ? 240 : 30);
+    } finally {
+      this.#starting.delete(id);
+    }
     this.#events.publish("desktop", { id });
   }
 
-  async stop(id: string): Promise<void> {
+  /** `keepFrame: false` skips saving the last screen (pointless, and slow, when the instance isn't answering). */
+  async stop(id: string, opts: { keepFrame?: boolean } = {}): Promise<void> {
     const r = this.row(id);
     await this.#closeBrowser(id);
-    await this.#keepFrame(id);
+    if (opts.keepFrame !== false) await this.#keepFrame(id);
     await this.#containers.stop(this.#containers.desktopName(id));
-    if (r.kind === "android") await this.#containers.stop(this.#containers.androidName(id));
+    if (r.kind === "android") await this.#containers.stop(this.#containers.androidName(id), ANDROID_STOP_SECONDS);
     this.#events.publish("desktop", { id });
+  }
+
+  /** The emulator's virtual device directory, for emulator-backed Android instances. */
+  #avdDir(r: DesktopRow): string | null {
+    return r.kind === "android" && this.spec(r).backend === "emulator" ? path.join(config.desktopsDir, r.id, "avd", "constella.avd") : null;
+  }
+
+  /** Remove locks a killed emulator left behind, but only while it isn't running (live locks must stay). */
+  async #clearLocksIfDown(r: DesktopRow): Promise<string[]> {
+    const dir = this.#avdDir(r);
+    if (!dir) return [];
+    const device = await this.#containers.info(this.#containers.androidName(r.id)).catch(() => null);
+    if (device && (device.state === "running" || device.state === "starting" || device.state === "paused")) return [];
+    return clearStaleLocks(dir);
+  }
+
+  /** Being started or repaired right now. */
+  busy(id: string): boolean {
+    return this.#starting.has(id) || this.#repairs.has(id);
+  }
+
+  /**
+   * What is wrong with an instance, if anything: container states and restart counts, the control service's own
+   * answer, and the telling lines of the log. Cheap enough to run every minute.
+   */
+  async diagnose(id: string): Promise<InstanceHealth> {
+    const r = this.row(id);
+    const screenName = this.#containers.desktopName(id);
+    const deviceName = r.kind === "android" ? this.#containers.androidName(id) : null;
+    const screen = await this.#containers.info(screenName).catch(() => null);
+    const device = deviceName ? await this.#containers.info(deviceName).catch(() => null) : null;
+    const detail = [
+      describeContainer(r.kind === "android" ? "画面和控制容器" : "实例容器", screen),
+      ...(deviceName ? [describeContainer("安卓系统容器", device)] : []),
+    ];
+    const down = (c: ContainerInfo | null) => !c || c.state === "missing" || (c.state === "stopped" && !c.restarting);
+    const paused = screen?.state === "paused";
+    // Deliberately not running: it starts (or thaws) on first use.
+    if (paused || (down(screen) && (!deviceName || down(device)))) {
+      return { ok: true, state: paused ? "paused" : screen ? "stopped" : "missing", crashLoop: false, detail: detail.join("\n") };
+    }
+    let ready = false;
+    let reason = "";
+    try {
+      const res = await fetch(`${this.controlUrl(id)}/health`, { signal: AbortSignal.timeout(3_000) });
+      const body = (await res.json().catch(() => ({}))) as { reason?: string; error?: string };
+      ready = res.ok;
+      reason = body.reason || body.error || (res.ok ? "" : `HTTP ${res.status}`);
+    } catch {
+      reason = "控制服务没有响应";
+    }
+    detail.push(`控制服务：${ready ? "正常" : `不可用（${reason}）`}`);
+    if (ready && !device?.restarting) return { ok: true, state: "running", crashLoop: false, detail: detail.join("\n") };
+
+    const recent = (c: ContainerInfo | null, minutes: number) => !!c?.startedAt && Date.now() - Date.parse(c.startedAt) < minutes * 60_000;
+    const looping = (c: ContainerInfo | null) => !!c && (c.restarting || (c.restartCount >= 3 && recent(c, 5)));
+    const crashLoop = looping(device) || looping(screen);
+    const logs = await this.#containers.logs(deviceName ?? screenName, 120).catch(() => "");
+    const telling = [...new Set(logs.split("\n").map((l) => l.trim()).filter((l) => TELLING.test(l)))].slice(-6);
+    if (telling.length) detail.push(`最近的错误日志：\n${telling.map((l) => `  ${l.slice(0, 300)}`).join("\n")}`);
+    const fatal = telling.filter((l) => /FATAL/.test(l)).at(-1);
+    const what = r.kind === "android" ? "安卓" : "实例";
+    let problem: string;
+    let state: InstanceHealth["state"] = "broken";
+    if (crashLoop) {
+      const c = looping(device) ? device! : screen!;
+      problem = `${what}反复退出（Docker 已自动重启 ${c.restartCount} 次）${fatal ? `：${fatal.replace(/^FATAL\s*\|\s*/, "").slice(0, 160)}` : ""}`;
+      if (fatal && /snapshot operation .* pending/i.test(fatal)) problem += "（上次被强制停止留下了锁文件）";
+    } else if (deviceName && down(device)) {
+      problem = "安卓系统没有在运行";
+    } else if (device?.oomKilled || screen?.oomKilled) {
+      problem = `${what}因内存不足被系统杀掉`;
+    } else if (screen?.health === "starting" || (deviceName ? recent(device, 4) : recent(screen, 1)) || this.busy(id)) {
+      problem = "正在启动";
+      state = "starting";
+    } else {
+      problem = `${what}没有响应：${reason}`;
+    }
+    return { ok: false, state, problem, crashLoop, detail: detail.join("\n") };
+  }
+
+  /** Whether a repair of this instance is under way. */
+  repairing(id: string): boolean {
+    return this.#repairs.has(id);
+  }
+
+  /**
+   * Bring a stuck instance back without losing data: stop it properly, clear what a hard kill left behind, start
+   * and wait until it answers; if that doesn't do it, recreate its containers (the data lives in mounted
+   * directories). One repair per instance at a time.
+   */
+  repair(id: string): Promise<RepairResult> {
+    const running = this.#repairs.get(id);
+    if (running) return running;
+    const job = (async (): Promise<RepairResult> => {
+      const r = this.row(id);
+      const before = await this.diagnose(id);
+      const steps: string[] = [];
+      const attempt = async () => {
+        try {
+          await this.start(id);
+          return true;
+        } catch (err) {
+          steps.push(`启动后没有恢复：${err instanceof Error ? err.message : String(err)}`);
+          return false;
+        }
+      };
+      await this.stop(id, { keepFrame: before.ok });
+      steps.push(r.kind === "android" ? "停止了实例（给安卓留足时间正常关机）" : "停止了实例");
+      const locks = await this.#clearLocksIfDown(r);
+      if (locks.length) steps.push(`清理了上次强制停止留下的锁文件（${locks.join("、")}）`);
+      let ok = await attempt();
+      if (ok) steps.push("重新启动，确认已经可以正常使用");
+      else {
+        await this.#closeBrowser(id);
+        await this.#containers.remove(this.#containers.desktopName(id));
+        if (r.kind === "android") await this.#containers.remove(this.#containers.androidName(id));
+        steps.push("删除并重建了实例的容器（数据保留）");
+        ok = await attempt();
+        if (ok) steps.push("重建后确认已经可以正常使用");
+      }
+      const after = await this.diagnose(id);
+      audit(this.#db, "system", ok ? "instance.repair" : "instance.repair_failed", { id, name: r.name, problem: before.problem ?? null, steps });
+      this.#events.publish("desktop", { id });
+      return { ok: ok && after.ok, steps, before, after };
+    })();
+    this.#repairs.set(id, job);
+    return job.finally(() => this.#repairs.delete(id));
+  }
+
+  /** Start an Android instance over from a clean system (its apps and data are lost). Only the owner decides this. */
+  async reset(id: string, actor: string): Promise<RepairResult> {
+    const r = this.row(id);
+    if (r.kind !== "android") throw new DesktopError(`${this.describe(r)}不是安卓实例，不能清空重建`, "invalid");
+    const before = await this.diagnose(id);
+    await this.stop(id, { keepFrame: false });
+    await this.#containers.remove(this.#containers.desktopName(id));
+    await this.#containers.remove(this.#containers.androidName(id));
+    fs.rmSync(path.join(config.desktopsDir, id, this.spec(r).backend === "emulator" ? "avd" : "data"), { recursive: true, force: true });
+    const steps = ["删除了实例的容器和安卓数据（装过的 App 和登录状态都清空了）"];
+    let ok = true;
+    try {
+      await this.start(id);
+      steps.push("从全新的系统启动，确认已经可以正常使用");
+    } catch (err) {
+      ok = false;
+      steps.push(`全新启动后仍没有恢复：${err instanceof Error ? err.message : String(err)}`);
+    }
+    const after = await this.diagnose(id);
+    audit(this.#db, actor, "instance.reset", { id, name: r.name, steps });
+    this.#events.publish("desktop", { id });
+    return { ok: ok && after.ok, steps, before, after };
   }
 
   /** Freeze the instance's containers; memory stays allocated and it resumes in seconds. */
@@ -699,7 +900,8 @@ export class Desktops {
       if (await this.#healthy(id)) return;
       await new Promise((r) => setTimeout(r, 500));
     }
-    throw new DesktopError(`${this.describe(this.row(id))}启动超时`, "unavailable");
+    const h = await this.diagnose(id).catch(() => null);
+    throw new DesktopError(`${this.describe(this.row(id))}启动超时${h?.problem && h.problem !== "正在启动" ? `：${h.problem}` : ""}`, "unavailable");
   }
 
   /** Keep the current screen as the thumbnail shown while paused or stopped. */
@@ -742,6 +944,19 @@ export class Desktops {
     this.#browsers.delete(id);
     await b?.close().catch(() => {});
   }
+}
+
+const CONTAINER_STATE: Record<string, string> = { running: "运行中", paused: "已暂停", stopped: "已停止", missing: "不存在", starting: "启动中", error: "异常" };
+
+function describeContainer(label: string, c: ContainerInfo | null): string {
+  if (!c) return `${label}：不存在`;
+  const parts = [c.restarting ? "正在被 Docker 自动重启" : (CONTAINER_STATE[c.state] ?? c.state)];
+  if (c.restartCount) parts.push(`Docker 自动重启过 ${c.restartCount} 次`);
+  if (c.startedAt) parts.push(`最近一次启动 ${c.startedAt}`);
+  if (c.oomKilled) parts.push("上次因内存不足被杀");
+  if (c.health) parts.push(`健康检查 ${c.health}`);
+  if (c.state === "stopped" && c.exitCode !== null) parts.push(`退出码 ${c.exitCode}`);
+  return `${label}：${parts.join("，")}`;
 }
 
 /**

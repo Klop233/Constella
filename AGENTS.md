@@ -32,12 +32,12 @@
 | `app.ts` | `createHub` 装配全部部件；`RunnerGateway`（runner 连接）；`Settings`（App 里可改的运行时设置，env 是默认值）；`bootHub` 启动流程 |
 | `routes.ts` | 全部 REST / SSE / WS 路由，按资源分段 |
 | `runs.ts` | `RunManager`：run 生命周期、插话/中断、看门狗、自动继续、可重试错误 |
-| `recovery.ts` | 自我维护：runner 容器修复、incident（诊断 + 一键选项）、supervisor |
+| `recovery.ts` | 自我维护：runner 容器修复、incident（诊断 + 一键选项）、supervisor、实例巡检与修复记录、维修员（`get_help`）、结束复核（没做完就收工时拉回） |
 | `events.ts` | 追加式事件日志与实时总线 |
 | `agents.ts` | agent 配置、凭据、引擎配置文件、注入给 agent 的 instructions |
 | `containers.ts` | dockerode：agent / desktop 容器的创建、重建、休眠 |
-| `desktops.ts` | 桌面池、租约（同一时刻只有一方操作）、接管/交还、VNC 桥接与输入过滤 |
-| `mcp.ts` | 给 agent 的工具：`memory_*`、`ask_user`、`notify_user`、`schedule_*`、`send_file`、`artifact_*`、`desktop_*`、`browser_*`、`host_exec` |
+| `desktops.ts` | 桌面池、租约（同一时刻只有一方操作）、接管/交还、VNC 桥接与输入过滤、实例健康诊断（`diagnose`）与修复（`repair`） |
+| `mcp.ts` | 给 agent 的工具：`memory_*`、`ask_user`、`get_help`、`notify_user`、`schedule_*`、`send_file`、`artifact_*`、`desktop_*`、`browser_*`、`host_exec` |
 | `artifacts.ts` | 成果：agent 交付到对话里的文件和文档，带版本，可预览、可原地编辑 |
 | `knowledge.ts` / `learning.ts` / `reflect.ts` | 记忆与技能（git，可撤销；含从别的助手导入记忆）/ 复盘与每周整理 / 回顾统计 |
 | `models.ts` / `newapi.ts` / `catalog.ts` | 模型提供方与 `model@provider` 引用 / new-api 管理接口 / 各模型支持的推理强度 |

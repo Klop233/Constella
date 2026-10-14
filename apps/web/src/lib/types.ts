@@ -93,7 +93,7 @@ export interface DecisionOption {
   detail?: string;
 }
 
-export type IncidentAction = "continue" | "switch_model" | "restart_agent" | "new_thread" | "wait" | "restart" | "stop";
+export type IncidentAction = "continue" | "switch_model" | "restart_agent" | "new_thread" | "wait" | "restart" | "stop" | "repair_instance" | "reset_instance" | "stop_instance";
 
 export interface IncidentOption {
   title: string;
@@ -106,10 +106,13 @@ export interface IncidentOption {
 /** Something that went wrong with a run: auto-handled (kept for the audit trail) or waiting for the owner to pick an option. */
 export interface Incident {
   id: string;
-  kind: "start_failure" | "engine_error" | "stalled" | "stuck";
+  kind: "start_failure" | "engine_error" | "stalled" | "stuck" | "panic" | "instance" | "help";
   agent_id: string | null;
   conversation_id: string | null;
   run_id: string | null;
+  /** The instance it is about (instance faults). */
+  desktop_id: string | null;
+  desktop_name?: string | null;
   title: string;
   summary: string;
   error: string | null;

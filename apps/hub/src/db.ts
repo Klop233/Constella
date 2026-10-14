@@ -162,6 +162,9 @@ export function openDb(file: string): Db {
   if (!cols.some((c) => c.name === "run_timeout_minutes")) db.exec("ALTER TABLE conversations ADD COLUMN run_timeout_minutes INTEGER");
   // Archived conversations leave the sidebar and the default list but stay reachable from the agent page.
   if (!cols.some((c) => c.name === "archived_at")) db.exec("ALTER TABLE conversations ADD COLUMN archived_at TEXT");
+  // Reports about an instance (it broke, the hub repaired it) point at it.
+  const incidentCols = db.prepare("PRAGMA table_info(incidents)").all() as { name: string }[];
+  if (!incidentCols.some((c) => c.name === "desktop_id")) db.exec("ALTER TABLE incidents ADD COLUMN desktop_id TEXT");
   ensureInstanceKinds(db);
   return db;
 }

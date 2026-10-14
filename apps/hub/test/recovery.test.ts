@@ -10,8 +10,8 @@ process.env.CONSTELLA_RUN_WATCHDOG_MINUTES = "10";
 
 const { openDb } = await import("../src/db.ts");
 const { EventStore } = await import("../src/events.ts");
-const { RunManager, ANSWER_PREFIX, ADOPT_PREFIX } = await import("../src/runs.ts");
-const { Recovery, killable, parseDiagnosis, parsePs, MAX_INTERVENTIONS } = await import("../src/recovery.ts");
+const { RunManager, ANSWER_PREFIX, ADOPT_PREFIX, SUPERVISOR_PREFIX } = await import("../src/runs.ts");
+const { Recovery, killable, parseDiagnosis, parseEnding, parseHelp, parsePs, soundsUnfinished, MAX_INTERVENTIONS, MAX_HELP_CALLS } = await import("../src/recovery.ts");
 
 const tick = (ms = 10) => new Promise((res) => setTimeout(res, ms));
 const minutesAgo = (m: number) => new Date(Date.now() - m * 60_000).toISOString();
@@ -481,5 +481,304 @@ describe("incidents and the supervisor", () => {
     await tick();
     t.runs.engineDone(r2.runId, "done");
     expect(t.recovery.get(inc.id)).toMatchObject({ status: "auto", resolution: "后续任务已完成" });
+  });
+});
+
+describe("ending review: a turn that ends unfinished gets pulled back", () => {
+  const GAVE_UP = "小星，暂时没装成：安卓实例在启动 Chrome 后 ADB 持续无响应，重启恢复也超时，无法继续下载或安装 APK。建议稍后重试。";
+
+  /** A run manager wired to review its "done" turns through the given recovery. */
+  function reviewed(answers: { ending?: unknown; help?: unknown }, opts: { desktops?: any } = {}) {
+    let recovery!: InstanceType<typeof Recovery>;
+    const db: Db = openDb(":memory:");
+    db.prepare(
+      `INSERT INTO agents (id, name, emoji, template, persona, model, approval_policy, desktop_policy, token_hash, created_at, updated_at)
+       VALUES ('ag1', '助理', '✨', 'assistant', 'p', 'm', 'auto', '{"desktopIds":["dt-a"]}', 'h', 'now', 'now')`,
+    ).run();
+    const sent: any[] = [];
+    const notes: string[] = [];
+    const asked: string[] = [];
+    const events = new EventStore(db);
+    const runs = new RunManager({
+      db,
+      events,
+      ensureRunner: async () => {},
+      sendToRunner: (_a, msg) => (sent.push(msg), true),
+      startPayload: () => ({ model: "m", instructions: "i", approvalPolicy: "auto", skillRoots: [] }),
+      notify: (t) => notes.push(t),
+      autoResume: () => true,
+      approvalMode: () => "ask",
+      incident: (i) => void recovery.file(i),
+      reviewDone: (run) => recovery.reviewDone(run),
+      resumeDelaysMs: [0, 0, 0],
+    });
+    recovery = new Recovery({
+      db,
+      events,
+      runs,
+      agents: { get: () => ({ id: "ag1", name: "助理", model: "m" }) } as any,
+      containers: {
+        agentName: (id: string) => `constella-agent-${id}`,
+        state: async () => "running",
+        logs: async () => "",
+        remove: async () => {},
+        exec: async () => ({ exitCode: 0, output: "PID PPID ELAPSED STAT %CPU COMMAND\n 26 1 900 Sl 0.1 codex app-server" }),
+      } as any,
+      llm: {
+        list: () => [{ ref: "m" }],
+        chatJson: async (_m: string, system: string) => {
+          const which = system.includes(`"维修员"`) ? "help" : system.includes(`"诊断员"`) ? "diagnose" : "ending";
+          asked.push(which);
+          const a =
+            which === "help"
+              ? answers.help
+              : which === "ending"
+                ? answers.ending
+                : { title: "反复没做完", cause: "agent 两次被拉回仍然放弃", options: [{ title: "换个做法继续", action: "continue", text: "换个做法" }] };
+          if (a instanceof Error) throw a;
+          return a;
+        },
+      } as any,
+      model: () => "judge",
+      notify: (t) => notes.push(t),
+      ensureRunner: async () => {},
+      connected: () => true,
+      secretValues: () => [],
+      desktops: opts.desktops,
+    });
+    const starts = () => sent.filter((m) => m.t === "start");
+    /** One turn that did some work and ended with `reply`. */
+    const turn = async (conversationId: string | undefined, text: string, reply: string, opts: { tools?: boolean } = {}) => {
+      const r = await runs.send({ agentId: "ag1", conversationId, text, source: "schedule" });
+      await tick();
+      if (opts.tools !== false) {
+        runs.onRunnerEvent("ag1", { type: "tool.started", runId: r.runId, callId: `c-${r.runId}`, name: "constella.android_ui", input: {} });
+        runs.onRunnerEvent("ag1", { type: "tool.completed", runId: r.runId, callId: `c-${r.runId}`, ok: true });
+      }
+      runs.onRunnerEvent("ag1", { type: "message.completed", runId: r.runId, messageId: `m-${r.runId}`, text: reply });
+      runs.engineDone(r.runId, "done");
+      await tick(30);
+      return r;
+    };
+    return { db, runs, events, recovery, sent, notes, asked, starts, turn };
+  }
+
+  it("only asks the model about replies that sound unfinished", () => {
+    expect(soundsUnfinished(GAVE_UP)).toBe(true);
+    expect(soundsUnfinished("没能完成安装，下载一直失败")).toBe(true);
+    expect(soundsUnfinished("已经装好明日方舟，资源也下载完了，截图见上。")).toBe(false);
+    expect(parseEnding({ verdict: "gave_up", assessment: "ADB 超时就停了" })).toMatchObject({ verdict: "gave_up", text: "" });
+    expect(parseEnding({ verdict: "maybe", assessment: "?" })).toBeNull();
+    expect(parseHelp({ diagnosis: "残锁", advice: "继续" })).toMatchObject({ kill: [], needsOwner: false });
+    expect(parseHelp({ advice: "x" })).toBeNull();
+  });
+
+  it("lets a plain answer stand without asking, and a finished task once the review agrees", async () => {
+    const chat = reviewed({ ending: new Error("should not be asked") });
+    await chat.turn(undefined, "明天天气？", "明天晴，最高 25 度。", { tools: false });
+    expect(chat.asked).toEqual([]);
+    expect(chat.notes.some((n) => n.includes("完成了任务"))).toBe(true);
+
+    const task = reviewed({ ending: { verdict: "completed", assessment: "已经装好并验证" } });
+    await task.turn(undefined, "装个明日方舟", "装好了，资源也下载完了。");
+    expect(task.asked).toEqual(["ending"]);
+    expect(task.starts()).toHaveLength(1);
+    expect(task.notes.some((n) => n.includes("完成了任务"))).toBe(true);
+    expect(task.notes.some((n) => n.includes("panic"))).toBe(false);
+  });
+
+  it("records a give-up as a panic, pushes it, and pulls the agent back with a supervisor message", async () => {
+    const t = reviewed({
+      ending: { verdict: "gave_up", assessment: "ADB 超时后重启了一次就放弃了", text: "先用 instance_restart 修实例，再从浏览器下载官服 APK 安装" },
+      help: { diagnosis: "实例已经修好", advice: "从中断的地方继续" },
+    });
+    const r = await t.turn(undefined, "装个明日方舟", GAVE_UP);
+    expect(t.asked).toEqual(["ending", "help"]);
+    const pull = t.starts().at(-1);
+    expect(pull.runId).not.toBe(r.runId);
+    expect(pull.text.startsWith(SUPERVISOR_PREFIX)).toBe(true);
+    expect(pull.text).toContain("ADB 超时后重启了一次就放弃了");
+    expect(pull.text).toContain("维修员诊断：实例已经修好");
+    expect(pull.text).toContain("先用 instance_restart 修实例");
+    expect(t.notes.some((n) => n.includes("完成了任务"))).toBe(false);
+    expect(t.notes).toContain("助理 panic：任务没做完就停下了");
+    const [inc] = t.recovery.list();
+    expect(inc).toMatchObject({ kind: "panic", status: "auto", run_id: r.runId, summary: "ADB 超时后重启了一次就放弃了" });
+    expect(inc!.actions.some((a) => a.includes("维修员"))).toBe(true);
+    expect(t.events.forRun(r.runId).some((e) => e.type === "system.notice" && e.kind === "supervisor" && e.incidentId === inc!.id)).toBe(true);
+    expect(t.db.prepare("SELECT 1 FROM audit WHERE action = 'run.ending_review'").get()).toBeTruthy();
+  });
+
+  it("stopping to wait for the owner is a panic too: the agent is told to wait inside the turn", async () => {
+    const t = reviewed({ ending: { verdict: "needs_owner", assessment: "需要主人扫码登录，它直接结束了" } });
+    await t.turn(undefined, "登录淘宝", "暂时没法继续：需要你扫码登录。");
+    expect(t.asked).toEqual(["ending"]);
+    const pull = t.starts().at(-1);
+    expect(pull.text.startsWith(SUPERVISOR_PREFIX)).toBe(true);
+    expect(pull.text).toContain("desktop_request_help");
+    expect(t.recovery.list()[0]).toMatchObject({ kind: "panic", status: "auto", title: "Panic：停下来等你，监督员让它在任务里等" });
+    expect(t.notes).toContain("助理 panic：任务没做完就停下了");
+  });
+
+  it("asking the owner and stopping without waiting for the answer is a panic, but isn't pulled back", async () => {
+    const t = reviewed({ ending: new Error("not asked") });
+    const r = await t.runs.send({ agentId: "ag1", text: "订机票", source: "schedule" });
+    await tick();
+    void t.runs.requestDecision(r.runId, "订哪一班？", [{ label: "早班" }, { label: "晚班" }], undefined, 1);
+    await tick(20);
+    t.runs.onRunnerEvent("ag1", { type: "message.completed", runId: r.runId, messageId: "m", text: "等你选好航班我再订。" });
+    t.runs.engineDone(r.runId, "done");
+    await tick(30);
+    expect(t.asked).toEqual([]);
+    expect(t.starts()).toHaveLength(1);
+    expect(t.recovery.list()[0]).toMatchObject({ kind: "panic", status: "auto", title: "Panic：问了你问题，没等回答就停下了" });
+    expect(t.notes).toContain("助理 panic：任务没做完就停下了");
+    expect(t.notes.some((n) => n.includes("完成了任务"))).toBe(false);
+  });
+
+  it("without a judgement, a reply that sounds unfinished still counts as a panic", async () => {
+    const t = reviewed({ ending: new Error("502"), help: new Error("502") });
+    await t.turn(undefined, "装个明日方舟", GAVE_UP);
+    expect(t.starts().at(-1).text.startsWith(SUPERVISOR_PREFIX)).toBe(true);
+    expect(t.recovery.list()[0]).toMatchObject({ kind: "panic" });
+
+    const ok = reviewed({ ending: new Error("502") });
+    await ok.turn(undefined, "装个明日方舟", "装好了。");
+    expect(ok.starts()).toHaveLength(1);
+    expect(ok.notes.some((n) => n.includes("完成了任务"))).toBe(true);
+  });
+
+  it("after two pull-backs that still end unfinished, hands it to the owner with a report", async () => {
+    const t = reviewed({ ending: { verdict: "gave_up", assessment: "又放弃了", text: "继续" }, help: new Error("down") });
+    const r = await t.turn(undefined, "装个明日方舟", GAVE_UP);
+    for (let i = 0; i < 2; i++) {
+      const pull = t.starts().at(-1);
+      t.runs.onRunnerEvent("ag1", { type: "message.completed", runId: pull.runId, messageId: `m-${i}`, text: GAVE_UP });
+      t.runs.engineDone(pull.runId, "done");
+      await tick(30);
+    }
+    expect(t.starts().filter((m) => m.text.startsWith(SUPERVISOR_PREFIX))).toHaveLength(2);
+    await tick(30);
+    const open = t.recovery.list({ status: "open" });
+    expect(open).toHaveLength(1);
+    expect(open[0]).toMatchObject({ kind: "panic", conversation_id: r.conversationId, title: "反复没做完" });
+    expect(t.notes.some((n) => n.includes("反复没做完"))).toBe(true);
+  });
+
+  it("doesn't close older reports when the 'done' was a give-up", async () => {
+    const t = reviewed({ ending: { verdict: "gave_up", assessment: "放弃了", text: "继续" }, help: new Error("down") });
+    const first = await t.runs.send({ agentId: "ag1", text: "装个明日方舟", source: "schedule" });
+    await tick();
+    t.runs.engineDone(first.runId, "failed", "weird");
+    await tick(30);
+    const [report] = t.recovery.list({ status: "open" });
+    expect(report).toBeTruthy();
+    await tick(5);
+    await t.turn(first.conversationId, "再试试", GAVE_UP);
+    expect(t.recovery.get(report!.id)!.status).toBe("open");
+  });
+
+  describe("the helper and the instance patrol", () => {
+    const broken = () => ({ ok: false, state: "broken", problem: "安卓反复退出（Docker 已自动重启 94 次）", crashLoop: true, detail: "FATAL | A snapshot operation for 'constella' is pending" });
+    const healthy = () => ({ ok: true, state: "running", crashLoop: false, detail: "控制服务：正常" });
+
+    function fakeDesktops(opts: { repairOk?: boolean; lease?: string; health?: any } = {}) {
+      const row = { id: "dt-a", name: "安卓助手专用机", kind: "android", lease: opts.lease ?? '{"holder":"none"}' };
+      let health: any = opts.health ?? broken();
+      const repaired: string[] = [];
+      const resets: string[] = [];
+      return {
+        repaired,
+        resets,
+        setHealth: (h: any) => (health = h),
+        rows: () => [row],
+        row: () => row,
+        boundTo: () => [row],
+        describe: (r: any) => `${r.name}（安卓，id ${r.id}）`,
+        diagnose: async () => health,
+        repair: async (id: string) => {
+          repaired.push(id);
+          const before = health;
+          if (opts.repairOk !== false) health = healthy();
+          return { ok: opts.repairOk !== false, steps: ["停止了实例", "清理了上次强制停止留下的锁文件（snapshot.lock.lock）", "重新启动，确认已经可以正常使用"], before, after: health };
+        },
+        reset: async (id: string) => {
+          resets.push(id);
+          const before = health;
+          health = healthy();
+          return { ok: true, steps: ["清空重建"], before, after: health };
+        },
+        stop: async () => {},
+        busy: () => false,
+      };
+    }
+
+    it("get_help repairs the agent's broken instance first, then passes on the diagnosis; at most three times a turn", async () => {
+      const desktops = fakeDesktops();
+      const t = reviewed({ help: { diagnosis: "模拟器被强制停止后留下了锁文件，已经清掉", advice: "实例好了，重新打开 Chrome 下载 APK" } }, { desktops });
+      const r = await t.runs.send({ agentId: "ag1", text: "装个明日方舟" });
+      await tick();
+      const res = await t.recovery.help({ agentId: "ag1", runId: r.runId, problem: "android_ui 一直超时", by: "agent" });
+      expect(desktops.repaired).toEqual(["dt-a"]);
+      expect(res.text).toContain("维修员诊断：模拟器被强制停止后留下了锁文件");
+      expect(res.text).toContain("已经修好");
+      expect(res.text).toContain("下一步：实例好了");
+      const kinds = t.recovery.list().map((i) => `${i.kind}:${i.status}`);
+      expect(kinds.sort()).toEqual(["help:auto", "instance:auto"]);
+      const inst = t.recovery.list().find((i) => i.kind === "instance")!;
+      expect(inst).toMatchObject({ desktop_id: "dt-a", run_id: r.runId, conversation_id: r.conversationId });
+      expect(inst.actions).toContain("清理了上次强制停止留下的锁文件（snapshot.lock.lock）");
+      expect(t.db.prepare("SELECT 1 FROM audit WHERE action = 'helper.call'").get()).toBeTruthy();
+      for (let i = 1; i < MAX_HELP_CALLS; i++) await t.recovery.help({ agentId: "ag1", runId: r.runId, problem: "还是不行", by: "agent" });
+      const over = await t.recovery.help({ agentId: "ag1", runId: r.runId, problem: "还是不行", by: "agent" });
+      expect(over.text).toContain(`已经求助 ${MAX_HELP_CALLS} 次`);
+    });
+
+    it("the patrol repairs a crash-looping instance right away and records it", async () => {
+      const desktops = fakeDesktops();
+      const t = reviewed({}, { desktops });
+      await t.recovery.checkInstances();
+      expect(desktops.repaired).toEqual(["dt-a"]);
+      expect(t.recovery.list()[0]).toMatchObject({ kind: "instance", status: "auto", desktop_id: "dt-a", agent_id: null });
+      expect(t.recovery.list()[0]!.summary).toContain("巡检发现");
+      // Healthy now: nothing more to do.
+      await t.recovery.checkInstances();
+      expect(desktops.repaired).toHaveLength(1);
+    });
+
+    it("waits a few checks before repairing an instance that only stopped answering, and leaves the owner's alone", async () => {
+      const slow = fakeDesktops({ health: { ...broken(), crashLoop: false, problem: "安卓没有响应：timed out" } });
+      const t = reviewed({}, { desktops: slow });
+      await t.recovery.checkInstances();
+      await t.recovery.checkInstances();
+      expect(slow.repaired).toHaveLength(0);
+      await t.recovery.checkInstances();
+      expect(slow.repaired).toHaveLength(1);
+
+      const owners = fakeDesktops({ lease: '{"holder":"human"}' });
+      const o = reviewed({}, { desktops: owners });
+      await o.recovery.checkInstances();
+      expect(owners.repaired).toHaveLength(0);
+    });
+
+    it("an instance it can't repair becomes a report with options; adopting them repairs or resets it", async () => {
+      const desktops = fakeDesktops({ repairOk: false });
+      const t = reviewed({}, { desktops });
+      await t.recovery.checkInstances();
+      const [inc] = t.recovery.list({ status: "open" });
+      expect(inc).toMatchObject({ kind: "instance", desktop_id: "dt-a", title: "安卓助手专用机坏了，需要你决定" });
+      expect(inc!.options.map((o) => o.action)).toEqual(["repair_instance", "reset_instance", "stop_instance"]);
+      expect(t.notes.some((n) => n.includes("坏了"))).toBe(true);
+      // Backed off: the patrol doesn't keep hammering it.
+      await t.recovery.checkInstances();
+      expect(desktops.repaired).toHaveLength(1);
+      // "Try again" fails again: the report stays open, with what this attempt found.
+      await expect(t.recovery.adopt(inc!.id, 0, "user")).rejects.toThrow("仍没有恢复");
+      expect(t.recovery.get(inc!.id)!.status).toBe("open");
+      // Resetting works.
+      const done = await t.recovery.adopt(inc!.id, 1, "user");
+      expect(desktops.resets).toEqual(["dt-a"]);
+      expect(done).toMatchObject({ status: "adopted", resolution: "清空重建：已恢复" });
+    });
   });
 });

@@ -265,7 +265,12 @@ export class Settings {
     return { total: this.#num("maxInstances", 10), android: this.#num("maxAndroidInstances", 3) };
   }
 
-  /** Whether agents need the owner's approval to create / change (incl. restart) instances. */
+  /** Turns that end "done" with the job unfinished get a second look, and the agent is pulled back (on unless turned off). */
+  endingReview(): boolean {
+    return this.#bool("endingReview", true);
+  }
+
+  /** Whether agents need the owner's approval to create / change instances (repairing one never does). */
   instanceApproval(): { create: boolean; update: boolean } {
     return { create: this.#bool("instanceApproval.create", true), update: this.#bool("instanceApproval.update", true) };
   }
@@ -281,6 +286,7 @@ export class Settings {
       failed: this.#bool("notify.failed", true),
       approval: this.#bool("notify.approval", true),
       stuck: this.#bool("notify.stuck", true),
+      panic: this.#bool("notify.panic", true),
     };
   }
 
@@ -323,6 +329,7 @@ export class Settings {
       reflectModel: this.reflectModel(),
       defaultEffort: this.defaultEffort(),
       autoResume: this.autoResume(),
+      endingReview: this.endingReview(),
       ...this.limits(),
       browserHtml: this.browserHtml(),
       intelligentUi: this.intelligentUi(),
@@ -425,20 +432,7 @@ export async function createHub(opts: { dbPath?: string; webDist?: string; logge
     approvalMode: () => settings.approvalMode(),
     repairRunner: (agentId, error) => recovery.repairRunner(agentId, error),
     incident: (input) => void recovery.file(input),
-  });
-  recovery = new Recovery({
-    db,
-    events,
-    runs,
-    agents,
-    containers,
-    llm: models,
-    model: () => settings.reflectModel(),
-    notify: (title, body, url, kind) => void notifier.send(title, body, url, { push: settings.notifyOn()[kind] }),
-    limits: () => settings.limits(),
-    ensureRunner,
-    connected: (agentId) => runners.connected(agentId),
-    secretValues: allSecretValues,
+    reviewDone: (run) => recovery.reviewDone(run),
   });
   const hostcaps = new HostCapabilities({ docker: containers.docker, androidBackend: () => settings.androidBackend() });
   const desktops = new Desktops({
@@ -453,6 +447,23 @@ export async function createHub(opts: { dbPath?: string; webDist?: string; logge
       maxInstances: () => settings.instanceLimits().total,
       maxAndroid: () => settings.instanceLimits().android,
     },
+  });
+  recovery = new Recovery({
+    db,
+    events,
+    runs,
+    agents,
+    containers,
+    llm: models,
+    model: () => settings.reflectModel(),
+    notify: (title, body, url, kind) => void notifier.send(title, body, url, { push: settings.notifyOn()[kind] }),
+    limits: () => settings.limits(),
+    ensureRunner,
+    connected: (agentId) => runners.connected(agentId),
+    secretValues: allSecretValues,
+    desktops,
+    hostcaps,
+    endingReview: () => settings.endingReview(),
   });
   const learning = new Learning({ db, events, knowledge, llm: models, model: () => settings.reflectModel(), auto: () => settings.reflection() });
   const reflect = new Reflect({ db, llm: models, model: () => settings.reflectModel() });
@@ -615,6 +626,7 @@ export async function createHub(opts: { dbPath?: string; webDist?: string; logge
     scheduler,
     containers,
     artifacts,
+    recovery,
     browserHtml: () => settings.browserHtml(),
     instanceApproval: () => settings.instanceApproval(),
   });

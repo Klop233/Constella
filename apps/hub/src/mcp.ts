@@ -15,6 +15,7 @@ import type { HostCapabilities } from "./hostcaps.ts";
 import type { Knowledge } from "./knowledge.ts";
 import type { Notifier } from "./notify.ts";
 import { HTML_DEFAULT_LIMIT, readPageHtml } from "./pagehtml.ts";
+import type { Recovery } from "./recovery.ts";
 import type { RunManager, RunRow } from "./runs.ts";
 import type { Scheduler } from "./scheduler.ts";
 
@@ -29,9 +30,11 @@ export interface McpDeps {
   containers: Containers;
   hostcaps: HostCapabilities;
   artifacts: Artifacts;
+  /** The helper (get_help) and recorded instance repairs (instance_restart). */
+  recovery: Pick<Recovery, "help" | "repairInstance">;
   /** Whether agents may read page HTML directly (browser_html). */
   browserHtml: () => boolean;
-  /** Whether creating / changing (incl. restarting) an instance needs the owner's approval. */
+  /** Whether creating / changing an instance needs the owner's approval (repairing one never does). */
   instanceApproval: () => { create: boolean; update: boolean };
 }
 
@@ -66,18 +69,24 @@ function buildServer(agent: AgentRow, d: McpDeps): McpServer {
     if (!r) throw new Error("没有正在进行的任务");
     return r;
   };
+  /** The instance this call acted on (a fresh server per MCP request, so per call): its health goes into errors. */
+  let touched: string | undefined;
   const guard =
     <A,>(fn: (args: A) => Promise<ToolResult>) =>
     async (args: A): Promise<ToolResult> => {
       try {
         return await fn(args);
       } catch (err) {
-        return fail(err instanceof Error ? err.message : String(err));
+        const msg = err instanceof Error ? err.message : String(err);
+        const h = touched ? await d.desktops.diagnose(touched).catch(() => null) : null;
+        if (!h || h.ok) return fail(msg);
+        return fail(`${msg}\n（实例诊断：${h.problem}。${h.state === "starting" ? "等它启动完再试。" : "用 instance_restart 修复；修不好就 get_help，或用 instance_create / instance_use 换一台继续。"}）`);
       }
     };
   const desktop = async (family: ToolFamily = "screen") => {
     const r = run();
     const id = await d.desktops.acquire(agent.id, r.id, family);
+    touched = id;
     return { id, runId: r.id };
   };
   /** Which instance a result came from, so the agent can tell its instances apart. */
@@ -158,8 +167,23 @@ function buildServer(agent: AgentRow, d: McpDeps): McpServer {
       return text(
         rec !== undefined
           ? `主人暂时没有回复。按推荐选项「${options[rec]!.label}」继续推进；如果主人之后改选，会以新消息告诉你。`
-          : "主人暂时没有回复。先完成不依赖这个决定的部分；如果非等不可，结束本轮并用一句话说明在等哪个决定，主人回答后会以新消息告诉你。",
+          : "主人暂时没有回复，问题还开着。先把不依赖这个决定的部分做完，然后再调用一次 ask_user（同样的问题）继续等。不要结束这一轮：任务做完之前不结束。",
       );
+    }),
+  );
+
+  server.registerTool(
+    "get_help",
+    {
+      description:
+        "向平台维修员求助：环境出了你解决不了的问题（实例没响应或反复出错、工具一直超时、下载或安装总失败、不知道哪里坏了）时调用。" +
+        "维修员能看到你看不到的东西（实例的容器状态、重启次数和日志，你容器里的进程），会修好坏掉的实例、结束卡死的进程，并告诉你下一步怎么做。比自己反复重试或结束任务好。每轮最多 3 次。",
+      inputSchema: { problem: z.string().min(5).max(2000).describe("在做什么、哪一步失败了、报错原文、已经试过什么") },
+    },
+    guard(async ({ problem }) => {
+      const r = run();
+      const res = await d.recovery.help({ agentId: agent.id, runId: r.id, problem, by: "agent" });
+      return text(res.text);
     }),
   );
 
@@ -349,7 +373,9 @@ function buildServer(agent: AgentRow, d: McpDeps): McpServer {
           const cur = r && d.desktops.current(r.id) === row.id ? "，当前" : "";
           const o = d.desktops.options(row);
           const extra = row.kind === "android" ? `，${o.backend === "emulator" ? "模拟器" : "Redroid"}${o.armTranslation ? "，ARM 转译" : ""}${o.googlePlay ? "，Google Play" : ""}` : "";
-          return `- ${d.desktops.describe(row)}：${states[await d.desktops.state(row.id)] ?? "未知"}，${who}${extra}${cur}`;
+          const h = await d.desktops.diagnose(row.id).catch(() => null);
+          const state = h && !h.ok ? (h.state === "starting" ? "启动中" : `异常：${h.problem}`) : (states[await d.desktops.state(row.id)] ?? "未知");
+          return `- ${d.desktops.describe(row)}：${state}，${who}${extra}${cur}`;
         }),
       );
       const caps = d.hostcaps.snapshot();
@@ -416,15 +442,23 @@ function buildServer(agent: AgentRow, d: McpDeps): McpServer {
   );
   server.registerTool(
     "instance_restart",
-    { description: "重启你绑定的实例（卡死、无响应、画面异常时）。会关闭里面正在运行的程序；可能需要主人审批。", inputSchema: { id: z.string(), reason: z.string().max(300) } },
+    {
+      description:
+        "修复你绑定的实例（卡死、没响应、截图或 android_ui 超时、画面异常时）：正常关机后重启，必要时重建容器（数据保留），等它确实能用了才返回，安卓可能要几分钟。会关闭里面正在运行的程序。不需要审批。",
+      inputSchema: { id: z.string(), reason: z.string().max(300) },
+    },
     guard(async ({ id, reason }) => {
       const r = run();
       const row = mineOrFail(id);
       notInUseByOthers(row, r.id);
-      await approve(d.instanceApproval().update, r.id, `重启实例 ${d.desktops.describe(row)}`, reason);
-      await d.desktops.restart(id);
-      d.runs.appendFor(r.id, { type: "desktop.action", runId: r.id, desktopId: id, action: "重启实例" });
-      return text(`已重启。${on(id)}`);
+      d.runs.appendFor(r.id, { type: "desktop.action", runId: r.id, desktopId: id, action: "修复实例" });
+      const res = await d.recovery.repairInstance(id, { by: "agent", agentId: agent.id, runId: r.id, why: reason });
+      if (!res.ok) {
+        return fail(
+          `修复后仍没有恢复：${res.after.problem ?? "原因不明"}\n做过的：${res.steps.join("；")}\n已经报告给主人。现在用 get_help 让维修员看看，或用 instance_create / instance_use 换一台实例继续。${on(id)}`,
+        );
+      }
+      return text(`已修复：${res.steps.join("；")}。从中断的地方继续，先截图或 android_ui 确认当前画面。${on(id)}`);
     }),
   );
 
@@ -491,7 +525,13 @@ function buildServer(agent: AgentRow, d: McpDeps): McpServer {
     },
     guard(async ({ reason }) => {
       const { id, runId } = await desktop();
-      const note = await d.desktops.requestHelp(id, runId, agent.name, reason, (t, b, u) => void d.notifier.send(t, b, u, { urgent: true }));
+      let note: string;
+      try {
+        note = await d.desktops.requestHelp(id, runId, agent.name, reason, (t, b, u) => void d.notifier.send(t, b, u, { urgent: true }));
+      } catch (err) {
+        if (!(err instanceof Error) || !err.message.includes("超时")) throw err;
+        return text(`主人 15 分钟内还没有来接管。先把不需要主人的部分做完，然后再调用一次 desktop_request_help 继续等。不要结束这一轮：任务做完之前不结束。${on(id)}`);
+      }
       return text(`用户已交还。${note ? `用户留言：${note}` : ""}请先截图确认当前状态再继续。${on(id)}`);
     }),
   );

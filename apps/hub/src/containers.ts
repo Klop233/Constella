@@ -7,6 +7,27 @@ import { config } from "./config.ts";
 
 export type ContainerState = "running" | "paused" | "stopped" | "missing" | "starting" | "error";
 
+/** What Docker knows about a container's health beyond running / stopped (for diagnosing instances). */
+export interface ContainerInfo {
+  state: ContainerState;
+  /** Restarts by the restart policy since it was last started on purpose: climbing means it keeps exiting. */
+  restartCount: number;
+  restarting: boolean;
+  startedAt: string | null;
+  exitCode: number | null;
+  oomKilled: boolean;
+  /** Docker health check status, when the image has one. */
+  health: string | null;
+}
+
+/**
+ * Memory the emulator process needs on top of the guest's RAM (QEMU, software GPU rendering). With less, the
+ * container keeps hitting its limit and the emulator stalls under load (adb stops answering).
+ */
+const EMULATOR_OVERHEAD_MB = 2048;
+/** The emulator asks for 20 s to shut down cleanly; a hard kill leaves locks that stop the next boot. */
+export const ANDROID_STOP_SECONDS = 30;
+
 const LABEL = "dev.constella.role";
 const HASH = "dev.constella.spec";
 
@@ -76,6 +97,34 @@ export class Containers {
       return info.State.Status === "dead" ? "error" : "stopped";
     } catch (err: any) {
       if (err?.statusCode === 404) return "missing";
+      throw err;
+    }
+  }
+
+  /** Null when the container doesn't exist. */
+  async info(name: string): Promise<ContainerInfo | null> {
+    try {
+      const i = await this.docker.getContainer(name).inspect();
+      const state: ContainerState = i.State.Paused
+        ? "paused"
+        : i.State.Running
+          ? i.State.Health?.Status === "starting"
+            ? "starting"
+            : "running"
+          : i.State.Status === "dead"
+            ? "error"
+            : "stopped";
+      return {
+        state,
+        restartCount: i.RestartCount ?? 0,
+        restarting: !!i.State.Restarting,
+        startedAt: i.State.StartedAt && !i.State.StartedAt.startsWith("0001") ? i.State.StartedAt : null,
+        exitCode: typeof i.State.ExitCode === "number" ? i.State.ExitCode : null,
+        oomKilled: !!i.State.OOMKilled,
+        health: i.State.Health?.Status ?? null,
+      };
+    } catch (err: any) {
+      if (err?.statusCode === 404) return null;
       throw err;
     }
   }
@@ -188,10 +237,11 @@ export class Containers {
   #emulatorSpec(spec: DesktopSpec, name: string, dir: string, labels: Record<string, string>): Docker.ContainerCreateOptions {
     const avd = path.join(dir, "avd");
     fs.mkdirSync(avd, { recursive: true });
+    const guestMb = Math.max(1024, config.instanceMemoryMb.android - 1024);
     return {
       name,
       Image: spec.googlePlay ? config.docker.emulatorPlaystoreImage : config.docker.emulatorImage,
-      Env: [`TZ=${config.timezone}`, `WIDTH=${spec.width}`, `HEIGHT=${spec.height}`, `DPI=${spec.dpi}`, `MEMORY_MB=${Math.max(1024, config.instanceMemoryMb.android - 1024)}`],
+      Env: [`TZ=${config.timezone}`, `WIDTH=${spec.width}`, `HEIGHT=${spec.height}`, `DPI=${spec.dpi}`, `MEMORY_MB=${guestMb}`],
       Labels: { ...labels, [LABEL]: "android" },
       HostConfig: {
         Binds: [`${avd}:/data/avd`, `${path.join(dir, "adb")}:/root/.android`],
@@ -199,7 +249,7 @@ export class Containers {
         NetworkMode: config.docker.network,
         RestartPolicy: { Name: "unless-stopped" },
         ShmSize: 512 * 1024 ** 2,
-        Memory: config.instanceMemoryMb.android * 1024 ** 2,
+        Memory: (guestMb + EMULATOR_OVERHEAD_MB) * 1024 ** 2,
       },
     };
   }
@@ -215,10 +265,11 @@ export class Containers {
     await this.docker.getContainer(name).unpause();
   }
 
-  async stop(name: string): Promise<void> {
+  /** Stop, giving it `seconds` to shut down before it is killed. */
+  async stop(name: string, seconds = 10): Promise<void> {
     await this.unpause(name).catch(() => {});
     try {
-      await this.docker.getContainer(name).stop({ t: 10 });
+      await this.docker.getContainer(name).stop({ t: seconds });
     } catch (err: any) {
       if (err?.statusCode !== 304 && err?.statusCode !== 404) throw err;
     }

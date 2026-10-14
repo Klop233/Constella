@@ -675,7 +675,13 @@ export function registerRoutes(hub: Hub): void {
   // ── incidents (diagnosis reports, supervisor interventions) ─
   const incidentViews = (list: ReturnType<typeof recovery.list>) => {
     const names = new Map(agents.list(true).map((a) => [a.id, a]));
-    return list.map((i) => ({ ...i, agent_name: names.get(i.agent_id ?? "")?.name ?? null, agent_emoji: names.get(i.agent_id ?? "")?.emoji ?? null }));
+    const instances = new Map(desktops.rows().map((d) => [d.id, d.name]));
+    return list.map((i) => ({
+      ...i,
+      agent_name: names.get(i.agent_id ?? "")?.name ?? null,
+      agent_emoji: names.get(i.agent_id ?? "")?.emoji ?? null,
+      desktop_name: i.desktop_id ? (instances.get(i.desktop_id) ?? null) : null,
+    }));
   };
   app.get("/api/incidents", async (req) => {
     const q = z
@@ -1045,6 +1051,7 @@ export function registerRoutes(hub: Hub): void {
     telegramBotToken: z.string().optional(),
     telegramChatId: z.string().optional(),
     autoResume: z.boolean().optional(),
+    endingReview: z.boolean().optional(),
     browserHtml: z.boolean().optional(),
     intelligentUi: z.enum(["off", "balanced", "rich"]).optional(),
     emojiUse: z.enum(["none", "rare", "some", "free"]).optional(),
@@ -1062,7 +1069,7 @@ export function registerRoutes(hub: Hub): void {
     instanceApproval: z.object({ create: z.boolean(), update: z.boolean() }).partial().optional(),
     autoReflect: z.boolean().optional(),
     reflectMinToolCalls: z.number().int().min(1).max(50).optional(),
-    notifyOn: z.object({ done: z.boolean(), failed: z.boolean(), approval: z.boolean(), stuck: z.boolean() }).partial().optional(),
+    notifyOn: z.object({ done: z.boolean(), failed: z.boolean(), approval: z.boolean(), stuck: z.boolean(), panic: z.boolean() }).partial().optional(),
     quietHours: z.object({ enabled: z.boolean(), start: hhmm, end: hhmm }).partial().optional(),
     backupKeep: z.number().int().min(1).max(60).optional(),
     modelNameFormat: z.enum(["paren", "dash"]).optional(),
@@ -1073,7 +1080,7 @@ export function registerRoutes(hub: Hub): void {
     checkModel(b.defaultModel);
     checkModel(b.reflectModel);
     const set = (key: string, v: unknown) => v !== undefined && kvSet(db, `settings.${key}`, String(v));
-    for (const key of ["approvalMode", "autoResume", "browserHtml", "intelligentUi", "emojiUse", "plainHeadings", "maxAutoResumes", "runTimeoutMinutes", "runWatchdogMinutes", "agentIdleMinutes", "desktopIdleMinutes", "desktopIdleAction", "androidBackend", "maxInstances", "maxAndroidInstances", "autoReflect", "reflectMinToolCalls", "backupKeep", "modelNameFormat"] as const)
+    for (const key of ["approvalMode", "autoResume", "endingReview", "browserHtml", "intelligentUi", "emojiUse", "plainHeadings", "maxAutoResumes", "runTimeoutMinutes", "runWatchdogMinutes", "agentIdleMinutes", "desktopIdleMinutes", "desktopIdleAction", "androidBackend", "maxInstances", "maxAndroidInstances", "autoReflect", "reflectMinToolCalls", "backupKeep", "modelNameFormat"] as const)
       set(key, b[key]);
     if (b.defaultModel) kvSet(db, "settings.defaultModel", b.defaultModel);
     if (b.reflectModel) kvSet(db, "settings.reflectModel", b.reflectModel);

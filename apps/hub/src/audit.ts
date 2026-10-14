@@ -80,7 +80,7 @@ export function auditRefs(db: Db, row: { action: string; detail: string | null }
   const agent = one<{ id: string; name: string; emoji: string; archived: number }>("SELECT id, name, emoji, archived FROM agents WHERE id = ?", agentId);
   if (agent) refs.agent = { ...agent, archived: !!agent.archived };
 
-  const desktop = kind === "desktop" ? one<NonNullable<AuditRefs["desktop"]>>("SELECT id, name FROM desktops WHERE id = ?", str("id")) : undefined;
+  const desktop = one<NonNullable<AuditRefs["desktop"]>>("SELECT id, name FROM desktops WHERE id = ?", kind === "desktop" || kind === "instance" ? str("id") : str("desktopId"));
   if (desktop) refs.desktop = desktop;
 
   const incident = kind === "incident" ? one<NonNullable<AuditRefs["incident"]>>("SELECT id, title, kind, status FROM incidents WHERE id = ?", str("id")) : undefined;
