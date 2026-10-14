@@ -54,6 +54,19 @@ async function handle(msg: HubToRunner): Promise<void> {
   }
 }
 
+/** Tell the hub which reasoning levels each model supports; asked from Codex once per process. */
+let models: Promise<Extract<RunnerToHub, { t: "models" }>["models"]> | null = null;
+function reportModels(): void {
+  models ??= engine.models();
+  models.then(
+    (list) => ws?.readyState === WebSocket.OPEN && ws.send(JSON.stringify({ t: "models", models: list })),
+    (err) => {
+      models = null;
+      console.error("model list failed", err);
+    },
+  );
+}
+
 function connect(delay = 1000): void {
   const sock = new WebSocket(`${HUB_URL}?agent=${encodeURIComponent(AGENT_ID)}`, {
     headers: { Authorization: `Bearer ${TOKEN}` },
@@ -67,6 +80,7 @@ function connect(delay = 1000): void {
     sock.send(JSON.stringify({ t: "hello", agentId: AGENT_ID, version: VERSION, activeRuns: engine.activeRunIds() }));
     while (outbox.length && sock.readyState === WebSocket.OPEN) sock.send(JSON.stringify(outbox.shift()));
     delay = 1000;
+    reportModels();
   });
   sock.addEventListener("message", (e) => {
     lastHeard = Date.now();

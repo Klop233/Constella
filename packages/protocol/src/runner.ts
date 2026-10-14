@@ -31,7 +31,8 @@ export type HubToRunner =
       model: string;
       /** Where the model is served; absent means the "newapi" provider from config.toml. */
       provider?: EngineProvider;
-      effort?: "low" | "medium" | "high" | "xhigh";
+      /** Codex reasoning level ("low", "medium", "high", "xhigh", "max", …), one the model supports. */
+      effort?: string;
       instructions: string;
       approvalPolicy: ApprovalPolicy;
       skillRoots: string[];
@@ -48,6 +49,8 @@ export type RunnerToHub =
   | { t: "turn_done"; runId: string; status: "done" | "failed" | "cancelled"; error?: string }
   /** The engine is still producing something for this run (streaming, thinking); throttled, never queued. */
   | { t: "activity"; runId: string }
+  /** Codex's model catalog: the reasoning levels each model supports, weakest first. */
+  | { t: "models"; models: { id: string; efforts: string[]; defaultEffort: string | null }[] }
   | { t: "pong" };
 
 export const RunnerToHubSchema = z.discriminatedUnion("t", [
@@ -61,5 +64,9 @@ export const RunnerToHubSchema = z.discriminatedUnion("t", [
     error: z.string().optional(),
   }),
   z.object({ t: z.literal("activity"), runId: z.string() }),
+  z.object({
+    t: z.literal("models"),
+    models: z.array(z.object({ id: z.string(), efforts: z.array(z.string()), defaultEffort: z.string().nullable() })).max(500),
+  }),
   z.object({ t: z.literal("pong") }),
 ]);

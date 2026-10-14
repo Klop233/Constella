@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { api } from "./api";
+import type { Effort } from "./types";
 
 /** A model bound to a provider, referenced as "model@provider" (built-in new-api models by their bare name). */
 export interface ModelEntry {
@@ -11,6 +12,9 @@ export interface ModelEntry {
   label: string;
   bare: boolean;
   test: { ok: boolean; ms: number | null; error: string | null; at: string } | null;
+  /** Reasoning levels the model supports, weakest first (empty: not adjustable). */
+  efforts: Effort[];
+  defaultEffort: Effort | null;
 }
 
 export interface Provider {

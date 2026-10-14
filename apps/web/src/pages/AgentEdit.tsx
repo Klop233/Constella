@@ -6,6 +6,7 @@ import { AgentAvatar } from "../components/AgentBits";
 import { Button, Card, Field, Header, Loading, Segmented, Toggle, cx, inputClass, toast } from "../components/ui";
 import { api } from "../lib/api";
 import { useModelLabel, useModels, type ModelEntry } from "../lib/models";
+import { effortLabel, fitIndex, modelEfforts } from "../lib/effort";
 import type { Agent, Desktop, DesktopPolicy, Template } from "../lib/types";
 
 /** Model picker for forms: options grouped by provider, ✓ for models whose test passed in settings. */
@@ -41,6 +42,7 @@ export default function AgentEdit() {
   const settings = useQuery({ queryKey: ["settings"], queryFn: () => api.get<{ defaultModel: string; defaultEffort: string | null }>("/api/settings") });
   const desktops = useQuery({ queryKey: ["desktops"], queryFn: () => api.get<Desktop[]>("/api/desktops") });
   const existing = useQuery({ queryKey: ["agent", id], queryFn: () => api.get<Agent>(`/api/agents/${id}`), enabled: editing });
+  const models = useModels();
 
   const [template, setTemplate] = useState("assistant");
   const [name, setName] = useState("");
@@ -52,6 +54,7 @@ export default function AgentEdit() {
   const [hostAccess, setHostAccess] = useState(false);
   const [effort, setEffort] = useState<string>("");
   const [budget, setBudget] = useState("");
+  const { efforts } = modelEfforts(models.data, model);
   const [advanced, setAdvanced] = useState(false);
   const [saving, setSaving] = useState(false);
 
@@ -194,19 +197,15 @@ export default function AgentEdit() {
             <Field label="人设与工作方式" hint="会作为系统指令发给模型">
               <textarea className={cx(inputClass, "min-h-36")} value={persona} onChange={(e) => setPersona(e.target.value)} />
             </Field>
-            <Field group label="推理强度">
-              <Segmented
-                value={(effort || "default") as string}
-                onChange={(v) => setEffort(v === "default" ? "" : v)}
-                options={[
-                  { value: "default", label: "默认" },
-                  { value: "low", label: "低" },
-                  { value: "medium", label: "中" },
-                  { value: "high", label: "高" },
-                  { value: "xhigh", label: "极高" },
-                ]}
-              />
-            </Field>
+            {efforts.length > 0 && (
+              <Field group label="推理强度">
+                <Segmented
+                  value={effort ? efforts[fitIndex(efforts, effort)]! : "default"}
+                  onChange={(v) => setEffort(v === "default" ? "" : v)}
+                  options={[{ value: "default", label: "默认" }, ...efforts.map((e) => ({ value: e, label: effortLabel(e) }))]}
+                />
+              </Field>
+            )}
             <Field label="每日预算（美元）" hint="需要在设置里配置 new-api 管理令牌，并为该 agent 生成专属令牌后才生效">
               <input className={inputClass} inputMode="decimal" value={budget} onChange={(e) => setBudget(e.target.value)} placeholder="不限" />
             </Field>

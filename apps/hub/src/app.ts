@@ -10,6 +10,7 @@ import Fastify, { type FastifyInstance } from "fastify";
 import type { WebSocket } from "ws";
 import { Agents } from "./agents.ts";
 import { Auth } from "./auth.ts";
+import { EffortCatalog, EffortSchema, type Effort } from "./catalog.ts";
 import { config, nowIso } from "./config.ts";
 import { Containers } from "./containers.ts";
 import { audit, kvGet, openDb, type Db } from "./db.ts";
@@ -23,7 +24,7 @@ import { NewApi } from "./newapi.ts";
 import { Notifier } from "./notify.ts";
 import { registerRoutes } from "./routes.ts";
 import { Recovery } from "./recovery.ts";
-import { RunManager, type Effort, type NotifyKind, type RunLimits } from "./runs.ts";
+import { RunManager, type NotifyKind, type RunLimits } from "./runs.ts";
 import { Scheduler } from "./scheduler.ts";
 import { Reflect } from "./reflect.ts";
 import type { ApprovalMode } from "./safety.ts";
@@ -47,6 +48,8 @@ export interface Hub {
   notifier: Notifier;
   newapi: NewApi;
   models: ModelRegistry;
+  /** Reasoning levels each model supports, as reported by the agents' Codex. */
+  catalog: EffortCatalog;
   runners: RunnerGateway;
   settings: Settings;
   backup(): Promise<string>;
@@ -164,7 +167,7 @@ export class Settings {
   /** Reasoning effort preselected for new agents (null = the model's default). */
   defaultEffort(): Effort | null {
     const v = kvGet(this.#db, "settings.defaultEffort");
-    return v === "low" || v === "medium" || v === "high" || v === "xhigh" ? v : null;
+    return v && EffortSchema.safeParse(v).success ? v : null;
   }
 
   /** Continue runs that were cut off or hit a temporary failure (on unless turned off). */
@@ -281,6 +284,7 @@ export async function createHub(opts: { dbPath?: string; webDist?: string; logge
   const containers = new Containers();
   const runners = new RunnerGateway();
   const newapi = new NewApi({ baseUrl: config.newapi.baseUrl, admin: () => settings.newapiAdmin() });
+  const catalog = new EffortCatalog(db);
   const notifier = new Notifier(db, events, config.vapid, () => settings.telegram(), () => settings.isQuiet());
   let agents!: Agents;
   const allSecretValues = () => [config.newapi.apiKey, ...models.keys(), ...(agents ? agents.list(true).flatMap((a) => agents.secretValues(a.id)) : [])];
@@ -327,7 +331,7 @@ export async function createHub(opts: { dbPath?: string; webDist?: string; logge
           : "desktop_* / browser_*：操作你的图形桌面和浏览器。网页任务优先用 browser_*（按页面结构操作，更可靠），其他程序用 desktop_screenshot + desktop_action。遇到登录、验证码、支付等必须由用户本人完成的步骤，调用 desktop_request_help。";
       return {
         model: a.model,
-        effort: (a.effort ?? undefined) as "low" | "medium" | "high" | "xhigh" | undefined,
+        effort: a.effort ?? undefined,
         instructions: agents.instructions(a, { desktopNote }),
         approvalPolicy: a.approval_policy,
         skillRoots: ["/home/agent/knowledge/skills", "/shared/skills"],
@@ -335,6 +339,7 @@ export async function createHub(opts: { dbPath?: string; webDist?: string; logge
     },
     notify: (title, body, url, kind) => void notifier.send(title, body, url, { push: settings.notifyOn()[kind] }),
     resolveModel: (ref) => models.resolve(ref),
+    fitEffort: (model, effort) => catalog.fit(model, effort),
     autoResume: () => settings.autoResume(),
     limits: () => settings.limits(),
     approvalMode: () => settings.approvalMode(),
@@ -431,6 +436,7 @@ export async function createHub(opts: { dbPath?: string; webDist?: string; logge
     notifier,
     newapi,
     models,
+    catalog,
     runners,
     settings,
     backup,
@@ -477,6 +483,9 @@ export async function createHub(opts: { dbPath?: string; webDist?: string; logge
           break;
         case "activity":
           runs.touch(agent.id, msg.runId);
+          break;
+        case "models":
+          catalog.update(msg.models);
           break;
         case "turn_done": {
           const run = runs.get(msg.runId);

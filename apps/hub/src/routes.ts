@@ -4,6 +4,7 @@ import type { FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { AgentInput, TEMPLATES } from "./agents.ts";
 import type { Hub } from "./app.ts";
+import { EffortSchema } from "./catalog.ts";
 import { config, nowIso } from "./config.ts";
 import { audit, kvSet } from "./db.ts";
 import type { DesktopAction } from "./desktops.ts";
@@ -30,7 +31,7 @@ class HttpError extends Error {
 }
 
 export function registerRoutes(hub: Hub): void {
-  const { app, auth, agents, runs, recovery, events, desktops, knowledge, learning, reflect, scheduler, notifier, newapi, models, settings, containers, db } = hub;
+  const { app, auth, agents, runs, recovery, events, desktops, knowledge, learning, reflect, scheduler, notifier, newapi, models, catalog, settings, containers, db } = hub;
 
   app.setErrorHandler((err: any, _req, reply) => {
     const status = err instanceof HttpError ? err.status : err?.validation || err instanceof z.ZodError ? 400 : (err?.statusCode ?? 400);
@@ -266,7 +267,7 @@ export function registerRoutes(hub: Hub): void {
   );
   const ModelPatch = {
     model: z.string().min(1).max(200).nullable().optional(),
-    effort: z.enum(["low", "medium", "high", "xhigh"]).nullable().optional(),
+    effort: EffortSchema.nullable().optional(),
   };
   const SendBody = z.object({ text: z.string().min(1).max(20000), images: z.array(z.string()).max(8).optional(), ...ModelPatch });
   app.post("/api/agents/:id/messages", async (req) => {
@@ -538,7 +539,8 @@ export function registerRoutes(hub: Hub): void {
   // ── models & providers ───────────────────────────────────
   app.get("/api/models", async () => {
     await models.seed();
-    return models.list();
+    // Each entry also carries the reasoning levels its model supports (keyed by model name, as Codex reports it).
+    return models.list().map((m) => ({ ...m, ...catalog.get(m.model) }));
   });
   app.post("/api/models", async (req) => {
     const b = z.object({ provider: z.string(), models: z.array(z.string().trim().min(1).max(200)).min(1).max(500) }).parse(req.body);
@@ -668,7 +670,7 @@ export function registerRoutes(hub: Hub): void {
   const SettingsPatch = z.object({
     defaultModel: z.string().min(1).optional(),
     reflectModel: z.string().min(1).optional(),
-    defaultEffort: z.enum(["low", "medium", "high", "xhigh"]).nullable().optional(),
+    defaultEffort: EffortSchema.nullable().optional(),
     newapiAdminToken: z.string().optional(),
     newapiAdminUserId: z.string().optional(),
     telegramBotToken: z.string().optional(),

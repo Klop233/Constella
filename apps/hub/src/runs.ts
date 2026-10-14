@@ -1,5 +1,6 @@
 import { canTransition, isTerminal, type EngineProvider, type HubToRunner, type RunStatus, type RunnerEvent } from "@constella/protocol";
 import { config, newId, nowIso } from "./config.ts";
+import type { Effort } from "./catalog.ts";
 import { audit, type Db } from "./db.ts";
 import { decideApproval, type ApprovalMode } from "./safety.ts";
 import type { EventStore } from "./events.ts";
@@ -41,8 +42,6 @@ export interface ConversationRow {
   updated_at: string;
 }
 
-export type Effort = "low" | "medium" | "high" | "xhigh";
-
 /** What the hub needs from the rest of the system to drive a run. */
 export interface RunDeps {
   db: Db;
@@ -53,12 +52,14 @@ export interface RunDeps {
   /** Payload pieces that depend on the agent's configuration and knowledge. */
   startPayload(agentId: string): {
     model: string;
-    effort?: "low" | "medium" | "high" | "xhigh";
+    effort?: Effort;
     instructions: string;
     approvalPolicy: "auto" | "ask";
     skillRoots: string[];
   };
   notify(title: string, body: string, url: string, kind: NotifyKind): void;
+  /** The level closest to `effort` that `model` supports (undefined = let the model pick); defaults to as-is. */
+  fitEffort?(model: string, effort: Effort): Effort | undefined;
   /** Model reference ("model@provider") → the model name and provider the engine should use. Throws when unusable. */
   resolveModel?(ref: string): { model: string; provider: EngineProvider };
   /** Whether runs cut off by an agent / hub restart are continued automatically. */
@@ -225,6 +226,8 @@ export class RunManager {
     if (conv.model) payload.model = conv.model;
     if (conv.effort) payload.effort = conv.effort;
     const target = this.#d.resolveModel?.(payload.model);
+    // Levels are known per model name (what Codex reports), whichever provider serves it.
+    if (payload.effort && this.#d.fitEffort) payload.effort = this.#d.fitEffort(target?.model ?? payload.model, payload.effort);
     const run: RunRow = {
       id: newId("run"),
       conversation_id: conv.id,
