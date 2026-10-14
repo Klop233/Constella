@@ -195,8 +195,8 @@ export default function Performance() {
                 <StatTile label="内存" value={bytes(now?.mem)} sub={`共 ${bytes(info?.memTotal)}`} />
                 <StatTile label="网络下行" value={rate(now?.rx)} />
                 <StatTile label="网络上行" value={rate(now?.tx)} />
-                <StatTile size="sm" label="交换" value={bytes(now?.swap)} sub={`共 ${bytes(info?.swapTotal)}`} />
-                <StatTile size="sm" label="负载（1 / 5 / 15 分钟）" value={now ? now.load.map((n) => n.toFixed(2)).join(" · ") : "—"} />
+                <StatTile size="sm" label="交换" value={bytes(now?.swap)} sub={info?.swapTotal ? `共 ${bytes(info.swapTotal)}` : undefined} />
+                <StatTile size="sm" label="负载（1 分钟）" value={now ? now.load[0].toFixed(2) : "—"} sub={now ? `5 分钟 ${now.load[1].toFixed(2)} · 15 分钟 ${now.load[2].toFixed(2)}` : undefined} />
                 <StatTile size="sm" label="运行时间" value={now ? duration(now.uptimeS) : "—"} />
                 <StatTile size="sm" label="磁盘已用" value={bytes(now?.diskUsed)} sub={info?.disk ? `共 ${bytes(info.disk.total)}` : undefined} />
               </div>
