@@ -536,10 +536,15 @@ export function registerRoutes(hub: Hub): void {
     const b = z
       .object({ name: z.string().min(1).max(40).optional(), options: DesktopOptions.optional(), agentIds: z.array(z.string()).max(50).optional(), confirmDataLoss: z.boolean().optional() })
       .parse(req.body);
-    desktops.row(id(req));
+    const snapshot = () => {
+      const r = desktops.row(id(req));
+      return { name: r.name, options: desktops.options(r), agentIds: desktops.agentIds(r.id) };
+    };
+    const before = snapshot();
     const out = await desktops.update(id(req), { name: b.name, options: b.options }, { confirmDataLoss: b.confirmDataLoss });
     if (b.agentIds) desktops.setAgents(id(req), b.agentIds);
-    audit(db, actor(req), "desktop.update", { id: id(req), fields: Object.keys(b), ...out });
+    const after = snapshot();
+    audit(db, actor(req), "desktop.update", { id: id(req), name: after.name, changes: changesOf(before, after, ["name", "options", "agentIds"]), ...out });
     return { ok: true, ...out };
   });
   app.delete("/api/desktops/:id", async (req) => {
@@ -568,7 +573,7 @@ export function registerRoutes(hub: Hub): void {
   });
   app.post("/api/desktops/:id/restart", async (req) => {
     await desktops.restart(id(req));
-    audit(db, actor(req), "desktop.restart", { id: id(req) });
+    audit(db, actor(req), "desktop.restart", { id: id(req), name: desktops.row(id(req)).name });
     return { ok: true };
   });
   app.get("/api/desktops/:id/screenshot", async (req, reply) => {

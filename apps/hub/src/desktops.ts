@@ -225,7 +225,9 @@ export class Desktops {
   /** Container state of the instance's screen (for Android: the bridge; a stopped device shows up as not running). */
   async state(id: string): Promise<string> {
     const r = this.row(id);
-    const screen = await this.#containers.state(this.#containers.desktopName(id)).catch(() => "error");
+    let screen = await this.#containers.state(this.#containers.desktopName(id)).catch(() => "error");
+    // Docker says "starting" until its first health check passes (up to 15 s); the control API answers sooner.
+    if (screen === "starting" && (await this.#healthy(id, 1500))) screen = "running";
     if (r.kind !== "android" || screen !== "running") return screen;
     const device = await this.#containers.state(this.#containers.androidName(id)).catch(() => "error");
     return device === "running" ? "running" : device === "paused" ? "paused" : "starting";
@@ -678,13 +680,18 @@ export class Desktops {
     return id;
   }
 
+  async #healthy(id: string, timeoutMs = 2000): Promise<boolean> {
+    try {
+      return (await fetch(`${this.controlUrl(id)}/health`, { signal: AbortSignal.timeout(timeoutMs) })).ok;
+    } catch {
+      return false;
+    }
+  }
+
   async #waitHealthy(id: string, seconds: number): Promise<void> {
     const until = Date.now() + seconds * 1000;
     while (Date.now() < until) {
-      try {
-        const res = await fetch(`${this.controlUrl(id)}/health`, { signal: AbortSignal.timeout(2000) });
-        if (res.ok) return;
-      } catch {}
+      if (await this.#healthy(id)) return;
       await new Promise((r) => setTimeout(r, 500));
     }
     throw new DesktopError(`${this.describe(this.row(id))}启动超时`, "unavailable");
