@@ -145,6 +145,7 @@ export interface AuditRefs {
   schedule?: { id: string; name: string; cron: string; enabled: boolean };
   incident?: { id: string; title: string; kind: string; status: string };
   artifact?: { id: string; title: string; filename: string; version: number };
+  credentialRequest?: { id: string; item: string; fields: string[]; status: string; agentId: string; createdAt: string };
 }
 
 export interface AuditEntryDetail extends AuditEntry {

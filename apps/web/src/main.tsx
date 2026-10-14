@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Activity, Archive, Brain, CalendarClock, ChevronDown, ChevronsUpDown, ClipboardCheck, Gauge, House, Layers, LogOut, Monitor, Palette, Plus, Search, Settings as SettingsIcon, Shield, SlidersHorizontal, Sparkles, ExternalLink, X } from "lucide-react";
+import { Activity, Archive, Brain, CalendarClock, ChevronDown, ChevronsUpDown, ClipboardCheck, Gauge, House, KeyRound, Layers, LogOut, Monitor, Palette, Plus, Search, Settings as SettingsIcon, Shield, SlidersHorizontal, Sparkles, ExternalLink, X } from "lucide-react";
 import { lazy, StrictMode, Suspense, useEffect, useState, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter, Navigate, NavLink, Route, Routes, useLocation, useNavigate, useParams, useSearchParams } from "react-router";
@@ -28,6 +28,7 @@ const Usage = lazy(() => import("./pages/Usage"));
 const Performance = lazy(() => import("./pages/Performance"));
 const Audit = lazy(() => import("./pages/Audit"));
 const Artifacts = lazy(() => import("./pages/Artifacts"));
+const Credentials = lazy(() => import("./pages/Credentials"));
 const ArtifactViewer = lazy(() => import("./components/ArtifactViewer"));
 
 const qc = new QueryClient({
@@ -73,6 +74,7 @@ const TABS = [
 const NAV = [
   ...TABS.filter((t) => t.to !== "/settings"),
   { to: "/artifacts", label: "成果", icon: Layers, end: false },
+  { to: "/credentials", label: "凭据", icon: Shield, end: false },
   { to: "/audit", label: "审计", icon: ClipboardCheck, end: false },
   { to: "/usage", label: "用量", icon: Gauge, end: false },
   { to: "/perf", label: "性能", icon: Activity, end: false },
@@ -397,6 +399,7 @@ function App() {
                 <Route path="/perf" element={<Performance />} />
                 <Route path="/audit" element={<Audit />} />
                 <Route path="/artifacts" element={<Artifacts />} />
+                <Route path="/credentials" element={<Credentials />} />
                 <Route path="*" element={<Home />} />
               </Routes>
             </Suspense>

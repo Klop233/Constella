@@ -1,3 +1,4 @@
+import { Credentials } from "./credentials.ts";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -40,6 +41,7 @@ export interface Hub {
   app: FastifyInstance;
   db: Db;
   auth: Auth;
+  credentials: Credentials;
   secrets: SecretStore;
   events: EventStore;
   agents: Agents;
@@ -374,7 +376,9 @@ export async function createHub(opts: { dbPath?: string; webDist?: string; logge
   const catalog = new EffortCatalog(db);
   const notifier = new Notifier(db, events, config.vapid, () => settings.telegram(), () => settings.isQuiet());
   let agents!: Agents;
-  const allSecretValues = () => [config.newapi.apiKey, ...models.keys(), ...(agents ? agents.list(true).flatMap((a) => agents.secretValues(a.id)) : [])];
+  let credentials!: Credentials;
+  const allSecretValues = () => [config.newapi.apiKey, ...models.keys(), ...(credentials ? credentials.secretValues() : []), ...(agents ? agents.list(true).flatMap((a) => agents.secretValues(a.id)) : [])];
+  events.secretValues = allSecretValues;
   const knowledge = new Knowledge(db, events, allSecretValues);
   knowledge.ensureShared();
   agents = new Agents({ db, secrets, knowledge, defaultModel: () => settings.defaultModel(), defaultEffort: () => settings.defaultEffort() });
@@ -416,10 +420,13 @@ export async function createHub(opts: { dbPath?: string; webDist?: string; logge
         (settings.browserHtml()
           ? "\n    读网页上的信息（正文、列表、表格、价格、链接地址、表单当前值等）时，优先用 browser_html 直接读取 HTML：比截图更快更准，一次拿到整页，不用来回滚动截图；页面很长时用 selector 只读需要的部分。browser_snapshot 适合找要点击的元素；要看布局、图片、图表或验证码时再截图。几种方式按需配合。"
           : "");
+      const credentialNote = credentials.connections().length
+        ? "credentials_list / credentials_request / credentials_status / credentials_read：主人的密码库（凭据 / 隐私）里的登录凭据。需要密码、用户名或验证码时，先用 credentials_list 找到条目，再用 credentials_request 申请，写清用途和目标（主人指定的审批 agent 会审核，批准后 10 分钟内用 credentials_read 读一次）。只要真正需要的字段；凭据值不要写进文件、日志或记忆。"
+        : "";
       return {
         model: a.model,
         effort: a.effort ?? undefined,
-        instructions: agents.instructions(a, { desktopNote, uiNote: intelligentUiNote(settings.intelligentUi()), styleNote: settings.emojiNote() }),
+        instructions: agents.instructions(a, { desktopNote, credentialNote, uiNote: intelligentUiNote(settings.intelligentUi()), styleNote: settings.emojiNote() }),
         approvalPolicy: a.approval_policy,
         skillRoots: ["/home/agent/knowledge/skills", "/shared/skills"],
       };
@@ -434,6 +441,7 @@ export async function createHub(opts: { dbPath?: string; webDist?: string; logge
     incident: (input) => void recovery.file(input),
     reviewDone: (run) => recovery.reviewDone(run),
   });
+  credentials = new Credentials({ db, secrets, events, runs });
   const hostcaps = new HostCapabilities({ docker: containers.docker, androidBackend: () => settings.androidBackend() });
   const desktops = new Desktops({
     db,
@@ -538,6 +546,7 @@ export async function createHub(opts: { dbPath?: string; webDist?: string; logge
     agents,
     runs,
     artifacts,
+    credentials,
     recovery,
     knowledge,
     learning,
@@ -557,6 +566,7 @@ export async function createHub(opts: { dbPath?: string; webDist?: string; logge
     close: async () => {
       scheduler.stop();
       perf.stop();
+      credentials.close();
       runs.stopWatchdog();
       recovery.stop();
       runners.closeAll();
@@ -626,6 +636,7 @@ export async function createHub(opts: { dbPath?: string; webDist?: string; logge
     scheduler,
     containers,
     artifacts,
+    credentials,
     recovery,
     browserHtml: () => settings.browserHtml(),
     instanceApproval: () => settings.instanceApproval(),

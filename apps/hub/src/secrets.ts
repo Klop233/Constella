@@ -67,9 +67,22 @@ export class SecretStore {
   }
 }
 
-/** Replace any known secret value appearing in text (event logs, tool output). */
-export function redact(text: string, values: Iterable<string>): string {
+function escapeRe(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Replace known secret values appearing in text (event logs, tool output).
+ * Values at or above `minLength` are replaced wherever they appear; shorter ones only as whole
+ * words, so a four-character password cannot mangle unrelated text (and a one-character one
+ * still gets caught when it stands alone).
+ */
+export function redact(text: string, values: Iterable<string>, minLength = 6): string {
   let out = text;
-  for (const v of values) if (v && v.length >= 6) out = out.split(v).join("«secret»");
+  for (const v of values) {
+    if (!v) continue;
+    if (v.length >= minLength) out = out.split(v).join("«secret»");
+    else if (out.includes(v)) out = out.replace(new RegExp(`(?<![\\w-])${escapeRe(v)}(?![\\w-])`, "g"), "«secret»");
+  }
   return out;
 }

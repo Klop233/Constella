@@ -111,6 +111,10 @@ const MIGRATIONS: string[] = [
  * take the same slot as a migration added on another branch.
  */
 const ENSURE = `
+  CREATE TABLE IF NOT EXISTS credential_connections (id TEXT PRIMARY KEY, name TEXT NOT NULL, provider TEXT NOT NULL, server TEXT NOT NULL, created_at TEXT NOT NULL);
+  CREATE TABLE IF NOT EXISTS credential_requests (id TEXT PRIMARY KEY, status TEXT NOT NULL, created_at TEXT NOT NULL, expires_at TEXT NOT NULL, data TEXT NOT NULL);
+  CREATE INDEX IF NOT EXISTS credential_requests_status ON credential_requests(status, expires_at);
+  CREATE TABLE IF NOT EXISTS credential_access_log (id TEXT PRIMARY KEY, action TEXT NOT NULL, agent_id TEXT, request_id TEXT, created_at TEXT NOT NULL);
   CREATE TABLE IF NOT EXISTS providers (id TEXT PRIMARY KEY, name TEXT NOT NULL, base_url TEXT NOT NULL, created_at TEXT NOT NULL);
   CREATE TABLE IF NOT EXISTS models (
     model TEXT NOT NULL, provider TEXT NOT NULL, bare INTEGER NOT NULL DEFAULT 0,
