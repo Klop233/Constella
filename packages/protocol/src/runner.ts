@@ -46,6 +46,8 @@ export type RunnerToHub =
   | { t: "event"; event: RunnerEvent }
   | { t: "thread"; runId: string; threadId: string }
   | { t: "turn_done"; runId: string; status: "done" | "failed" | "cancelled"; error?: string }
+  /** The engine is still producing something for this run (streaming, thinking); throttled, never queued. */
+  | { t: "activity"; runId: string }
   | { t: "pong" };
 
 export const RunnerToHubSchema = z.discriminatedUnion("t", [
@@ -58,5 +60,6 @@ export const RunnerToHubSchema = z.discriminatedUnion("t", [
     status: z.enum(["done", "failed", "cancelled"]),
     error: z.string().optional(),
   }),
+  z.object({ t: z.literal("activity"), runId: z.string() }),
   z.object({ t: z.literal("pong") }),
 ]);

@@ -8,8 +8,8 @@ import { latestStats, RunView } from "../components/RunView";
 import { Button, Empty, Header, Loading, cx, toast } from "../components/ui";
 import { api, ApiError, fileToBase64 } from "../lib/api";
 import { useAppearance } from "../lib/appearance";
-import { useAgentEvents } from "../lib/live";
-import type { Agent, AgentEvent, Approval, Conversation, Effort, Run } from "../lib/types";
+import { useAgentEvents, useHubEvents } from "../lib/live";
+import type { Agent, AgentEvent, Approval, Conversation, Effort, Incident, Run } from "../lib/types";
 
 const coarsePointer = window.matchMedia("(pointer: coarse)").matches;
 /** Sent for an empty message after a task ended abnormally. */
@@ -19,6 +19,7 @@ interface ConvData {
   conversation: Conversation;
   runs: Run[];
   approvals: Approval[];
+  incidents: Incident[];
 }
 
 export default function Chat() {
@@ -108,6 +109,15 @@ export default function Chat() {
     [conversationId, load],
   );
   useAgentEvents(onEvent);
+  // Diagnosis reports and supervisor questions for this conversation arrive as hub notifications.
+  const onHub = useCallback(
+    (type: string, payload: unknown) => {
+      const conv = (payload as { conversationId?: string | null } | null)?.conversationId;
+      if (type === "incident" && conversationId && (conv === conversationId || conv === undefined)) void load();
+    },
+    [conversationId, load],
+  );
+  useHubEvents(onHub);
 
   useLayoutEffect(() => {
     if (stick.current) bottom.current?.scrollIntoView({ block: "end" });
@@ -118,6 +128,8 @@ export default function Chat() {
   const active = data?.runs.find((r) => !["done", "failed", "cancelled"].includes(r.status));
   // The last task ended abnormally: an empty send (or just clicking send) continues it.
   const interrupted = !active && data?.runs.at(-1)?.status === "failed";
+  // The agent is waiting on a question: whatever is typed goes to it as the answer.
+  const asked = !!active && active.status === "waiting_approval" && !!data?.approvals.some((ap) => ap.kind === "decision" && ap.run_id === active.id);
 
   const send = async () => {
     const body = text.trim() || (interrupted && !files.length ? CONTINUE_TEXT : "");
@@ -136,7 +148,7 @@ export default function Chat() {
       stick.current = true;
       if (!conversationId) nav(`/c/${res.conversationId}`, { replace: true });
       else void load();
-      if (res.steered) toast("已作为追加指示发送给正在进行的任务");
+      if (res.steered) toast(asked ? "已回答" : "已作为追加指示发送给正在进行的任务");
       void qc.invalidateQueries({ queryKey: ["overview"] });
     } catch (err) {
       toast(err instanceof Error ? err.message : String(err), "danger");
@@ -205,7 +217,7 @@ export default function Chat() {
           }}
           enterKeyHint={coarsePointer ? "enter" : "send"}
           rows={1}
-          placeholder={active ? "追加指示（任务进行中）" : interrupted ? "任务中断了，直接发送即可继续，也可以补充说明…" : !conversationId ? `今天想让${a?.name ?? "agent"}做点什么？` : "回复…"}
+          placeholder={asked ? "直接写下你的回答…" : active ? "追加指示（任务进行中）" : interrupted ? "任务中断了，直接发送即可继续，也可以补充说明…" : !conversationId ? `今天想让${a?.name ?? "agent"}做点什么？` : "回复…"}
           className="flex-1 min-w-0 resize-none max-h-48 min-h-8 bg-transparent px-1.5 py-1.5 text-sm outline-none field-sizing-content placeholder:text-muted"
         />
           {active && !text.trim() ? (
@@ -274,7 +286,7 @@ export default function Chat() {
         ) : !data ? null : (
           <div className="space-y-5 py-3 max-w-3xl mx-auto">
             {data.runs.map((r) => (
-              <RunView key={r.id} run={r} approvals={data.approvals} onChanged={load} />
+              <RunView key={r.id} run={r} approvals={data.approvals} incidents={data.incidents} onChanged={load} />
             ))}
           </div>
         )}

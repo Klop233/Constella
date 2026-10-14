@@ -3,8 +3,10 @@ import { useEffect, useState } from "react";
 import type { AgentEvent } from "./types";
 
 type AgentListener = (conversationId: string, event: AgentEvent) => void;
+type HubListener = (type: string, data: unknown) => void;
 
 const agentListeners = new Set<AgentListener>();
+const hubListeners = new Set<HubListener>();
 let status: "connecting" | "open" | "closed" = "connecting";
 const statusListeners = new Set<(s: typeof status) => void>();
 
@@ -43,7 +45,8 @@ export function startLive(qc: QueryClient): () => void {
       }
     });
     es.addEventListener("hub", (e) => {
-      const { type } = JSON.parse((e as MessageEvent).data) as { type: string; data: unknown };
+      const { type, data } = JSON.parse((e as MessageEvent).data) as { type: string; data: unknown };
+      for (const l of hubListeners) l(type, data);
       const keys: Record<string, string[][]> = {
         agent: [["overview"], ["agents"], ["agent"]],
         desktop: [["overview"], ["desktops"]],
@@ -53,6 +56,7 @@ export function startLive(qc: QueryClient): () => void {
         schedule: [["schedules"]],
         "schedule.fired": [["schedules"]],
         notification: [["overview"], ["notifications"]],
+        incident: [["overview"], ["incidents"], ["audit"]],
       };
       for (const k of keys[type] ?? []) void qc.invalidateQueries({ queryKey: k });
     });
@@ -77,6 +81,16 @@ export function useAgentEvents(listener: AgentListener): void {
     agentListeners.add(listener);
     return () => {
       agentListeners.delete(listener);
+    };
+  }, [listener]);
+}
+
+/** Hub notifications (incident, agent, schedule, …) as they arrive. */
+export function useHubEvents(listener: HubListener): void {
+  useEffect(() => {
+    hubListeners.add(listener);
+    return () => {
+      hubListeners.delete(listener);
     };
   }, [listener]);
 }

@@ -139,6 +139,41 @@ export class Containers {
     }
   }
 
+  /** Run a command inside a running container (used by the supervisor to look at and stop stuck processes). */
+  async exec(name: string, cmd: string[], opts: { user?: string; timeoutMs?: number } = {}): Promise<{ exitCode: number; output: string }> {
+    const exec = await this.docker.getContainer(name).exec({ Cmd: cmd, AttachStdout: true, AttachStderr: true, User: opts.user ?? "" });
+    const stream = await exec.start({ hijack: true, stdin: false });
+    const chunks: Buffer[] = [];
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        stream.destroy();
+        reject(new Error("命令超时"));
+      }, opts.timeoutMs ?? 15_000);
+      stream.on("data", (c: Buffer) => chunks.push(c));
+      stream.on("end", () => {
+        clearTimeout(timer);
+        resolve();
+      });
+      stream.on("error", (err: Error) => {
+        clearTimeout(timer);
+        reject(err);
+      });
+    });
+    const info = await exec.inspect();
+    return { exitCode: info.ExitCode ?? -1, output: demux(Buffer.concat(chunks)) };
+  }
+
+  /** Last lines of a container's log (empty when it doesn't exist). */
+  async logs(name: string, tail = 80): Promise<string> {
+    try {
+      const buf = (await this.docker.getContainer(name).logs({ stdout: true, stderr: true, tail, follow: false })) as unknown as Buffer;
+      return demux(buf);
+    } catch (err: any) {
+      if (err?.statusCode === 404) return "";
+      throw err;
+    }
+  }
+
   /** Run a command in the host's namespaces (for agents granted host access). */
   async hostExec(command: string, timeoutMs = 120_000): Promise<{ exitCode: number; output: string }> {
     const container = await this.docker.createContainer({

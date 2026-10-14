@@ -12,7 +12,7 @@ import { Agents } from "./agents.ts";
 import { Auth } from "./auth.ts";
 import { config, nowIso } from "./config.ts";
 import { Containers } from "./containers.ts";
-import { kvGet, openDb, type Db } from "./db.ts";
+import { audit, kvGet, openDb, type Db } from "./db.ts";
 import { Desktops } from "./desktops.ts";
 import { EventStore } from "./events.ts";
 import { Knowledge } from "./knowledge.ts";
@@ -22,6 +22,7 @@ import { ModelRegistry } from "./models.ts";
 import { NewApi } from "./newapi.ts";
 import { Notifier } from "./notify.ts";
 import { registerRoutes } from "./routes.ts";
+import { Recovery } from "./recovery.ts";
 import { RunManager, type Effort, type NotifyKind, type RunLimits } from "./runs.ts";
 import { Scheduler } from "./scheduler.ts";
 import { Reflect } from "./reflect.ts";
@@ -36,6 +37,7 @@ export interface Hub {
   events: EventStore;
   agents: Agents;
   runs: RunManager;
+  recovery: Recovery;
   knowledge: Knowledge;
   learning: Learning;
   reflect: Reflect;
@@ -57,7 +59,11 @@ export interface Hub {
 export class RunnerGateway {
   #sockets = new Map<string, WebSocket>();
   #waiters = new Map<string, (() => void)[]>();
+  /** Last activity either way (keeps an idle container from being stopped); pings don't count. */
   lastSeen = new Map<string, number>();
+  /** Last time each runner said anything, pongs included: how a dead connection is told from a quiet one. */
+  #heard = new Map<string, number>();
+  #pinger: NodeJS.Timeout | null = null;
 
   connected(agentId: string): boolean {
     return this.#sockets.get(agentId)?.readyState === 1;
@@ -67,6 +73,25 @@ export class RunnerGateway {
     this.#sockets.get(agentId)?.close(4000, "replaced");
     this.#sockets.set(agentId, ws);
     this.lastSeen.set(agentId, Date.now());
+    this.#heard.set(agentId, Date.now());
+  }
+
+  heard(agentId: string): void {
+    this.#heard.set(agentId, Date.now());
+  }
+
+  /**
+   * Ping every runner each 30 s; one silent for 90 s is cut loose (a network cut leaves TCP half-open and
+   * the socket looking fine), so its close handler can bring it back.
+   */
+  startHeartbeat(): void {
+    this.#pinger = setInterval(() => {
+      for (const [agentId, ws] of this.#sockets) {
+        if (Date.now() - (this.#heard.get(agentId) ?? 0) > 90_000) ws.terminate();
+        else if (ws.readyState === 1) ws.send(JSON.stringify({ t: "ping" } satisfies HubToRunner));
+      }
+    }, 30_000);
+    this.#pinger.unref();
   }
 
   ready(agentId: string): void {
@@ -100,6 +125,7 @@ export class RunnerGateway {
   }
 
   closeAll(): void {
+    if (this.#pinger) clearInterval(this.#pinger);
     for (const ws of this.#sockets.values()) ws.close();
   }
 }
@@ -141,7 +167,7 @@ export class Settings {
     return v === "low" || v === "medium" || v === "high" || v === "xhigh" ? v : null;
   }
 
-  /** Continue runs a restart cut off (on unless turned off). */
+  /** Continue runs that were cut off or hit a temporary failure (on unless turned off). */
   autoResume(): boolean {
     return this.#bool("autoResume", true);
   }
@@ -271,15 +297,22 @@ export async function createHub(opts: { dbPath?: string; webDist?: string; logge
   };
   /**
    * A runner went away while it still had runs (container crashed, removed, or never came back
-   * after a hub restart): bring it back so its hello lets the run manager continue them.
+   * after a hub restart): bring it back so its hello lets the run manager continue them. When it
+   * won't come back by itself, the container is rebuilt.
    */
   const reviveIfStranded = (agentId: string, delayMs: number) =>
     setTimeout(() => {
-      if (!settings.autoResume() || runners.connected(agentId)) return;
+      if (!settings.autoResume() || runners.connected(agentId) || recovery.repairing(agentId)) return;
       const stranded = db.prepare("SELECT 1 FROM runs WHERE agent_id = ? AND status IN ('running','waiting_approval','paused_by_user') LIMIT 1").get(agentId);
-      if (stranded) void ensureRunner(agentId).catch((err) => console.error("revive runner", agentId, err));
+      if (!stranded) return;
+      void ensureRunner(agentId).catch(async (err) => {
+        const error = err instanceof Error ? err.message : String(err);
+        audit(db, "system", "runner.revive_failed", { agentId, error });
+        await recovery.repairRunner(agentId, error).catch((e) => audit(db, "system", "runner.repair_failed", { agentId, error: e instanceof Error ? e.message : String(e) }));
+      });
     }, delayMs).unref();
 
+  let recovery!: Recovery;
   const runs = new RunManager({
     db,
     events,
@@ -305,6 +338,22 @@ export async function createHub(opts: { dbPath?: string; webDist?: string; logge
     autoResume: () => settings.autoResume(),
     limits: () => settings.limits(),
     approvalMode: () => settings.approvalMode(),
+    repairRunner: (agentId, error) => recovery.repairRunner(agentId, error),
+    incident: (input) => void recovery.file(input),
+  });
+  recovery = new Recovery({
+    db,
+    events,
+    runs,
+    agents,
+    containers,
+    llm: models,
+    model: () => settings.reflectModel(),
+    notify: (title, body, url, kind) => void notifier.send(title, body, url, { push: settings.notifyOn()[kind] }),
+    limits: () => settings.limits(),
+    ensureRunner,
+    connected: (agentId) => runners.connected(agentId),
+    secretValues: allSecretValues,
   });
   const desktops = new Desktops({ db, events, containers, runs, idleMinutes: () => settings.desktopIdleMinutes() });
   const learning = new Learning({ db, events, knowledge, llm: models, model: () => settings.reflectModel(), auto: () => settings.reflection() });
@@ -372,6 +421,7 @@ export async function createHub(opts: { dbPath?: string; webDist?: string; logge
     events,
     agents,
     runs,
+    recovery,
     knowledge,
     learning,
     reflect,
@@ -388,6 +438,7 @@ export async function createHub(opts: { dbPath?: string; webDist?: string; logge
     close: async () => {
       scheduler.stop();
       runs.stopWatchdog();
+      recovery.stop();
       runners.closeAll();
       await app.close();
       db.close();
@@ -410,7 +461,8 @@ export async function createHub(opts: { dbPath?: string; webDist?: string; logge
       } catch {
         return;
       }
-      runners.lastSeen.set(agent.id, Date.now());
+      runners.heard(agent.id);
+      if (msg.t !== "pong") runners.lastSeen.set(agent.id, Date.now());
       switch (msg.t) {
         case "hello":
           runs.onRunnerHello(agent.id, msg.activeRuns);
@@ -422,6 +474,9 @@ export async function createHub(opts: { dbPath?: string; webDist?: string; logge
           break;
         case "thread":
           runs.onThread(agent.id, msg.runId, msg.threadId);
+          break;
+        case "activity":
+          runs.touch(agent.id, msg.runId);
           break;
         case "turn_done": {
           const run = runs.get(msg.runId);
@@ -483,6 +538,8 @@ export async function bootHub(hub: Hub): Promise<void> {
   await hub.containers.ensureNetwork().catch((err) => console.error("docker network", err));
   hub.runs.recoverOnBoot();
   hub.runs.startWatchdog();
+  hub.recovery.start();
+  hub.runners.startHeartbeat();
   hub.desktops.startReaper();
   hub.scheduler.start();
   void hub.models.seed();

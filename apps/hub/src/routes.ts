@@ -30,7 +30,7 @@ class HttpError extends Error {
 }
 
 export function registerRoutes(hub: Hub): void {
-  const { app, auth, agents, runs, events, desktops, knowledge, learning, reflect, scheduler, notifier, newapi, models, settings, containers, db } = hub;
+  const { app, auth, agents, runs, recovery, events, desktops, knowledge, learning, reflect, scheduler, notifier, newapi, models, settings, containers, db } = hub;
 
   app.setErrorHandler((err: any, _req, reply) => {
     const status = err instanceof HttpError ? err.status : err?.validation || err instanceof z.ZodError ? 400 : (err?.statusCode ?? 400);
@@ -136,12 +136,7 @@ export function registerRoutes(hub: Hub): void {
   app.get("/api/overview", async () => {
     const list = agents.list();
     const agentViews = await Promise.all(list.map((a) => agentView(hub, a.id)));
-    const approvals = db
-      .prepare(
-        `SELECT ap.*, r.conversation_id, a.name AS agent_name, a.emoji AS agent_emoji FROM approvals ap
-         JOIN runs r ON r.id = ap.run_id JOIN agents a ON a.id = ap.agent_id WHERE ap.status = 'pending' ORDER BY ap.created_at`,
-      )
-      .all();
+    const approvals = pendingApprovals();
     const conversations = db
       .prepare(
         `SELECT c.*, a.name AS agent_name, a.emoji AS agent_emoji,
@@ -150,7 +145,7 @@ export function registerRoutes(hub: Hub): void {
       )
       .all();
     const unread = (db.prepare("SELECT COUNT(*) AS n FROM notifications WHERE read = 0").get() as { n: number }).n;
-    return { agents: agentViews, approvals, conversations, desktops: await desktops.list(), unread };
+    return { agents: agentViews, approvals, conversations, desktops: await desktops.list(), unread, incidents: incidentViews(recovery.list({ status: "open", limit: 20 })) };
   });
 
   app.get("/api/stream", async (req, reply) => {
@@ -300,7 +295,8 @@ export function registerRoutes(hub: Hub): void {
     return {
       conversation: conv,
       runs: runRows.map((r) => ({ ...r, events: events.forRun(r.id) })),
-      approvals: db.prepare("SELECT * FROM approvals WHERE run_id IN (SELECT id FROM runs WHERE conversation_id = ?) AND status = 'pending'").all(conv.id),
+      approvals: (db.prepare("SELECT * FROM approvals WHERE run_id IN (SELECT id FROM runs WHERE conversation_id = ?) AND status = 'pending'").all(conv.id) as any[]).map(approvalView),
+      incidents: recovery.list({ conversationId: conv.id, limit: 200 }),
     };
   });
   app.get("/api/conversations/:id/context", async (req) => {
@@ -369,20 +365,44 @@ export function registerRoutes(hub: Hub): void {
     return { summary: await reflect.summarize(days) };
   });
 
-  // ── approvals ────────────────────────────────────────────
-  app.get("/api/approvals", async () =>
-    db
-      .prepare(
-        `SELECT ap.*, r.conversation_id, a.name AS agent_name, a.emoji AS agent_emoji FROM approvals ap JOIN runs r ON r.id = ap.run_id
-         JOIN agents a ON a.id = ap.agent_id WHERE ap.status = 'pending' ORDER BY ap.created_at`,
-      )
-      .all(),
-  );
+  // ── approvals (and the agents' multiple-choice questions) ─
+  const pendingApprovals = () =>
+    (
+      db
+        .prepare(
+          `SELECT ap.*, r.conversation_id, a.name AS agent_name, a.emoji AS agent_emoji FROM approvals ap JOIN runs r ON r.id = ap.run_id
+           JOIN agents a ON a.id = ap.agent_id WHERE ap.status = 'pending' ORDER BY ap.created_at`,
+        )
+        .all() as any[]
+    ).map(approvalView);
+  app.get("/api/approvals", async () => pendingApprovals());
   app.post("/api/approvals/:id", async (req) => {
-    const b = z.object({ decision: z.enum(["approve", "deny"]) }).parse(req.body);
-    await runs.resolveApproval(id(req), b.decision, actor(req));
+    const b = z.object({ decision: z.enum(["approve", "deny"]), answer: z.string().max(2000).optional() }).parse(req.body);
+    await runs.resolveApproval(id(req), b.decision, actor(req), "user", b.answer);
     return { ok: true };
   });
+
+  // ── incidents (diagnosis reports, supervisor interventions) ─
+  const incidentViews = (list: ReturnType<typeof recovery.list>) => {
+    const names = new Map(agents.list(true).map((a) => [a.id, a]));
+    return list.map((i) => ({ ...i, agent_name: names.get(i.agent_id ?? "")?.name ?? null, agent_emoji: names.get(i.agent_id ?? "")?.emoji ?? null }));
+  };
+  app.get("/api/incidents", async (req) => {
+    const q = z
+      .object({ status: z.enum(["open", "all"]).default("all"), conversationId: z.string().optional(), limit: z.coerce.number().int().min(1).max(500).default(100) })
+      .parse(req.query);
+    return incidentViews(recovery.list(q));
+  });
+  app.get("/api/incidents/:id", async (req) => {
+    const inc = recovery.get(id(req));
+    if (!inc) throw new HttpError(404, "报告不存在");
+    return incidentViews([inc])[0];
+  });
+  app.post("/api/incidents/:id/adopt", async (req) => {
+    const b = z.object({ index: z.number().int().min(0) }).parse(req.body);
+    return recovery.adopt(id(req), b.index, actor(req));
+  });
+  app.post("/api/incidents/:id/dismiss", async (req) => recovery.dismiss(id(req), actor(req)));
 
   // ── desktops ─────────────────────────────────────────────
   app.get("/api/desktops", async () => desktops.list());
@@ -731,7 +751,17 @@ export function registerRoutes(hub: Hub): void {
     };
   });
   app.post("/api/system/backup", async () => ({ file: path.basename(await hub.backup()) }));
-  app.get("/api/audit", async () => db.prepare("SELECT * FROM audit ORDER BY id DESC LIMIT 200").all());
+  app.get("/api/audit", async (req) => {
+    const q = z.object({ limit: z.coerce.number().int().min(1).max(1000).default(300), before: z.coerce.number().int().optional() }).parse(req.query);
+    return q.before
+      ? db.prepare("SELECT * FROM audit WHERE id < ? ORDER BY id DESC LIMIT ?").all(q.before, q.limit)
+      : db.prepare("SELECT * FROM audit ORDER BY id DESC LIMIT ?").all(q.limit);
+  });
+}
+
+/** Approval rows with a question's options parsed. */
+function approvalView(row: Record<string, any>) {
+  return { ...row, options: row.options ? JSON.parse(row.options) : null };
 }
 
 function id(req: FastifyRequest): string {

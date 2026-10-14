@@ -27,6 +27,9 @@ type ToolResult = { content: ({ type: "text"; text: string } | { type: "image"; 
 const text = (t: string): ToolResult => ({ content: [{ type: "text", text: t }] });
 const fail = (t: string): ToolResult => ({ content: [{ type: "text", text: t }], isError: true });
 
+/** How long ask_user waits for the owner; stays under the engine's MCP tool timeout (960 s). */
+const ASK_WAIT_MS = 14 * 60_000;
+
 /** Read-only host commands that skip approval (single command, no shell operators). */
 const HOST_READONLY =
   /^(ls|cat|head|tail|df|du|free|uptime|uname|whoami|hostname|ps|top -bn1|ss -[a-z]+|ip (a|addr|route)|docker (ps|images|logs|inspect|stats --no-stream)|systemctl (status|list-units|is-active)|journalctl|lsblk|date|env|which|stat|wc|grep|find)\b[^;&|`$<>]*$/;
@@ -93,6 +96,36 @@ function buildServer(agent: AgentRow, d: McpDeps): McpServer {
     guard(async () => {
       const m = d.knowledge.memory(agent.id);
       return text(`## 你的记忆\n${m.agent}\n\n## 关于用户\n${m.user}`);
+    }),
+  );
+
+  // ── asking the owner ─────────────────────────────────────
+  server.registerTool(
+    "ask_user",
+    {
+      description:
+        "拿不准、需要主人拍板时调用：给出 2-4 个具体选项，主人在手机上点选或直接写回答。最多等 14 分钟；没回复时按推荐项继续推进（主人之后的选择会作为新消息发给你）。能自己查清、自己决定的事不要问。",
+      inputSchema: {
+        question: z.string().min(2).max(500),
+        options: z
+          .array(z.object({ label: z.string().min(1).max(60), detail: z.string().max(200).optional() }))
+          .min(2)
+          .max(4),
+        recommended: z.number().int().min(0).max(3).optional().describe("推荐选项的序号（从 0 开始）。只在按它继续是安全、可撤销的时候填"),
+      },
+    },
+    guard(async ({ question, options, recommended }) => {
+      const r = run();
+      const rec = recommended !== undefined && recommended < options.length ? recommended : undefined;
+      const res = await d.runs.requestDecision(r.id, question, options, rec, ASK_WAIT_MS);
+      if (res.status === "answered") return text(`主人的回答：${res.answer}`);
+      if (res.status === "dismissed") return text("主人没有选，让你自己判断。按你认为最稳妥的做法继续。");
+      if (res.status === "ended") return fail("任务已经结束");
+      return text(
+        rec !== undefined
+          ? `主人暂时没有回复。按推荐选项「${options[rec]!.label}」继续推进；如果主人之后改选，会以新消息告诉你。`
+          : "主人暂时没有回复。先完成不依赖这个决定的部分；如果非等不可，结束本轮并用一句话说明在等哪个决定，主人回答后会以新消息告诉你。",
+      );
     }),
   );
 

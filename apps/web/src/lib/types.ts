@@ -70,14 +70,61 @@ export interface Approval {
   id: string;
   run_id: string;
   agent_id: string;
+  /** "decision" is a multiple-choice question from the agent (ask_user); the rest are approvals. */
   kind: string;
   summary: string;
   detail: string | null;
   status: string;
   created_at: string;
+  options?: DecisionOption[] | null;
+  recommended?: number | null;
   conversation_id?: string;
   agent_name?: string;
   agent_emoji?: string;
+}
+
+export interface DecisionOption {
+  label: string;
+  detail?: string;
+}
+
+export type IncidentAction = "continue" | "switch_model" | "restart_agent" | "new_thread" | "wait" | "restart" | "stop";
+
+export interface IncidentOption {
+  title: string;
+  detail: string;
+  action: IncidentAction;
+  model?: string;
+  text: string;
+}
+
+/** Something that went wrong with a run: auto-handled (kept for the audit trail) or waiting for the owner to pick an option. */
+export interface Incident {
+  id: string;
+  kind: "start_failure" | "engine_error" | "stalled" | "stuck";
+  agent_id: string | null;
+  conversation_id: string | null;
+  run_id: string | null;
+  title: string;
+  summary: string;
+  error: string | null;
+  actions: string[];
+  options: IncidentOption[];
+  recommended: number | null;
+  status: "analyzing" | "open" | "auto" | "adopted" | "dismissed";
+  resolution: string | null;
+  created_at: string;
+  resolved_at: string | null;
+  agent_name?: string | null;
+  agent_emoji?: string | null;
+}
+
+export interface AuditEntry {
+  id: number;
+  ts: string;
+  actor: string;
+  action: string;
+  detail: string | null;
 }
 
 export interface Desktop {
@@ -131,4 +178,6 @@ export interface Overview {
   conversations: Conversation[];
   desktops: Desktop[];
   unread: number;
+  /** Incidents waiting for the owner (open or being diagnosed). */
+  incidents: Incident[];
 }

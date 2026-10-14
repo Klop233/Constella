@@ -79,6 +79,29 @@ const MIGRATIONS: string[] = [
   ALTER TABLE conversations ADD COLUMN model TEXT;
   ALTER TABLE conversations ADD COLUMN effort TEXT;
   `,
+  // Self-maintenance: persisted continuations, incidents with options for the owner, supervisor bookkeeping,
+  // and multiple-choice questions from agents (stored as approvals of kind 'decision').
+  `
+  CREATE TABLE resumes (
+    id TEXT PRIMARY KEY, run_id TEXT NOT NULL, conversation_id TEXT NOT NULL, agent_id TEXT NOT NULL,
+    text TEXT NOT NULL, reason TEXT NOT NULL, status TEXT NOT NULL, due_at TEXT, created_at TEXT NOT NULL
+  );
+  CREATE INDEX resumes_due ON resumes(status, due_at);
+  CREATE TABLE incidents (
+    id TEXT PRIMARY KEY, kind TEXT NOT NULL, agent_id TEXT, conversation_id TEXT, run_id TEXT,
+    title TEXT NOT NULL, summary TEXT NOT NULL, error TEXT, actions TEXT NOT NULL DEFAULT '[]',
+    options TEXT NOT NULL DEFAULT '[]', recommended INTEGER, status TEXT NOT NULL, resolution TEXT,
+    created_at TEXT NOT NULL, resolved_at TEXT
+  );
+  CREATE INDEX incidents_status ON incidents(status, created_at);
+  CREATE INDEX incidents_conversation ON incidents(conversation_id, created_at);
+  ALTER TABLE runs ADD COLUMN progress INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE runs ADD COLUMN interventions INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE runs ADD COLUMN check_after TEXT;
+  ALTER TABLE approvals ADD COLUMN options TEXT;
+  ALTER TABLE approvals ADD COLUMN recommended INTEGER;
+  ALTER TABLE approvals ADD COLUMN answer TEXT;
+  `,
 ];
 
 /**

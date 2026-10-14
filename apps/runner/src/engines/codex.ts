@@ -10,6 +10,8 @@ export interface EngineSink {
   event(event: RunnerEvent): void;
   thread(runId: string, threadId: string): void;
   done(runId: string, status: "done" | "failed" | "cancelled", error?: string): void;
+  /** The engine is still working on this run (any notification), even if nothing became an event yet. */
+  activity(runId: string): void;
 }
 
 interface ActiveRun {
@@ -25,6 +27,8 @@ interface ActiveRun {
   /** Whether the model has done anything this turn; usage reported before that is a replay of the previous turn. */
   active: boolean;
   lastError?: string;
+  /** Last time activity was reported to the hub (throttled). */
+  lastActivity: number;
 }
 
 /** Item types that are tool calls; when one completes, the model's next request begins. */
@@ -36,6 +40,8 @@ interface PendingApproval {
 }
 
 const MAX_TOOL_OUTPUT = 64 * 1024;
+/** Report "still working" at most this often; the hub only needs it to tell a long think from a hang. */
+const ACTIVITY_EVERY_MS = 30_000;
 const MAX_CHUNK = 4 * 1024;
 
 /** Drives `codex app-server` (JSON-RPC over stdio) and maps its notifications to Constella events. */
@@ -103,6 +109,7 @@ export class CodexEngine {
         reasoning: new Map(),
         requestStart: Date.now(),
         active: false,
+        lastActivity: Date.now(),
       };
       this.#runs.set(cmd.runId, run);
       this.#runsByThread.set(threadId, run);
@@ -256,6 +263,11 @@ export class CodexEngine {
     const run = p.threadId ? this.#runsByThread.get(p.threadId) : undefined;
     if (!run) return;
     const runId = run.runId;
+    // Reasoning and other deltas don't all become events; still tell the hub the run is alive.
+    if (Date.now() - run.lastActivity > ACTIVITY_EVERY_MS) {
+      run.lastActivity = Date.now();
+      this.#sink.activity(runId);
+    }
     switch (method) {
       case "item/agentMessage/delta":
         this.#sink.event({ type: "message.delta", runId, messageId: p.itemId, text: p.delta });

@@ -10,3 +10,4 @@ data/
 docs/spikes/runs/
 deploy/docker-compose.override.yml
 AGENTS.md
+.claude/worktrees/

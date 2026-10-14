@@ -60,9 +60,12 @@ export const AgentEvent = z.discriminatedUnion("type", [
     ...envelope,
     type: z.literal("approval.requested"),
     approvalId: z.string(),
-    kind: z.enum(["command", "file_change", "host_access", "desktop", "other"]),
+    kind: z.enum(["command", "file_change", "host_access", "desktop", "decision", "other"]),
     summary: z.string(),
     detail: z.string().optional(),
+    /** kind=decision: the choices the agent offers the owner, and which one it recommends. */
+    options: z.array(z.object({ label: z.string(), detail: z.string().optional() })).optional(),
+    recommended: z.number().int().nonnegative().optional(),
   }),
   z.object({
     ...envelope,
@@ -70,6 +73,8 @@ export const AgentEvent = z.discriminatedUnion("type", [
     approvalId: z.string(),
     decision: z.enum(["approve", "deny"]),
     by: z.enum(["user", "policy"]),
+    /** kind=decision: what the owner chose (an option's label or their own words). */
+    answer: z.string().optional(),
   }),
   z.object({
     ...envelope,
@@ -93,6 +98,14 @@ export const AgentEvent = z.discriminatedUnion("type", [
     contextWindow: z.number().int().positive().optional(),
     /** Wall time of this model request (from the previous boundary to its usage report), for tokens/s. */
     durationMs: z.number().int().nonnegative().optional(),
+  }),
+  /** Something the hub did on its own for this run: repaired a runner, a supervisor stepped in, filed an incident. */
+  z.object({
+    ...envelope,
+    type: z.literal("system.notice"),
+    kind: z.enum(["recovery", "supervisor", "incident"]),
+    text: z.string(),
+    incidentId: z.string().optional(),
   }),
   z.object({
     ...envelope,

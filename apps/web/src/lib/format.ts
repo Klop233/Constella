@@ -20,7 +20,7 @@ export function clock(iso: string | null | undefined): string {
 export const STATUS_TEXT: Record<RunStatus, string> = {
   queued: "排队中",
   running: "进行中",
-  waiting_approval: "等待审批",
+  waiting_approval: "等你处理",
   paused_by_user: "你在操作桌面",
   done: "已完成",
   failed: "失败",

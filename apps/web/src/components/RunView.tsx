@@ -1,12 +1,13 @@
-import { Brain, ChevronRight, CircleAlert, RotateCw, FileEdit, Globe, Loader2, Monitor, Terminal, ThumbsDown, ThumbsUp, Wrench, X } from "lucide-react";
+import { Brain, Check, ChevronRight, CircleAlert, Eye, RotateCw, FileEdit, Globe, Loader2, MessageCircleQuestion, Monitor, Stethoscope, Terminal, ThumbsDown, ThumbsUp, Wrench, X } from "lucide-react";
 import { memo, useMemo, useState } from "react";
 import { Link } from "react-router";
 import { api } from "../lib/api";
 import { useAppearance } from "../lib/appearance";
 import { clock, duration, STATUS_TEXT, tokens } from "../lib/format";
 import { useModelLabel } from "../lib/models";
-import type { AgentEvent, Approval, Run } from "../lib/types";
+import type { AgentEvent, Approval, DecisionOption, Incident, Run } from "../lib/types";
 import { ApprovalCard } from "./ApprovalCard";
+import { IncidentCard, IncidentStatus } from "./IncidentCard";
 import { Markdown } from "./Markdown";
 import { cx, toast } from "./ui";
 
@@ -14,14 +15,17 @@ type Item =
   | { kind: "message"; id: string; text: string; streaming: boolean; user: boolean }
   | { kind: "reasoning"; id: string; text: string }
   | { kind: "tool"; id: string; name: string; input: unknown; output: string; done: boolean; ok: boolean; error?: string; result?: unknown }
-  | { kind: "approval"; id: string; approvalId: string; summary: string; resolved?: "approve" | "deny"; by?: "user" | "policy" }
-  | { kind: "desktop"; id: string; desktopId: string; action: string };
+  | { kind: "approval"; id: string; approvalId: string; summary: string; question: boolean; options?: DecisionOption[]; resolved?: "approve" | "deny"; by?: "user" | "policy"; answer?: string }
+  | { kind: "desktop"; id: string; desktopId: string; action: string }
+  | { kind: "notice"; id: string; notice: "recovery" | "supervisor" | "incident"; text: string; incidentId?: string };
 
 const STEER_PREFIX = "［追加指示］";
 /** Same as MIN_TIMED_MS in apps/hub/src/usage.ts: shorter requests are timing artifacts and don't count toward speed. */
 const MIN_TIMED_MS = 250;
-/** Matches RESUME_PREFIX in apps/hub/src/runs.ts: runs the hub started itself after a restart. */
+/** Match the prefixes in apps/hub/src/runs.ts: runs the hub started itself, an adopted option, a late answer. */
 const RESUME_PREFIX = "［自动继续］";
+const ADOPT_PREFIX = "［采用方案］";
+const ANSWER_PREFIX = "［主人的选择］";
 
 /** Folds a run's event stream into display items (streaming text, tool cards, approvals). */
 export interface Usage {
@@ -84,16 +88,19 @@ export function buildItems(events: AgentEvent[]): { items: Item[]; usage: Usage 
         break;
       }
       case "approval.requested": {
-        const a: Item = { kind: "approval", id: ev.id, approvalId: ev.approvalId, summary: ev.summary };
+        const a: Item = { kind: "approval", id: ev.id, approvalId: ev.approvalId, summary: ev.summary, question: ev.kind === "decision", options: ev.options };
         byId.set(`ap:${ev.approvalId}`, a);
         items.push(a);
         break;
       }
       case "approval.resolved": {
         const a = byId.get(`ap:${ev.approvalId}`) as Extract<Item, { kind: "approval" }> | undefined;
-        if (a) Object.assign(a, { resolved: ev.decision, by: ev.by });
+        if (a) Object.assign(a, { resolved: ev.decision, by: ev.by, answer: ev.answer });
         break;
       }
+      case "system.notice":
+        items.push({ kind: "notice", id: ev.id, notice: ev.kind, text: ev.text, incidentId: ev.incidentId });
+        break;
       case "desktop.action":
         items.push({ kind: "desktop", id: ev.id, desktopId: ev.desktopId, action: ev.action });
         break;
@@ -285,7 +292,67 @@ function UsageLine({ run, usage }: { run: Run; usage: Usage }) {
   return <>{parts.join(" · ")}</>;
 }
 
-export function RunView({ run, approvals, onChanged }: { run: Run; approvals: Approval[]; onChanged: () => void }) {
+const NOTICE_ICON = { recovery: Wrench, supervisor: Eye, incident: Stethoscope };
+
+/** A line about something the hub did by itself; the first mention of an open report shows the report itself. */
+function NoticeLine({ item, incident, first, onChanged }: { item: Extract<Item, { kind: "notice" }>; incident?: Incident; first: boolean; onChanged: () => void }) {
+  if (incident && first && (incident.status === "open" || incident.status === "analyzing")) {
+    return <IncidentCard incident={incident} showAgent={false} showLink={false} onChanged={onChanged} />;
+  }
+  const Icon = NOTICE_ICON[item.notice];
+  const body = (
+    <>
+      <Icon className="size-3.5 mt-0.5 shrink-0" />
+      <span className="flex-1 min-w-0">{incident && first ? incident.title : item.text}</span>
+      {incident && first && <IncidentStatus incident={incident} />}
+    </>
+  );
+  return incident ? (
+    <Link to={`/audit?id=${incident.id}`} className="flex items-start gap-2 text-[12.5px] text-muted hover:text-[var(--text)]">
+      {body}
+    </Link>
+  ) : (
+    <div className="flex items-start gap-2 text-[12.5px] text-muted">{body}</div>
+  );
+}
+
+/** How the run was started: the owner's message, or one of the hub's own kinds of prompt. */
+function RunPrompt({ run }: { run: Run }) {
+  const p = run.prompt;
+  if (p.startsWith(RESUME_PREFIX)) {
+    return (
+      <div className="flex items-center gap-1.5 text-[12.5px] text-muted">
+        <RotateCw className="size-3.5" /> 中断后自动继续 · {clock(run.created_at)}
+      </div>
+    );
+  }
+  if (p.startsWith(ADOPT_PREFIX)) {
+    const [title, ...rest] = p.slice(ADOPT_PREFIX.length).split("\n");
+    return (
+      <div className="text-[12.5px] text-muted">
+        <div className="flex items-center gap-1.5">
+          <Check className="size-3.5" /> 采用方案「{title}」 · {clock(run.created_at)}
+        </div>
+        {rest.join("\n").trim() && <div className="mt-1 ml-5 line-clamp-3 whitespace-pre-wrap">{rest.join("\n").trim()}</div>}
+      </div>
+    );
+  }
+  if (p.startsWith(ANSWER_PREFIX)) {
+    const body = p.slice(ANSWER_PREFIX.length);
+    const cut = body.lastIndexOf("\n→ ");
+    const question = cut >= 0 ? body.slice(0, cut) : "";
+    const answer = cut >= 0 ? body.slice(cut + 3) : body;
+    return (
+      <div className="flex flex-col items-end">
+        {question && <div className="text-[11.5px] text-muted mb-1 max-w-[85%] truncate">回答「{question}」</div>}
+        <UserBubble text={answer} time={clock(run.created_at)} />
+      </div>
+    );
+  }
+  return <UserBubble text={p} time={clock(run.created_at)} />;
+}
+
+export function RunView({ run, approvals, incidents = [], onChanged }: { run: Run; approvals: Approval[]; incidents?: Incident[]; onChanged: () => void }) {
   const modelLabel = useModelLabel();
   const { blocks, usage } = useMemo(() => {
     const { items, usage } = buildItems(run.events);
@@ -294,6 +361,9 @@ export function RunView({ run, approvals, onChanged }: { run: Run; approvals: Ap
   const finished = ["done", "failed", "cancelled"].includes(run.status);
   const { usage: showUsage } = useAppearance();
   const pending = new Map(approvals.map((a) => [a.id, a]));
+  const reports = new Map(incidents.map((i) => [i.id, i]));
+  const seen = new Set<string>();
+  const asking = blocks.some((b) => b.kind === "approval" && b.question && pending.has(b.approvalId));
   const feedback = async (value: 1 | -1) => {
     try {
       await api.post(`/api/runs/${run.id}/feedback`, { value });
@@ -305,13 +375,7 @@ export function RunView({ run, approvals, onChanged }: { run: Run; approvals: Ap
   };
   return (
     <div className="space-y-3">
-      {run.prompt.startsWith(RESUME_PREFIX) ? (
-        <div className="flex items-center gap-1.5 text-[12.5px] text-muted">
-          <RotateCw className="size-3.5" /> 中断后自动继续 · {clock(run.created_at)}
-        </div>
-      ) : (
-        <UserBubble text={run.prompt} time={clock(run.created_at)} />
-      )}
+      <RunPrompt run={run} />
       {blocks.map((it, i) => {
         switch (it.kind) {
           case "message":
@@ -325,9 +389,23 @@ export function RunView({ run, approvals, onChanged }: { run: Run; approvals: Ap
             );
           case "steps":
             return <StepGroup key={it.id} steps={it.steps} live={!finished && i === blocks.length - 1} />;
+          case "notice": {
+            const first = !!it.incidentId && !seen.has(it.incidentId);
+            if (it.incidentId) seen.add(it.incidentId);
+            return <NoticeLine key={it.id} item={it} incident={it.incidentId ? reports.get(it.incidentId) : undefined} first={first} onChanged={onChanged} />;
+          }
           case "approval": {
             const a = pending.get(it.approvalId);
             if (a) return <ApprovalCard key={it.id} approval={a} showAgent={false} onResolved={onChanged} />;
+            if (it.question)
+              return (
+                <div key={it.id} className="text-xs text-muted flex items-start gap-1.5">
+                  <MessageCircleQuestion className="size-3.5 shrink-0" />
+                  <span className="min-w-0">
+                    问「{it.summary.slice(0, 60)}」{it.resolved === "approve" ? <>→ 「{it.answer}」</> : it.resolved === "deny" ? "→ 交给它自己判断" : "→ 已失效"}
+                  </span>
+                </div>
+              );
             return (
               <div key={it.id} className="text-xs text-muted flex items-center gap-1.5">
                 <CircleAlert className="size-3.5" /> 审批「{it.summary.slice(0, 40)}」{it.resolved === "approve" ? (it.by === "policy" ? "已自动批准" : "已批准") : it.resolved === "deny" ? "已拒绝" : "已失效"}
@@ -336,7 +414,7 @@ export function RunView({ run, approvals, onChanged }: { run: Run; approvals: Ap
           }
         }
       })}
-      {!finished && !(run.status === "running" && blocks.at(-1)?.kind === "steps") && (
+      {!finished && !asking && !(run.status === "running" && blocks.at(-1)?.kind === "steps") && (
         <div className="flex items-center gap-2 text-sm text-muted">
           <Loader2 className="size-4 animate-spin" /> {STATUS_TEXT[run.status]}…
         </div>

@@ -3,6 +3,7 @@ import { Bell, Monitor, Plus } from "lucide-react";
 import { useState } from "react";
 import { useNavigate } from "react-router";
 import { ApprovalCard } from "../components/ApprovalCard";
+import { IncidentCard } from "../components/IncidentCard";
 import { AgentAvatar, AgentStatus } from "../components/AgentBits";
 import { Badge, Card, Empty, Header, IconButton, Loading, Section, Sheet, cx } from "../components/ui";
 import { api } from "../lib/api";
@@ -52,10 +53,27 @@ export default function Home() {
       ) : (
         <div className="px-4 space-y-5 pb-6">
           {data.approvals.length > 0 && (
-            <Section title={`待审批 · ${data.approvals.length}`}>
+            <Section title={`${approvalsTitle(data.approvals.map((a) => a.kind))} · ${data.approvals.length}`}>
               <div className="space-y-3">
                 {data.approvals.map((a) => (
                   <ApprovalCard key={a.id} approval={a} />
+                ))}
+              </div>
+            </Section>
+          )}
+
+          {data.incidents.length > 0 && (
+            <Section
+              title={`需要你处理 · ${data.incidents.length}`}
+              action={
+                <button className="text-xs text-muted hover:text-[var(--text)]" onClick={() => nav("/audit")}>
+                  审计记录
+                </button>
+              }
+            >
+              <div className="space-y-3">
+                {data.incidents.slice(0, 3).map((i) => (
+                  <IncidentCard key={i.id} incident={i} />
                 ))}
               </div>
             </Section>
@@ -163,4 +181,10 @@ export default function Home() {
       </Sheet>
     </div>
   );
+}
+
+/** Approvals and the agents' questions share one list; name it after what's in it. */
+function approvalsTitle(kinds: string[]): string {
+  const questions = kinds.filter((k) => k === "decision").length;
+  return questions === 0 ? "待审批" : questions === kinds.length ? "需要你选择" : "待审批和选择";
 }

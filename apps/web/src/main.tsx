@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
-import { Brain, CalendarClock, ChevronsUpDown, Gauge, House, LogOut, Monitor, Palette, Plus, Search, Settings as SettingsIcon, Shield, SlidersHorizontal, Sparkles, ExternalLink, X } from "lucide-react";
+import { Brain, CalendarClock, ChevronsUpDown, ClipboardCheck, Gauge, House, LogOut, Monitor, Palette, Plus, Search, Settings as SettingsIcon, Shield, SlidersHorizontal, Sparkles, ExternalLink, X } from "lucide-react";
 import { lazy, StrictMode, Suspense, useEffect, useState, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter, NavLink, Route, Routes, useLocation, useNavigate } from "react-router";
@@ -24,6 +24,7 @@ const Learning = lazy(() => import("./pages/Learning"));
 const Settings = lazy(() => import("./pages/Settings"));
 const Reflect = lazy(() => import("./pages/Reflect"));
 const Usage = lazy(() => import("./pages/Usage"));
+const Audit = lazy(() => import("./pages/Audit"));
 
 const qc = new QueryClient({
   defaultOptions: {
@@ -65,7 +66,12 @@ const TABS = [
 ];
 
 // Desktop sidebar: the mobile tabs minus 设置 (it lives in the account row), plus pages without a mobile tab.
-const NAV = [...TABS.filter((t) => t.to !== "/settings"), { to: "/usage", label: "用量", icon: Gauge, end: false }, { to: "/reflect", label: "回顾", icon: Sparkles, end: false }];
+const NAV = [
+  ...TABS.filter((t) => t.to !== "/settings"),
+  { to: "/audit", label: "审计", icon: ClipboardCheck, end: false },
+  { to: "/usage", label: "用量", icon: Gauge, end: false },
+  { to: "/reflect", label: "回顾", icon: Sparkles, end: false },
+];
 
 /** Conversation bullet, like Claude Code's session dots: hollow when idle, colored while something is going on. */
 function StatusDot({ status }: { status?: string | null }) {
@@ -102,6 +108,7 @@ function AccountMenu({ name }: { name: string }) {
           <>
             <div className="px-2.5 pt-1 pb-1.5 text-xs text-muted truncate">{name}</div>
             <MenuItem icon={<SettingsIcon />} label="设置" hint="Ctrl+," onClick={go("/settings")} />
+            <MenuItem icon={<ClipboardCheck />} label="审计" onClick={go("/audit")} />
             <MenuItem icon={<Gauge />} label="用量" onClick={go("/usage")} />
             <MenuItem icon={<Sparkles />} label="回顾" onClick={go("/reflect")} />
             <MenuDivider />
@@ -134,6 +141,7 @@ function Sidebar() {
     convs: (overview.data?.conversations ?? []).filter((c) => c.agent_id === a.id && (!needle || c.title.toLowerCase().includes(needle) || a.name.toLowerCase().includes(needle))),
   }));
   const name = me.data?.name ?? "";
+  const toHandle = overview.data?.incidents?.length ?? 0;
   return (
     <aside className="hidden lg:flex fixed inset-y-0 left-0 z-30 w-64 flex-col border-r border-line bg-sidebar">
       <div className="px-2.5 pt-3 pb-1.5">
@@ -150,7 +158,8 @@ function Sidebar() {
         {NAV.map((t) => (
           <NavLink key={t.to} to={t.to} end={t.end} className={item}>
             <t.icon className="size-4" strokeWidth={1.8} />
-            {t.label}
+            <span className="flex-1">{t.label}</span>
+            {t.to === "/audit" && toHandle > 0 && <span className="text-[11px] text-warn tabular-nums">{toHandle}</span>}
           </NavLink>
         ))}
       </nav>
@@ -242,7 +251,7 @@ function ApprovalPopups() {
   const total = pending.data?.length ?? 0;
   useEffect(() => {
     const base = "Constella";
-    document.title = total ? `(${total}) 待审批 · ${base}` : base;
+    document.title = total ? `(${total}) 待处理 · ${base}` : base;
   }, [total]);
   if (!list.length) return null;
   return (
@@ -317,6 +326,7 @@ function App() {
                 <Route path="/settings" element={<Settings />} />
                 <Route path="/reflect" element={<Reflect />} />
                 <Route path="/usage" element={<Usage />} />
+                <Route path="/audit" element={<Audit />} />
                 <Route path="*" element={<Home />} />
               </Routes>
             </Suspense>
