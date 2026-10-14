@@ -2,6 +2,7 @@ import { Brain, Check, ChevronRight, CircleSlash, CircleX, Eye, FileEdit, Globe,
 import { memo, useMemo, useState, type ReactNode } from "react";
 import { Link } from "react-router";
 import { api } from "../lib/api";
+import { openInstanceWindow } from "../lib/instanceWindow";
 import { useAppearance } from "../lib/appearance";
 import { clock, duration, STATUS_TEXT, tokens } from "../lib/format";
 import { useModelLabel } from "../lib/models";
@@ -228,9 +229,9 @@ function StepRow({ step, ended }: { step: Step; ended: boolean }) {
     );
   }
   return (
-    <Link to={`/instances/${step.desktopId}`} className="flex items-center gap-2 py-1 text-[12.5px] text-muted hover:text-[var(--text)]">
+    <button type="button" title="小窗查看实例" onClick={() => openInstanceWindow(step.desktopId)} className="flex items-center gap-2 py-1 text-[12.5px] text-muted hover:text-[var(--text)] text-left">
       <Monitor className="size-3.5 shrink-0" /> {step.action}
-    </Link>
+    </button>
   );
 }
 
