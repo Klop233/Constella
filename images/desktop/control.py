@@ -11,6 +11,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 CHROME_PROFILE = os.path.expanduser("~/.config/constella-chromium")
+CHROMIUM = "/opt/constella/chromium.sh"
+# "browser": the session keeps Chromium running and nothing else may be started; "xfce": a full desktop.
+SESSION = os.environ.get("CONSTELLA_SESSION", "xfce")
 KEY_ALIASES = {"enter": "Return", "esc": "Escape", "backspace": "BackSpace", "tab": "Tab", "space": "space",
                "up": "Up", "down": "Down", "left": "Left", "right": "Right", "delete": "Delete",
                "home": "Home", "end": "End", "pageup": "Prior", "pagedown": "Next",
@@ -48,22 +51,26 @@ def chromium_running():
     return subprocess.run(["pgrep", "-f", "chromium.*remote-debugging-port=9222"], capture_output=True).returncode == 0
 
 
+def wait_cdp(seconds=10):
+    for _ in range(int(seconds * 5)):
+        try:
+            run("curl", "-fs", "http://127.0.0.1:9222/json/version", timeout=2)
+            return True
+        except Exception:
+            time.sleep(0.2)
+    return False
+
+
 def ensure_browser(url=None):
-    if not chromium_running():
-        args = ["chromium", "--no-sandbox", "--disable-dev-shm-usage", "--no-first-run", "--no-default-browser-check",
-                "--password-store=basic", "--test-type", "--remote-debugging-port=9222", "--remote-debugging-address=127.0.0.1",
-                f"--user-data-dir={CHROME_PROFILE}", "--start-maximized"]
-        subprocess.Popen(args + ([url] if url else []), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    if not chromium_running() and SESSION != "browser":
+        subprocess.Popen([CHROMIUM] + ([url] if url else []), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                          start_new_session=True)
-        for _ in range(50):
-            try:
-                run("curl", "-fs", "http://127.0.0.1:9222/json/version", timeout=2)
-                break
-            except Exception:
-                time.sleep(0.2)
+        wait_cdp()
     elif url:
         subprocess.Popen(["chromium", f"--user-data-dir={CHROME_PROFILE}", url], stdout=subprocess.DEVNULL,
                          stderr=subprocess.DEVNULL, start_new_session=True)
+    else:
+        wait_cdp()  # browser session: it is (re)starting by itself
     return {"running": chromium_running()}
 
 
@@ -117,7 +124,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if u.path == "/health":
                 w, h = screen_size()
-                return self.send_json(200, {"ok": True, "width": w, "height": h, "browser": chromium_running()})
+                return self.send_json(200, {"ok": True, "width": w, "height": h, "browser": chromium_running(), "session": SESSION})
             if u.path == "/screenshot":
                 fmt = q.get("format", "jpeg")
                 img = screenshot(fmt, q.get("width"), int(q.get("quality", 70)))
@@ -149,6 +156,8 @@ class Handler(BaseHTTPRequestHandler):
                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5, check=True)
                 return self.send_json(200, {"ok": True})
             if path == "/launch":
+                if SESSION == "browser":
+                    return self.send_json(400, {"error": "纯浏览器实例只能使用浏览器，不能启动其他程序"})
                 app = a.get("app", "")
                 if not shutil.which(app.split()[0] if app else ""):
                     return self.send_json(400, {"error": f"app not found: {app}"})

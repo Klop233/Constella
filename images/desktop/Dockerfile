@@ -1,4 +1,5 @@
-# constella-desktop: an Xfce desktop an agent (or you) can drive; VNC on 5900, control API on 8000, CDP on 9223.
+# constella-desktop: an Xfce desktop (or, with CONSTELLA_SESSION=browser, just Chromium) an agent or you can drive;
+# VNC on 5900, control API on 8000, CDP on 9223.
 FROM debian:bookworm-slim
 
 ENV DEBIAN_FRONTEND=noninteractive LANG=zh_CN.UTF-8 LC_ALL=zh_CN.UTF-8 TZ=Asia/Shanghai
@@ -12,10 +13,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY supervisord.conf /etc/supervisor/conf.d/constella.conf
 COPY control.py /opt/constella/control.py
-COPY start-session.sh /opt/constella/start-session.sh
-RUN chmod +x /opt/constella/start-session.sh
+COPY start-session.sh chromium.sh /opt/constella/
+RUN chmod +x /opt/constella/start-session.sh /opt/constella/chromium.sh
 
-ENV DISPLAY=:1 GEOMETRY=1280x800
+ENV DISPLAY=:1 GEOMETRY=1280x800 CONSTELLA_SESSION=xfce
 EXPOSE 5900 8000 9223
 HEALTHCHECK --interval=15s --timeout=5s CMD curl -fs http://127.0.0.1:8000/health || exit 1
 CMD ["/usr/bin/supervisord", "-n", "-c", "/etc/supervisor/supervisord.conf"]
