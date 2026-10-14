@@ -186,7 +186,7 @@ export default function AgentEdit() {
                 })}
             </div>
           ) : (
-            <div className="text-sm text-muted">还没有实例。可以到「桌面」页新建，或让 agent 需要时自己新建。</div>
+            <div className="text-sm text-muted">还没有实例。可以到「实例」页新建，或让 agent 需要时自己新建。</div>
           )}
         </Field>
         <Field group label="命令审批">

@@ -10,7 +10,7 @@ const KIND: Record<string, string> = {
   command: "执行命令",
   file_change: "修改文件",
   host_access: "宿主机操作",
-  desktop: "桌面操作",
+  desktop: "实例操作",
   other: "操作",
 };
 

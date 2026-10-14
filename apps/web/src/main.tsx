@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider, useQuery, useQueryClient } from "@tan
 import { Archive, Brain, CalendarClock, ChevronDown, ChevronsUpDown, ClipboardCheck, Gauge, House, Layers, LogOut, Monitor, Palette, Plus, Search, Settings as SettingsIcon, Shield, SlidersHorizontal, Sparkles, ExternalLink, X } from "lucide-react";
 import { lazy, StrictMode, Suspense, useEffect, useState, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
-import { BrowserRouter, NavLink, Route, Routes, useLocation, useNavigate, useSearchParams } from "react-router";
+import { BrowserRouter, Navigate, NavLink, Route, Routes, useLocation, useNavigate, useParams, useSearchParams } from "react-router";
 import { registerSW } from "virtual:pwa-register";
 import { cx, Loading, toast, MenuDivider, MenuItem, navItemClass, Popover } from "./components/ui";
 import "./index.css";
@@ -61,7 +61,7 @@ function Gate({ children }: { children: ReactNode }) {
 
 const TABS = [
   { to: "/", label: "首页", icon: House, end: true },
-  { to: "/desktops", label: "桌面", icon: Monitor },
+  { to: "/instances", label: "实例", icon: Monitor },
   { to: "/tasks", label: "任务", icon: CalendarClock },
   { to: "/learning", label: "学习", icon: Brain },
   { to: "/settings", label: "设置", icon: SettingsIcon },
@@ -75,6 +75,10 @@ const NAV = [
   { to: "/usage", label: "用量", icon: Gauge, end: false },
   { to: "/reflect", label: "回顾", icon: Sparkles, end: false },
 ];
+
+function OldInstanceLink() {
+  return <Navigate to={`/instances/${useParams().id}`} replace />;
+}
 
 /** Conversation bullet, like Claude Code's session dots: hollow when idle, colored while something is going on. */
 function StatusDot({ status }: { status?: string | null }) {
@@ -270,7 +274,7 @@ function Shell({ children }: { children: ReactNode }) {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [nav]);
-  const hideNav = /^\/(c\/|agents\/[^/]+\/(chat|edit)|agents\/new|desktops\/.)/.test(loc.pathname);
+  const hideNav = /^\/(c\/|agents\/[^/]+\/(chat|edit)|agents\/new|instances\/.)/.test(loc.pathname);
   return (
     <div className="min-h-full">
       <Sidebar />
@@ -376,8 +380,11 @@ function App() {
                 <Route path="/agents/:id/edit" element={<AgentEdit />} />
                 <Route path="/agents/:id/chat" element={<Chat />} />
                 <Route path="/c/:conversationId" element={<Chat />} />
-                <Route path="/desktops" element={<Desktops />} />
-                <Route path="/desktops/:id" element={<DesktopView />} />
+                <Route path="/instances" element={<Desktops />} />
+                <Route path="/instances/:id" element={<DesktopView />} />
+                {/* Older links (notifications, bookmarks) still say desktops. */}
+                <Route path="/desktops" element={<Navigate to="/instances" replace />} />
+                <Route path="/desktops/:id" element={<OldInstanceLink />} />
                 <Route path="/tasks" element={<Tasks />} />
                 <Route path="/learning" element={<Learning />} />
                 <Route path="/settings" element={<Settings />} />

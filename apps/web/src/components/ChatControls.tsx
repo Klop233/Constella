@@ -33,12 +33,9 @@ export function ModelPicker({ value, agentModel, onChange }: { value: string | n
           onChange(v);
           close();
         };
-        const item = (id: string | null, title: ReactNode, sub?: string) => (
+        const item = (id: string | null, title: ReactNode) => (
           <button key={id ?? "default"} type="button" onClick={() => pick(id)} className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md text-left text-[13px] hover:bg-surface-2">
-            <span className="flex-1 min-w-0">
-              <span className="block truncate">{title}</span>
-              {sub && <span className="block text-xs text-muted truncate">{sub}</span>}
-            </span>
+            <span className="flex-1 min-w-0 truncate">{title}</span>
             {value === id && <Check className="size-4 text-accent shrink-0" />}
           </button>
         );
@@ -50,10 +47,10 @@ export function ModelPicker({ value, agentModel, onChange }: { value: string | n
                 <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="搜索模型" className="flex-1 bg-transparent outline-none text-[13px]" />
               </label>
             )}
-            {!q && item(null, "跟随 agent", label(agentModel))}
+            {!q && item(null, "跟随 agent")}
             <div className="max-h-72 overflow-y-auto">
               {models.isLoading && <div className="px-3 py-2 text-sm text-muted">加载中…</div>}
-              {list.map((m) => item(m.ref, m.label, [m.bare && m.providerName, m.test && (m.test.ok ? "测试通过" : "测试失败")].filter(Boolean).join(" · ") || undefined))}
+              {list.map((m) => item(m.ref, m.label))}
             </div>
           </div>
         );
