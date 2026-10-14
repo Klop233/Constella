@@ -58,7 +58,7 @@
 
 ## 4. 尺寸、间距、圆角
 
-- **高度**：顶栏 48px（`h-12`）；按钮、输入框、下拉框、设置导航项、菜单项 32px（`h-8`）；侧边栏条目、侧边栏搜索框、分组标题、工具栏和浮层触发器、小按钮 28px（`h-7`）；分段控件容器 28px、选项 24px；chip 和行内小按钮 20–24px。
+- **高度**：顶栏 48px（`h-12`）；按钮、输入框、下拉框、菜单项 32px（`h-8`）；侧边栏条目、设置导航项、侧边栏搜索框、分组标题、工具栏和浮层触发器、小按钮 28px（`h-7`）；分段控件容器 28px、选项 24px；chip 和行内小按钮 20–24px。
 - **图标**：lucide，`strokeWidth={1.8}`。条目、顶栏、关闭按钮、`IconButton` 里都是 16px（`size-4`），密集行内 14px（`size-3.5`），空状态 24px；不用 `size-5` 及以上（手机底部标签除外）。
 - **间距**：页面左右 `px-4`；区块之间 `space-y-5`；区块标题和内容 `space-y-1.5`；卡片内 `p-3`–`p-3.5`；列表行 `px-3.5 py-2.5`。
 - **圆角**：照 Claude Code 收得很小，档位在 `index.css` 的 `@theme` 里统一调小了：`rounded`（3px）用于徽标，`rounded-md`（4px）用于按钮和条目，`rounded-lg`（6px）用于气泡和代码块，`rounded-xl`（8px）用于卡片、输入框、浮层，`rounded-2xl`（10px）用于对话框；状态点和头像用 `rounded-full`。不要绕过档位写任意值（比如 `rounded-[12px]`）。
@@ -88,7 +88,7 @@
 | `Card` | `rounded-xl border bg-surface`，可点击时悬停加深边框 |
 | `Section` | 标题 `text-xs font-medium text-muted`，右侧文字操作用 `text-xs text-muted hover:text-[var(--text)]`，不用主色 |
 | `Row` | 可点击的列表行：图标、标题和副标题、右侧内容；在 `Card` 里用 `divide-y` 分隔。设置项不用它，用 `SettingRow` |
-| `SettingGroup` / `SettingRow` | 设置页：组标题 `text-base font-semibold`，组间 `space-y-8`；行 `py-3.5`，左边标题 `text-sm font-medium` + 描述 `text-[13px] text-muted`（可换行），右边控件；行间 `divide-y`，不套卡片、不放图标；控件宽的行加 `wide`，窄屏时换到下一行 |
+| `SettingGroup` / `SettingRow` | 设置页：组标题 `text-sm font-semibold`，组间 `space-y-5`；行 `py-2.5`，左边标题 `text-[13.5px] font-medium` + 描述 `text-xs text-muted leading-snug`（可换行，写短），右边控件；行间 `divide-y`，不套卡片、不放图标；控件宽的行加 `wide`，窄屏时换到下一行；长列表里每行只有名字和几个按钮的（模型、provider、设备、容器、操作记录）加 `dense`，`py-1.5` |
 | `navItemClass(active)` | 侧边栏和设置导航的条目：选中是文字色 9% 的中性底，悬停 5%；不要再手写这串 color-mix |
 | `Tabs` | 下划线标签：同一份数据的不同视角；选中项加粗加 2px 主色下划线，右侧可放一句 muted 说明 |
 | `StatTile` | 统计卡片：上面是 `text-xs text-muted` 标签，下面是数字（`lg` 是 `text-2xl`，`sm` 是 `text-base`），`tabular-nums` |
