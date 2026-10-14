@@ -49,6 +49,22 @@ Constella 的思路是：**干活的部分不自己写**，直接用 OpenAI 开�
 - 「性能」页看这台服务器：CPU、内存、交换、负载、运行时间、磁盘和实时网速，带最近 1 小时 / 24 小时的曲线；下面按实例、agent 和 hub 服务列出各自占用的 CPU、内存、网络和进程数，点开是每个容器的明细；打开某个实例时也能看到它自己的性能曲线
 - 每天自动备份，默认保留最近 7 份；自动继续、单轮时长、卡住处理、闲置休眠、推送事项、免打扰等都能在设置里调
 
+## 快速开始
+
+已经有一台装好 Docker 的 Linux 服务器、一个能用的 [new-api](https://github.com/QuantumNous/new-api) 的话，十分钟左右能跑起来：
+
+```bash
+git clone https://github.com/<owner>/constella.git
+cd constella/deploy
+cp .env.example .env && chmod 600 .env
+# 编辑 .env：至少填 CONSTELLA_MASTER_KEY、CONSTELLA_SETUP_CODE、CONSTELLA_ORIGINS、NEWAPI_BASE_URL、NEWAPI_API_KEY
+docker compose --profile images build
+docker compose up -d hub
+curl http://127.0.0.1:8780/api/health
+```
+
+然后在服务器本机打开 `http://localhost:8780`（远程的话先 `ssh -L 8780:127.0.0.1:8780 你的服务器`；`CONSTELLA_ORIGINS` 里要保留 `http://localhost:8780`），输入初始化码建账号、新建 agent，就能开始派活。要在手机上用、收推送，还得配一个 HTTPS 入口，见下面的「部署」。
+
 ## 大致结构
 
 ```
@@ -70,12 +86,23 @@ constella-hub ─────────────── 管理服务：登�
 
 ## 部署
 
-需要一台 Linux 服务器，装好 Docker，并且已经有一个能用的 new-api。
+**需要准备**
+
+| 项目 | 要求 |
+|---|---|
+| 服务器 | x86_64 的 Linux（物理机、云主机、VM、特权 LXC 都行） |
+| Docker | Docker Engine 带 `docker compose` 插件；hub 要挂载 `/var/run/docker.sock`，由它按需启动 agent 和实例容器 |
+| 内存 | hub 和每个闲着的 agent 各一两百 MB；实例另算，见「实例类型与宿主要求」。只用浏览器实例的话 4 GB 够用 |
+| 磁盘 | 基础镜像（hub、agent、桌面、安卓桥接）一共约 4.5 GB；安卓模拟器镜像再加 7–8 GB |
+| 模型 | 一个 [new-api](https://github.com/QuantumNous/new-api)，通道要支持 Responses API（`/v1/responses`）。别的 provider 可以之后在 App 里加 |
+| HTTPS 入口 | 手机推送和指纹登录要求 HTTPS：一个托管在 Cloudflare 的域名，或者 Tailscale |
+
+数据目录固定在宿主的 `/srv/constella`，第一次启动时自动创建。
 
 **1. 拉代码，写配置**
 
 ```bash
-git clone <仓库地址> constella
+git clone https://github.com/<owner>/constella.git
 cd constella/deploy
 cp .env.example .env
 chmod 600 .env
@@ -104,6 +131,8 @@ curl http://127.0.0.1:8780/api/health   # 返回 ok 就是起来了
 
 hub 只监听本机 `127.0.0.1:8780`，外面要访问得再配一个入口（见下一步）。
 
+构建时 npm 默认走国内镜像 `registry.npmmirror.com`，海外服务器想用官方源的话：`docker compose --profile images build --build-arg NPM_REGISTRY=https://registry.npmjs.org`。
+
 「性能」页要报告整台机器（而不只是 hub 容器）的 CPU、内存和网速，hub 得只读地看到宿主的 `/proc` 和 `/sys/fs/cgroup`：`docker-compose.yml` 已经把这两个目录挂到容器里的 `/host/proc` 和 `/host/sys/fs/cgroup`，挂载的上级目录可以用 `CONSTELLA_HOST_ROOT` 改（默认 `/host`）。在 LXC 这类容器里跑、或者没挂上时，页面会写明它看到的是 cgroup 还是 hub 容器自己的数字，读不到的指标显示成空，不会当成 0。
 
 要用安卓实例的话，再按机器的情况构建一种（见下面「实例类型与宿主要求」）：
@@ -123,13 +152,15 @@ scripts/build-android-images.sh emulator --accept-android-sdk-license --playstor
   scripts/enable-public.sh constella.你的域名
   ```
 
-  第一次会打印一个 Cloudflare 授权链接，浏览器打开选好域名就行；建隧道、加 DNS、启动 cloudflared 都是脚本自己做。国内服务器连 Cloudflare API 可能需要代理，脚本默认走 `127.0.0.1:7890`，可以用环境变量 `CF_PROXY` 改。
+  服务器上要先装好 [cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/)。第一次会打印一个 Cloudflare 授权链接，浏览器打开选好域名就行；建隧道、加 DNS、把域名写进 `.env` 的 `CONSTELLA_ORIGINS`、启动 cloudflared 容器都是脚本自己做。国内服务器连 Cloudflare API 可能需要代理，用环境变量指定：`CF_PROXY=http://127.0.0.1:7890 scripts/enable-public.sh …`。
 
 - **Tailscale Serve（只在自己的设备之间访问）**：先在 Tailscale 后台开启 HTTPS 证书和 Serve，然后
 
   ```bash
   tailscale serve --bg --https=443 http://127.0.0.1:8780
   ```
+
+  再把 `https://<主机名>.<tailnet>.ts.net` 加进 `.env` 的 `CONSTELLA_ORIGINS`，`docker compose up -d hub` 重启生效。
 
   如果电脑上开着 Clash / FlClash 一类的 TUN 模式代理，记得把 `ts.net` 和 `100.64.0.0/10` 设成直连，不然打不开。
 
@@ -191,6 +222,40 @@ hub 启动时会用临时容器检测这台机器能跑什么，结果在「设�
 
 **国内 App**：大多只有 ARM 版本，需要开 ARM 转译；银行、支付类 App 可能检测到模拟环境后拒绝运行。
 
+## 升级、备份与恢复
+
+**升级**
+
+```bash
+cd constella && git pull
+cd deploy
+docker compose --profile images build
+docker compose up -d hub
+```
+
+agent 和实例容器不用手动处理：hub 发现镜像变了，会在下次启动它们时用新镜像重建，数据都在挂载目录里，不会丢。重启 hub 会打断正在跑的任务，开了「中断后自动继续」的会自己接上。
+
+**备份**：每天 3:30 自动备份到 `/srv/constella/backups/constella-<时间>.tar.gz`，里面有数据库、所有记忆和技能、成果文件；保留份数在「设置」里改。实例里的浏览器登录状态、agent 工作目录里的文件不在备份里，需要的话自己再备份整个 `/srv/constella`。
+
+**恢复**：数据库里的密钥是用 `CONSTELLA_MASTER_KEY` 加密的，恢复时 `.env` 里必须是原来那个主密钥。
+
+```bash
+cd constella/deploy && docker compose stop hub
+mkdir /tmp/restore && tar -xzf /srv/constella/backups/constella-<时间>.tar.gz -C /tmp/restore
+cp /tmp/restore/backups/db-*.sqlite /srv/constella/db/constella.db && rm -f /srv/constella/db/constella.db-wal /srv/constella/db/constella.db-shm
+cp -a /tmp/restore/shared /tmp/restore/agents /tmp/restore/artifacts /srv/constella/ 2>/dev/null
+docker compose up -d hub
+```
+
+## 常见问题
+
+- **操作报 `origin not allowed` / 「不允许的来源」**：浏览器地址栏里的地址（协议 + 域名 + 端口）要写进 `CONSTELLA_ORIGINS`，改完重启 hub。
+- **收不到推送**：必须通过 HTTPS 地址打开；Android 用 Chrome 且手机有谷歌服务；iPhone 要先「添加到主屏幕」，再从主屏幕图标打开后开启推送。
+- **agent 一直不回复或报模型错误**：在「设置 → 模型」里点该模型的「测试」；多半是 new-api 那边的通道不支持 `/v1/responses`，或者令牌没有这个模型的权限。容器里的日志：`docker logs constella-agent-<id>`。
+- **某种实例建不了**：「设置 → 实例」里会写明缺什么，补上后点「检测」。
+- **hub 起不来**：`docker logs constella-hub`。最常见的是 `.env` 没填 `CONSTELLA_MASTER_KEY`。
+- **忘了密码**：目前没有找回功能，建议登录后马上加一个通行密钥，多一种登录方式。
+
 ## 已知问题和没做的
 
 - 只支持一个账号，自己用
@@ -223,3 +288,7 @@ scripts/e2e/run.sh     # 端到端测试
 | `deploy` | docker-compose 和配置模板 |
 | `scripts` | 部署、测试用的脚本 |
 | `docs` | 设计文档、开发进度、技术选型记录 |
+
+## 许可证
+
+[AGPL-3.0](LICENSE)。可以自由使用、修改和分发；改过的版本如果拿去给别人提供服务（包括通过网络），也要把改动后的源码公开给用户。

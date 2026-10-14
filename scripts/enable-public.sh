@@ -2,14 +2,15 @@
 # Turn on the public entry through a Cloudflare Tunnel managed from this server.
 # Usage: scripts/enable-public.sh constella.example.com
 # First run asks you to open a Cloudflare authorization link and pick the domain.
-# Set CF_PROXY (default http://127.0.0.1:7890) if Cloudflare's API needs a proxy from here.
+# Set CF_PROXY (e.g. http://127.0.0.1:7890) if Cloudflare's API needs a proxy from here.
 set -euo pipefail
 HOST=${1:?usage: enable-public.sh <public hostname>}
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 ENV="$ROOT/deploy/.env"
 DIR=/srv/constella/cloudflared
 NAME=constella
-export HTTPS_PROXY=${CF_PROXY:-http://127.0.0.1:7890} HTTP_PROXY=${CF_PROXY:-http://127.0.0.1:7890}
+if [ -n "${CF_PROXY:-}" ]; then export HTTPS_PROXY=$CF_PROXY HTTP_PROXY=$CF_PROXY; fi
+command -v cloudflared >/dev/null || { echo "需要先在这台机器上安装 cloudflared"; exit 1; }
 
 [ -f ~/.cloudflared/cert.pem ] || cloudflared tunnel login
 ID=$(cloudflared tunnel list -o json 2>/dev/null | python3 -c "import json,sys;print(next((t['id'] for t in json.load(sys.stdin) if t['name']=='$NAME'),''))")

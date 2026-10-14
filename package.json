@@ -1,6 +1,7 @@
 {
   "name": "constella",
   "private": true,
+  "license": "AGPL-3.0-only",
   "description": "Self-hosted multi-agent platform: mobile app, on-demand desktops, self-learning, new-api integration",
   "packageManager": "pnpm@12.11.2",
   "engines": { "node": ">=22" },

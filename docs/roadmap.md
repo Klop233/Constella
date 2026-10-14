@@ -18,8 +18,8 @@
 - [x] runner + Codex 适配器，统一事件流写入 SQLite，SSE 断线续传
 - [x] run 状态机、审批、中途插话 / 停止、看门狗
 - [x] PWA：首页、对话页；Web Push 已在 Windows Edge 和 Android Chrome 真机收到通知（2026-10-13）
-- [x] 临时内网入口 http://100.64.0.9:8780（仅 tailnet，可用聊天和桌面；推送和通行密钥需要 HTTPS）
-- [x] Tailscale Serve HTTPS 入口：https://your-machine.your-tailnet.ts.net（2026-10-13 开通，证书有效）
+- [x] 临时内网入口 http://<Tailscale IP>:8780（仅 tailnet，可用聊天和桌面；推送和通行密钥需要 HTTPS）
+- [x] Tailscale Serve HTTPS 入口：https://<主机名>.<tailnet>.ts.net（2026-10-13 开通，证书有效）
 
 ## 阶段 2：桌面
 - [x] 桌面池生命周期、空闲停止、持久化 home
@@ -39,7 +39,7 @@
 - [x] 定时任务与执行历史
 - [x] new-api：模型列表与兼容标注、按 agent 统计 token（已测）；专属令牌、费用统计、每日预算限制已实现，需要你提供管理令牌后实测
 - [x] agent 模板、导出 / 导入，健康与监控页，自动备份
-- [x] Cloudflare Tunnel 公网入口：https://constella.example.com（2026-10-13 开通；由 App 自身登录保护，未另加 Cloudflare Access）
+- [x] Cloudflare Tunnel 公网入口：https://constella.<你的域名>（2026-10-13 开通；由 App 自身登录保护，未另加 Cloudflare Access）
 - [~] （可选）Claude 引擎适配器：不做（2026-10-13 决定）。只支持通过 API（new-api）调用模型，Claude 模型也走这条路
 
 ## 阶段 5：清理 旧工具

@@ -4,7 +4,7 @@
 >
 > 实现与原方案的差异：密钥加密用 Node 自带的 AES-256-GCM（不用 libsodium）；桌面控制用容器内的 xdotool 服务（cua-driver 已随 旧工具 删除，见 spikes/desktop.md）；数据库用 Node 自带的 `node:sqlite`；复盘默认模型改为 mimo-v2.5-pro（deepseek 通道不可用，见 spikes/models.md）。
 
-> 项目名：**Constella**。每个 agent 是一颗星，合在一起就是你的星座，也呼应你的主机名 your-machine（hoshi 是日语里的"星"）。
+> 项目名：**Constella**。每个 agent 是一颗星，合在一起就是你的星座。
 > 项目目录：`/root/constella`；数据目录：`/srv/constella`；容器、镜像和网络统一用 `constella-` 前缀；包名用 `@constella/*`；公网子域名建议 `constella.<你的域名>`。
 
 ## Context
@@ -33,7 +33,7 @@
 - **new-api**：`calciumion/new-api:v1.0.0-rc.40`，监听 `0.0.0.0:3333`。
   - 通道有 OpenRouter（type 20）、OpenAI 兼容（type 1，经 `responses-fallback-relay`）、Gemini（type 24），**没有 Anthropic 原生通道**。
   - 旧工具 目前通过 `/v1/responses` 调用 `gpt-6-astra`。
-- **Tailscale**：已登录，主机名 `your-machine.your-tailnet.ts.net`，没有 serve 配置，443 端口空闲。
+- **Tailscale**：已登录，主机名 `<主机名>.<tailnet>.ts.net`，没有 serve 配置，443 端口空闲。
 - **旧工具 要迁移的数据**：
   - 记忆：`~/.旧工具/memories/{USER,MEMORY}.md`；
   - 人设：`SOUL.md`；
@@ -50,7 +50,7 @@
 ```
 Android（PWA，装到主屏幕）
    │  HTTPS / SSE / WSS
-   ├─ Tailscale Serve  https://your-machine.your-tailnet.ts.net
+   ├─ Tailscale Serve  https://<主机名>.<tailnet>.ts.net
    └─ Cloudflare Tunnel + Access  https://agent.<你的域名>
                 │
         ┌───────▼────────┐  只监听 127.0.0.1:8780
