@@ -305,10 +305,31 @@ export function SettingGroup({ title, children }: { title: string; children: Rea
   );
 }
 
-/** One setting: title + description on the left, its control on the right (stacks on narrow screens when `wide`). */
-export function SettingRow({ title, desc, children, wide }: { title: ReactNode; desc?: ReactNode; children?: ReactNode; wide?: boolean }) {
+/**
+ * One setting: title + description on the left, its control on the right (stacks on narrow screens when `wide`).
+ * With `onClick` the whole row opens something (an entry's details): hover tint, keyboard-activatable.
+ */
+export function SettingRow({ title, desc, children, wide, onClick }: { title: ReactNode; desc?: ReactNode; children?: ReactNode; wide?: boolean; onClick?: () => void }) {
+  const press = onClick && {
+    role: "button" as const,
+    tabIndex: 0,
+    onClick,
+    onKeyDown: (e: React.KeyboardEvent) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        onClick();
+      }
+    },
+  };
   return (
-    <div className={cx("py-3.5 flex gap-x-6 gap-y-2", wide ? "flex-col sm:flex-row sm:items-center" : "items-center")}>
+    <div
+      {...press}
+      className={cx(
+        "py-3.5 flex gap-x-6 gap-y-2",
+        wide ? "flex-col sm:flex-row sm:items-center" : "items-center",
+        onClick && "-mx-2 px-2 rounded-md cursor-pointer hover:bg-[color-mix(in_oklab,var(--text)_5%,transparent)]",
+      )}
+    >
       <div className="flex-1 min-w-0">
         <div className="text-sm font-medium">{title}</div>
         {desc && <div className="text-[13px] text-muted mt-0.5 leading-relaxed">{desc}</div>}
