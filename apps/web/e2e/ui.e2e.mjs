@@ -41,7 +41,7 @@ try {
   step("chat");
   await page.locator("main").getByText("测试助理").first().click();
   await page.getByRole("button", { name: "新对话" }).click();
-  await page.getByPlaceholder("说点什么…").fill("只回复四个字：你好星座");
+  await page.getByPlaceholder(/做点什么|回复/).fill("只回复四个字：你好星座");
   await page.getByRole("button", { name: "发送" }).click();
   await page.waitForURL(/\/c\//, { timeout: 15000 });
   await page.locator(".prose-chat", { hasText: "你好星座" }).first().waitFor({ timeout: 180000 });
@@ -97,7 +97,7 @@ try {
 
   step("instance settings");
   await page.goto(`${BASE}/settings?s=instances`, { waitUntil: "networkidle" });
-  await page.getByText("这台服务器能运行").waitFor();
+  await page.getByText("这台服务器能运行").first().waitFor();
   await shot("08c-settings-instances");
 
   step("tasks");
