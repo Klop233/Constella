@@ -1,0 +1,6 @@
+# Defaults for matplotlib, which agents pip-install at runtime (found via MATPLOTLIBRC).
+# CJK first so Chinese titles and labels render instead of empty boxes; DejaVu ships with matplotlib.
+font.sans-serif: Noto Sans CJK SC, DejaVu Sans
+font.serif: Noto Serif CJK SC, DejaVu Serif
+font.monospace: Noto Sans Mono CJK SC, DejaVu Sans Mono
+axes.unicode_minus: False
