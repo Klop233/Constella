@@ -147,6 +147,8 @@ export class RunnerGateway {
 }
 
 /** Runtime settings editable from the app (env values are the defaults). */
+export type EmojiUse = "none" | "rare" | "some" | "free";
+
 export class Settings {
   #db: Db;
   #secrets: SecretStore;
@@ -199,6 +201,29 @@ export class Settings {
   /** Agents read page HTML directly when using the browser (on unless turned off). */
   browserHtml(): boolean {
     return this.#bool("browserHtml", true);
+  }
+
+  /** How often agents use emoji in replies and artifacts ("free" = no instruction). */
+  emojiUse(): EmojiUse {
+    const v = kvGet(this.#db, "settings.emojiUse");
+    return v === "none" || v === "rare" || v === "some" || v === "free" ? v : "rare";
+  }
+
+  /** Keep emoji out of headings and titles (on unless turned off). */
+  plainHeadings(): boolean {
+    return this.#bool("plainHeadings", true);
+  }
+
+  /** Reply-style line for agent instructions, from the emoji settings. */
+  emojiNote(): string {
+    const use = {
+      none: "不要使用 emoji。",
+      rare: "少用 emoji：只在确实有助于表达时偶尔用一个，不要拿 emoji 当列表符号或装饰。",
+      some: "可以适度使用 emoji 让内容更生动，但不要每行都放。",
+      free: "",
+    }[this.emojiUse()];
+    const headings = this.plainHeadings() && this.emojiUse() !== "none" ? "标题（Markdown 标题，成果、文档和网页的标题）不加 emoji。" : "";
+    return use + headings;
   }
 
   /** How approvals are decided; "smart" (ask only for destructive actions) unless chosen otherwise. */
@@ -293,6 +318,8 @@ export class Settings {
       autoResume: this.autoResume(),
       ...this.limits(),
       browserHtml: this.browserHtml(),
+      emojiUse: this.emojiUse(),
+      plainHeadings: this.plainHeadings(),
       approvalMode: this.approvalMode(),
       agentIdleMinutes: this.agentIdleMinutes(),
       desktopIdleMinutes: this.desktopIdleMinutes(),
@@ -377,7 +404,7 @@ export async function createHub(opts: { dbPath?: string; webDist?: string; logge
       return {
         model: a.model,
         effort: a.effort ?? undefined,
-        instructions: agents.instructions(a, { desktopNote }),
+        instructions: agents.instructions(a, { desktopNote, styleNote: settings.emojiNote() }),
         approvalPolicy: a.approval_policy,
         skillRoots: ["/home/agent/knowledge/skills", "/shared/skills"],
       };
