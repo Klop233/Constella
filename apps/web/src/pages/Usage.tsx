@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { RefreshCw } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router";
+import { ActivityHeatmap } from "../components/ActivityHeatmap";
 import { BarChart } from "../components/BarChart";
 import { Card, Empty, Header, Loading, Segmented, StatTile, Tabs, cx, selectClass } from "../components/ui";
 import { api } from "../lib/api";
@@ -46,6 +47,11 @@ export default function Usage() {
   const qs = new URLSearchParams({ range, ...(agent && { agent }), ...(model && { model }), ...(provider && { provider }) });
   const q = useQuery({ queryKey: ["usage-stats", range, agent, model, provider], queryFn: () => api.get<Stats>(`/api/usage/stats?${qs}`), refetchInterval: 30_000 });
   const d = q.data;
+  const hm = useQuery({
+    queryKey: ["usage-heatmap", agent, model, provider],
+    queryFn: () => api.get<{ days: { day: string; tokens: number; requests: number }[] }>(`/api/usage/heatmap?${new URLSearchParams({ ...(agent && { agent }), ...(model && { model }), ...(provider && { provider }) })}`),
+    refetchInterval: 60_000,
+  });
   const agentName = (id: string) => d?.filters.agents.find((a) => a.id === id);
   const step = d ? Math.ceil(d.trend.length / (range === "30d" ? 8 : 7)) : 1;
 
@@ -132,6 +138,13 @@ export default function Usage() {
                 data={d.trend.map((t, i) => ({ label: t.label, tick: (d.trend.length - 1 - i) % step === 0 ? t.label : "", value: t[metric] }))}
               />
             </Card>
+
+            {hm.data && (
+              <Card className="p-3.5 space-y-3">
+                <div className="text-xs font-medium text-muted">活跃度 · 过去一年</div>
+                <ActivityHeatmap days={hm.data.days} metric={metric} format={metric === "tokens" ? tokens : (v) => String(Math.round(v))} />
+              </Card>
+            )}
 
             <Tabs
               value={tab}

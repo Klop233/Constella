@@ -140,6 +140,22 @@ export function usageStats(
   };
 }
 
+/** Per-day totals for the last `days` local days (oldest first), for the activity heatmap. */
+export function dailyActivity(events: UsageEvent[], days = 365, now = new Date(), tz = config.timezone) {
+  const buckets = new Map<string, { day: string; tokens: number; requests: number }>();
+  for (let i = days - 1; i >= 0; i--) {
+    const day = localParts(new Date(now.getTime() - i * 86_400_000).toISOString(), tz).day;
+    buckets.set(day, { day, tokens: 0, requests: 0 });
+  }
+  for (const e of events) {
+    const b = buckets.get(localParts(e.ts, tz).day);
+    if (!b) continue;
+    b.tokens += e.input + e.output;
+    b.requests++;
+  }
+  return [...buckets.values()];
+}
+
 /**
  * Loads usage events since `since`, skipping replays (a resumed thread re-reports its last request with durationMs 0).
  * Each event's model becomes its run's model reference ("model@provider"), passed through `normalize`.
