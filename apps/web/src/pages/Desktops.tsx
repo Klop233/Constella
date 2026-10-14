@@ -8,6 +8,7 @@ import { Badge, Button, Card, Empty, Header, IconButton, Loading, Sheet, toast }
 import { api } from "../lib/api";
 import { timeAgo } from "../lib/format";
 import { KIND_INFO, leaseText } from "../lib/instances";
+import { bytes, cores, type PerfData } from "../lib/perf";
 import type { Agent, Desktop, HostCaps } from "../lib/types";
 
 const EMPTY: InstanceDraft = { name: "", kind: "browser", options: {}, agentIds: [] };
@@ -17,6 +18,7 @@ export default function Desktops() {
   const qc = useQueryClient();
   const list = useQuery({ queryKey: ["desktops"], queryFn: () => api.get<Desktop[]>("/api/desktops"), refetchInterval: 20_000 });
   const agents = useQuery({ queryKey: ["agents"], queryFn: () => api.get<Agent[]>("/api/agents") });
+  const perf = useQuery({ queryKey: ["perf", "now"], queryFn: () => api.get<PerfData>("/api/perf?history=0"), refetchInterval: 10_000 });
   const caps = useQuery({ queryKey: ["hostcaps"], queryFn: () => api.get<HostCaps>("/api/desktops/capabilities"), refetchInterval: (q) => (q.state.data?.checkedAt ? false : 3000) });
   const [creating, setCreating] = useState(false);
   const [draft, setDraft] = useState<InstanceDraft>(EMPTY);
@@ -76,6 +78,7 @@ export default function Desktops() {
               const l = leaseText(d, agents.data);
               const Icon = KIND_INFO[d.kind].icon;
               const users = agents.data?.filter((a) => d.agentIds.includes(a.id)) ?? [];
+              const p = perf.data?.groups.find((g) => g.type === "instance" && g.id === d.id);
               return (
                 <Card key={d.id} className="overflow-hidden" onClick={() => nav(`/instances/${d.id}`)}>
                   <InstanceThumb d={d} width={640} className="aspect-[16/10]" />
@@ -86,6 +89,12 @@ export default function Desktops() {
                       <div className="text-xs text-muted truncate">
                         {KIND_INFO[d.kind].label} · {users.length ? users.map((a) => a.emoji).join("") : "没有分给 agent"} · {timeAgo(d.last_used_at)}
                       </div>
+                      {p?.running && p.now && (
+                        <div className="text-[11.5px] text-muted tabular-nums truncate">
+                          CPU {cores(p.now.cpu)} · 内存 {bytes(p.now.mem)}
+                          {p.memLimit ? ` / ${bytes(p.memLimit)}` : ""}
+                        </div>
+                      )}
                     </div>
                     <Badge tone={l.tone}>{l.text}</Badge>
                   </div>

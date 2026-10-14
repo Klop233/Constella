@@ -31,6 +31,7 @@ import { Scheduler } from "./scheduler.ts";
 import { Reflect } from "./reflect.ts";
 import type { ApprovalMode } from "./safety.ts";
 import { OfficeService } from "./office.ts";
+import { PerfMonitor } from "./perf.ts";
 import { registerOfficeProxy } from "./office-proxy.ts";
 import { SecretBox, SecretStore } from "./secrets.ts";
 
@@ -54,6 +55,8 @@ export interface Hub {
   containers: Containers;
   /** Optional online Office editor (installed and managed from Settings). */
   office: OfficeService;
+  /** Host and container performance samples (CPU, memory, network), a day of history in memory. */
+  perf: PerfMonitor;
   scheduler: Scheduler;
   notifier: Notifier;
   newapi: NewApi;
@@ -504,9 +507,11 @@ export async function createHub(opts: { dbPath?: string; webDist?: string; logge
   const auth = new Auth(db);
   const office = new OfficeService({ db, secrets, docker: containers.docker });
   office.startIdleStop();
+  const perf = new PerfMonitor({ docker: containers.docker });
   const hub: Hub = {
     app,
     office,
+    perf,
     db,
     auth,
     secrets,
@@ -532,6 +537,7 @@ export async function createHub(opts: { dbPath?: string; webDist?: string; logge
     reviveIfStranded: (agentId, delayMs) => void reviveIfStranded(agentId, delayMs),
     close: async () => {
       scheduler.stop();
+      perf.stop();
       runs.stopWatchdog();
       recovery.stop();
       runners.closeAll();
@@ -653,6 +659,7 @@ export async function bootHub(hub: Hub): Promise<void> {
   hub.recovery.start();
   hub.runners.startHeartbeat();
   hub.desktops.startReaper();
+  hub.perf.start();
   void hub.hostcaps.refresh().catch((err) => console.error("host capability probe", err));
   hub.scheduler.start();
   void hub.models.seed();

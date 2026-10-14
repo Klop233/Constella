@@ -1,6 +1,6 @@
 import { startRegistration } from "@simplewebauthn/browser";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bell, Boxes, Brain, ChevronRight, ClipboardCheck, Gauge, Layers, LogOut, Monitor, Palette, Search, Server, Settings2, Shield, Sparkles, type LucideIcon } from "lucide-react";
+import { Activity, Bell, Boxes, Brain, ChevronRight, ClipboardCheck, Gauge, Layers, LogOut, Monitor, Palette, Search, Server, Settings2, Shield, Sparkles, type LucideIcon } from "lucide-react";
 import QRCode from "qrcode";
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
@@ -171,6 +171,11 @@ export default function Settings() {
                 <button onClick={() => nav("/usage")} className="w-full flex items-center gap-3 h-9 px-2.5 rounded-md text-left hover:bg-surface-2">
                   <Gauge className="size-4 text-muted" strokeWidth={1.8} />
                   <span className="flex-1">用量统计</span>
+                  <ChevronRight className="size-4 text-muted" />
+                </button>
+                <button onClick={() => nav("/perf")} className="w-full flex items-center gap-3 h-9 px-2.5 rounded-md text-left hover:bg-surface-2">
+                  <Activity className="size-4 text-muted" strokeWidth={1.8} />
+                  <span className="flex-1">性能</span>
                   <ChevronRight className="size-4 text-muted" />
                 </button>
                 <button onClick={() => nav("/reflect")} className="w-full flex items-center gap-3 h-9 px-2.5 rounded-md text-left hover:bg-surface-2">
@@ -900,6 +905,7 @@ const SIDEBAR_ITEMS = [
   { to: "/artifacts", label: "成果" },
   { to: "/audit", label: "审计" },
   { to: "/usage", label: "用量" },
+  { to: "/perf", label: "性能" },
   { to: "/reflect", label: "回顾" },
 ];
 

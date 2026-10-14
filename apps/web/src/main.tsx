@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Archive, Brain, CalendarClock, ChevronDown, ChevronsUpDown, ClipboardCheck, Gauge, House, Layers, LogOut, Monitor, Palette, Plus, Search, Settings as SettingsIcon, Shield, SlidersHorizontal, Sparkles, ExternalLink, X } from "lucide-react";
+import { Activity, Archive, Brain, CalendarClock, ChevronDown, ChevronsUpDown, ClipboardCheck, Gauge, House, Layers, LogOut, Monitor, Palette, Plus, Search, Settings as SettingsIcon, Shield, SlidersHorizontal, Sparkles, ExternalLink, X } from "lucide-react";
 import { lazy, StrictMode, Suspense, useEffect, useState, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter, Navigate, NavLink, Route, Routes, useLocation, useNavigate, useParams, useSearchParams } from "react-router";
@@ -25,6 +25,7 @@ const Learning = lazy(() => import("./pages/Learning"));
 const Settings = lazy(() => import("./pages/Settings"));
 const Reflect = lazy(() => import("./pages/Reflect"));
 const Usage = lazy(() => import("./pages/Usage"));
+const Performance = lazy(() => import("./pages/Performance"));
 const Audit = lazy(() => import("./pages/Audit"));
 const Artifacts = lazy(() => import("./pages/Artifacts"));
 const ArtifactViewer = lazy(() => import("./components/ArtifactViewer"));
@@ -74,6 +75,7 @@ const NAV = [
   { to: "/artifacts", label: "成果", icon: Layers, end: false },
   { to: "/audit", label: "审计", icon: ClipboardCheck, end: false },
   { to: "/usage", label: "用量", icon: Gauge, end: false },
+  { to: "/perf", label: "性能", icon: Activity, end: false },
   { to: "/reflect", label: "回顾", icon: Sparkles, end: false },
 ];
 
@@ -119,6 +121,7 @@ function AccountMenu({ name }: { name: string }) {
             <MenuItem icon={<Layers />} label="成果" onClick={go("/artifacts")} />
             <MenuItem icon={<ClipboardCheck />} label="审计" onClick={go("/audit")} />
             <MenuItem icon={<Gauge />} label="用量" onClick={go("/usage")} />
+            <MenuItem icon={<Activity />} label="性能" onClick={go("/perf")} />
             <MenuItem icon={<Sparkles />} label="回顾" onClick={go("/reflect")} />
             <MenuDivider />
             <MenuItem icon={<Palette />} label="外观" onClick={go("/settings?s=appearance")} />
@@ -391,6 +394,7 @@ function App() {
                 <Route path="/settings" element={<Settings />} />
                 <Route path="/reflect" element={<Reflect />} />
                 <Route path="/usage" element={<Usage />} />
+                <Route path="/perf" element={<Performance />} />
                 <Route path="/audit" element={<Audit />} />
                 <Route path="/artifacts" element={<Artifacts />} />
                 <Route path="*" element={<Home />} />

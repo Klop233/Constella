@@ -18,6 +18,9 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       # Same path inside and outside: the hub passes these paths to agent/desktop containers.
       - /srv/constella:/srv/constella
+      # Read-only host view for the performance page (CPU, memory, network of the machine, not just the hub container).
+      - /proc:/host/proc:ro
+      - /sys/fs/cgroup:/host/sys/fs/cgroup:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:

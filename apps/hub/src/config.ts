@@ -65,6 +65,8 @@ export const config = {
   runWatchdogMinutes: Number(env("CONSTELLA_RUN_WATCHDOG_MINUTES", "10")),
   runTimeoutMinutes: Number(env("CONSTELLA_RUN_TIMEOUT_MINUTES", "120")),
   timezone: env("TZ", "Asia/Shanghai"),
+  /** Where the host's /proc and /sys/fs/cgroup are mounted read-only (performance stats); missing = the hub's own view. */
+  hostRoot: env("CONSTELLA_HOST_ROOT", "/host"),
   secureCookies: env("CONSTELLA_SECURE_COOKIES", "true") !== "false",
 };
 
