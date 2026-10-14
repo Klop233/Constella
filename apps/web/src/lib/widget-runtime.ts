@@ -223,11 +223,26 @@ const RUNTIME_JS = `
     const m = e.data;
     if (e.source !== parent || !m || !m[B]) return;
     if (m.type === "theme") {
+      const C = window.Chart;
+      const old = C ? { grid: C.defaults.borderColor, text: C.defaults.color } : null;
       document.getElementById("cw-theme").textContent = m.css;
       document.documentElement.dataset.mode = m.mode;
       chartDefaults();
-      // Resolved options are cached per chart; drop them so the new defaults apply.
-      if (window.Chart) for (const c of Object.values(window.Chart.instances)) { c.config.clearCache && c.config.clearCache(); c.update("none"); }
+      // Charts keep the colors they resolved at creation; swap the ones that came from our old defaults.
+      if (C && old) for (const c of Object.values(C.instances)) {
+        const swap = (o, key) => {
+          if (!o) return;
+          if (o[key] === old.grid) o[key] = C.defaults.borderColor;
+          else if (o[key] === old.text) o[key] = C.defaults.color;
+        };
+        for (const sc of Object.values(c.options.scales || {})) {
+          swap(sc.grid, "color"); swap(sc.border, "color"); swap(sc.angleLines, "color");
+          swap(sc.ticks, "color"); swap(sc.pointLabels, "color"); swap(sc.title, "color");
+        }
+        swap(c.options.plugins && c.options.plugins.legend && c.options.plugins.legend.labels, "color");
+        swap(c.options.plugins && c.options.plugins.title, "color");
+        c.update("none");
+      }
       for (const cb of themeCbs) try { cb(m.mode); } catch (err) { report(err && err.message); }
     }
   });
