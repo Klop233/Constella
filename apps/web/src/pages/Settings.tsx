@@ -8,7 +8,7 @@ import { ModelSelect } from "./AgentEdit";
 import { Badge, Button, Field, Header, Loading, navItemClass, Segmented, SettingGroup, SettingRow, Sheet, StatTile, Tabs, Toggle, cx, inputClass, selectClass, toast } from "../components/ui";
 import { api, logout } from "../lib/api";
 import { setAppearance, useAppearance, type Appearance } from "../lib/appearance";
-import { timeAgo, tokens } from "../lib/format";
+import { fmtMinutes, RUN_TIMEOUTS, runTimeoutLabel, timeAgo, tokens } from "../lib/format";
 import { useModels, useProviders, type ModelEntry, type Provider } from "../lib/models";
 import { currentSubscription, disablePush, enablePush, pushSupported } from "../lib/push";
 import type { Agent, Effort, Schedule } from "../lib/types";
@@ -64,8 +64,6 @@ const SECTIONS: { id: string; label: string; icon: LucideIcon }[] = [
 /** Old links (?s=newapi) land on the section that replaced them. */
 const ALIASES: Record<string, string> = { newapi: "models" };
 
-const fmtMinutes = (m: number) => (m % 60 === 0 && m >= 60 ? `${m / 60} 小时` : `${m} 分钟`);
-
 /** Compact select for a fixed set of values; a value set elsewhere (env) still shows up. */
 function Choice<T extends string | number>({ value, options, onChange, label }: { value: T; options: { value: T; label: string }[]; onChange: (v: T) => void; label: string }) {
   const all = options.some((o) => o.value === value) ? options : [{ value, label: typeof value === "number" ? fmtMinutes(value) : String(value) }, ...options];
@@ -113,7 +111,7 @@ export default function Settings() {
   const go = (id: string) => setParams({ s: id }, { replace: !!picked });
 
   const body = (
-    <div className="space-y-8">
+    <div className="space-y-5">
       {current.id === "general" && <GeneralSection s={s} save={save} />}
       {current.id === "models" && <ModelsSection s={s} save={save} />}
       {current.id === "learning" && <LearningSection s={s} save={save} />}
@@ -136,10 +134,10 @@ export default function Settings() {
         ) : (
           <>
             <Header title="设置" sub={me.data.name} />
-            <div className="px-2 pb-8 space-y-4">
+            <div className="px-2 pb-6 space-y-2">
               <nav className="space-y-px">
                 {SECTIONS.map((x) => (
-                  <button key={x.id} onClick={() => go(x.id)} className="w-full flex items-center gap-3 h-10 px-2.5 rounded-md text-left hover:bg-surface-2 active:bg-surface-2">
+                  <button key={x.id} onClick={() => go(x.id)} className="w-full flex items-center gap-3 h-9 px-2.5 rounded-md text-left hover:bg-surface-2 active:bg-surface-2">
                     <x.icon className="size-4 text-muted" strokeWidth={1.8} />
                     <span className="flex-1">{x.label}</span>
                     <ChevronRight className="size-4 text-muted" />
@@ -148,27 +146,27 @@ export default function Settings() {
               </nav>
               <div className="h-px bg-[var(--border)] mx-2.5" />
               <nav className="space-y-px">
-                <button onClick={() => nav("/artifacts")} className="w-full flex items-center gap-3 h-10 px-2.5 rounded-md text-left hover:bg-surface-2">
+                <button onClick={() => nav("/artifacts")} className="w-full flex items-center gap-3 h-9 px-2.5 rounded-md text-left hover:bg-surface-2">
                   <Layers className="size-4 text-muted" strokeWidth={1.8} />
                   <span className="flex-1">成果</span>
                   <ChevronRight className="size-4 text-muted" />
                 </button>
-                <button onClick={() => nav("/audit")} className="w-full flex items-center gap-3 h-10 px-2.5 rounded-md text-left hover:bg-surface-2">
+                <button onClick={() => nav("/audit")} className="w-full flex items-center gap-3 h-9 px-2.5 rounded-md text-left hover:bg-surface-2">
                   <ClipboardCheck className="size-4 text-muted" strokeWidth={1.8} />
                   <span className="flex-1">审计</span>
                   <ChevronRight className="size-4 text-muted" />
                 </button>
-                <button onClick={() => nav("/usage")} className="w-full flex items-center gap-3 h-10 px-2.5 rounded-md text-left hover:bg-surface-2">
+                <button onClick={() => nav("/usage")} className="w-full flex items-center gap-3 h-9 px-2.5 rounded-md text-left hover:bg-surface-2">
                   <Gauge className="size-4 text-muted" strokeWidth={1.8} />
                   <span className="flex-1">用量统计</span>
                   <ChevronRight className="size-4 text-muted" />
                 </button>
-                <button onClick={() => nav("/reflect")} className="w-full flex items-center gap-3 h-10 px-2.5 rounded-md text-left hover:bg-surface-2">
+                <button onClick={() => nav("/reflect")} className="w-full flex items-center gap-3 h-9 px-2.5 rounded-md text-left hover:bg-surface-2">
                   <Sparkles className="size-4 text-muted" strokeWidth={1.8} />
                   <span className="flex-1">回顾</span>
                   <ChevronRight className="size-4 text-muted" />
                 </button>
-                <button onClick={() => logout(qc)} className="w-full flex items-center gap-3 h-10 px-2.5 rounded-md text-left text-danger hover:bg-surface-2">
+                <button onClick={() => logout(qc)} className="w-full flex items-center gap-3 h-9 px-2.5 rounded-md text-left text-danger hover:bg-surface-2">
                   <LogOut className="size-4" strokeWidth={1.8} />
                   退出登录
                 </button>
@@ -179,14 +177,14 @@ export default function Settings() {
       </div>
 
       {/* Desktop: Claude Code-style two-pane settings. */}
-      <div className="hidden lg:flex gap-8 pt-6 pb-10">
-        <nav className="w-48 shrink-0 space-y-px sticky top-6 self-start">
-          <div className="px-2.5 pb-1.5 text-xs text-muted">设置</div>
+      <div className="hidden lg:flex gap-6 pt-4 pb-8">
+        <nav className="w-40 shrink-0 space-y-px sticky top-4 self-start">
+          <div className="px-2.5 pb-1 text-xs text-muted">设置</div>
           {SECTIONS.map((x) => (
             <button
               key={x.id}
               onClick={() => go(x.id)}
-              className={cx(navItemClass(x.id === current.id), "w-full h-8 text-left text-[13.5px]")}
+              className={cx(navItemClass(x.id === current.id), "w-full h-7 text-left text-[13px]")}
             >
               <x.icon className="size-4" strokeWidth={1.8} />
               {x.label}
@@ -205,12 +203,12 @@ function GeneralSection({ s, save }: { s: SettingsView; save: Save }) {
       <SettingGroup title="任务">
         <SettingRow
           title="中断后自动继续"
-          desc={`任务被重启、Codex 崩溃、网络或限流等临时故障打断，或单轮跑满 ${fmtMinutes(s.runTimeoutMinutes)}时，等一会儿自动在原对话里接着做；hub 重启也不会丢。每一轮有进展就一直接着做，连续 ${s.maxAutoResumes} 轮都没有进展才停下，并生成诊断报告。`}
+          desc={`任务被重启、Codex 崩溃、网络或限流等临时故障打断${s.runTimeoutMinutes ? `，或单轮跑满 ${runTimeoutLabel(s.runTimeoutMinutes)}` : ""}时，等一会儿自动在原对话里接着做；hub 重启也不会丢。每一轮有进展就一直接着做，连续 ${s.maxAutoResumes} 轮都没有进展才停下，并生成诊断报告。`}
         >
           <Toggle checked={s.autoResume} onChange={(v) => void save({ autoResume: v }, v ? "已开启自动继续" : "已关闭自动继续")} label="中断后自动继续" />
         </SettingRow>
         {s.autoResume && (
-          <SettingRow title="连续无进展上限" desc="连续这么多轮自动继续都没有任何进展（没有一个工具调用成功）就停下，生成诊断报告等你选方案；有进展的轮次不计入。">
+          <SettingRow title="连续无进展上限" desc="连续这么多轮自动继续都没有进展（没有一个工具调用成功）就停下，生成诊断报告等你选方案。">
             <Choice
               label="连续无进展上限"
               value={s.maxAutoResumes}
@@ -219,15 +217,24 @@ function GeneralSection({ s, save }: { s: SettingsView; save: Save }) {
             />
           </SettingRow>
         )}
-        <SettingRow title="单轮最长运行" desc={s.autoResume ? "一轮跑满这么久就先停下，再开新的一轮接着做，避免单轮上下文无限变长。" : "一轮跑满这么久就停止（开启自动继续后会接着做）。"}>
-          <Choice label="单轮最长运行" value={s.runTimeoutMinutes} options={minuteOptions([30, 60, 120, 240, 480])} onChange={(v) => void save({ runTimeoutMinutes: v })} />
+        <SettingRow
+          title="单轮最长运行"
+          desc={
+            s.runTimeoutMinutes === 0
+              ? "不限制单轮时长，跑多久都不会被打断；上下文可能一直变长。可以在对话里单独调整某个对话。"
+              : s.autoResume
+                ? "一轮跑满这么久就先停下，再开新的一轮接着做，避免单轮上下文无限变长。可以在对话里单独调整某个对话。"
+                : "一轮跑满这么久就停止（开启自动继续后会接着做）。可以在对话里单独调整某个对话。"
+          }
+        >
+          <Choice label="单轮最长运行" value={s.runTimeoutMinutes} options={minuteOptions(RUN_TIMEOUTS, "不限制")} onChange={(v) => void save({ runTimeoutMinutes: v })} />
         </SettingRow>
         <SettingRow title="卡住处理" desc="任务这么久没有任何动静（没有输出、没有工具调用、引擎也没在思考）时，监督员介入：判断后继续等、结束卡住的命令、提醒 agent、重启这一轮或重建容器；处理不了才请你决定。">
           <Choice label="卡住处理" value={s.runWatchdogMinutes} options={minuteOptions([5, 10, 20, 30, 60, 0], "不处理")} onChange={(v) => void save({ runWatchdogMinutes: v })} />
         </SettingRow>
       </SettingGroup>
       <SettingGroup title="浏览器">
-        <SettingRow title="直接读取网页 HTML" desc="agent 用浏览器查信息时优先直接读页面 HTML，正文、表格、价格、链接比看截图更快更准；要看布局、图片或验证码时照样截图。对新对话生效。">
+        <SettingRow title="直接读取网页 HTML" desc="agent 用浏览器查信息时优先直接读页面 HTML，比看截图更快更准；要看布局、图片或验证码时照样截图。对新对话生效。">
           <Toggle checked={s.browserHtml} onChange={(v) => void save({ browserHtml: v }, v ? "已开启读取网页 HTML" : "已关闭读取网页 HTML")} label="直接读取网页 HTML" />
         </SettingRow>
       </SettingGroup>
@@ -371,6 +378,7 @@ function ModelsSection({ s, save }: { s: SettingsView; save: Save }) {
           return (
             <SettingRow
               wide
+              dense
               key={p.id}
               title={
                 <span className="flex items-center gap-1.5">
@@ -415,7 +423,7 @@ function ModelsSection({ s, save }: { s: SettingsView; save: Save }) {
       </SettingGroup>
 
       <SettingGroup title={`模型 · ${models.data?.length ?? 0}`}>
-        <div className="py-3 flex flex-wrap items-center gap-2">
+        <div className="py-2 flex flex-wrap items-center gap-2">
           <label className="flex-1 min-w-40 flex items-center gap-2 h-8 px-2.5 rounded-lg border border-line bg-surface">
             <Search className="size-4 text-muted shrink-0" />
             <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="搜索模型" className="flex-1 min-w-0 bg-transparent outline-none text-[13px]" />
@@ -438,10 +446,11 @@ function ModelsSection({ s, save }: { s: SettingsView; save: Save }) {
           </Button>
         </div>
         {models.isLoading && <Loading />}
-        {models.data && !models.data.length && <div className="py-6 text-center text-[13px] text-muted">还没有模型，点「添加模型」从 provider 里挑选</div>}
+        {models.data && !models.data.length && <div className="py-4 text-center text-[13px] text-muted">还没有模型，点「添加模型」从 provider 里挑选</div>}
         {shown.map((m) => (
           <SettingRow
             wide
+            dense
             key={m.ref}
             title={<span className="font-mono text-[13px] break-all">{m.label}</span>}
             desc={
@@ -474,7 +483,7 @@ function ModelsSection({ s, save }: { s: SettingsView; save: Save }) {
           </SettingRow>
         ))}
         {!all && !q && list.length > shown.length && (
-          <button type="button" onClick={() => setAll(true)} className="w-full py-2.5 text-[13px] text-muted hover:text-[var(--text)] text-left">
+          <button type="button" onClick={() => setAll(true)} className="w-full py-2 text-[13px] text-muted hover:text-[var(--text)] text-left">
             显示全部 {list.length} 个
           </button>
         )}
@@ -515,7 +524,7 @@ function ProviderSheet({ provider, onClose, onSaved }: { provider: Provider | "n
   };
   return (
     <Sheet open={!!provider} onClose={onClose} title={isNew ? "添加 provider" : "编辑 provider"}>
-      <div className="space-y-3.5">
+      <div className="space-y-3">
         <Field label="名称" hint="会出现在模型显示名里，比如 gpt-5 (CLIProxy)">
           <input className={inputClass} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} maxLength={40} placeholder="CLIProxy" />
         </Field>
@@ -570,7 +579,7 @@ function AddModelsSheet({ provider, providers, models, onClose, onAdded }: { pro
   };
   return (
     <Sheet open={!!provider} onClose={onClose} title="添加模型">
-      <div className="space-y-3.5">
+      <div className="space-y-3">
         <Field label="Provider">
           <select
             className={inputClass}
@@ -631,7 +640,7 @@ function AdminTokenSheet({ open, onClose, s, save }: { open: boolean; onClose: (
   const [userId, setUserId] = useState(s.newapiAdminUserId);
   return (
     <Sheet open={open} onClose={onClose} title="new-api 管理令牌">
-      <div className="space-y-3.5">
+      <div className="space-y-3">
         <div className="text-[13px] text-muted">用于为每个 agent 在内置 new-api 里生成专属令牌，分开统计费用、设每日预算。</div>
         <Field label="系统访问令牌" hint="new-api 后台 → 个人设置 → 生成系统访问令牌。留空保存可清除">
           <input className={cx(inputClass, "font-mono")} type="password" value={token} onChange={(e) => setToken(e.target.value)} autoComplete="off" />
@@ -672,11 +681,11 @@ function UsagePanel() {
   const [tab, setTab] = useState<"models" | "providers" | "agents">("models");
   const q = useQuery({ queryKey: ["usage-stats", range, "", "", ""], queryFn: () => api.get<UsageStats>(`/api/usage/stats?range=${range}`) });
   const d = q.data;
-  const th = "py-2 px-2 text-xs font-medium text-muted whitespace-nowrap";
-  const td = "py-2.5 px-2 whitespace-nowrap tabular-nums";
+  const th = "py-1.5 px-2 text-xs font-medium text-muted whitespace-nowrap";
+  const td = "py-1.5 px-2 whitespace-nowrap tabular-nums";
   return (
     <SettingGroup title="用量">
-      <div className="py-3 space-y-3">
+      <div className="py-2 space-y-2">
         <div className="flex items-center gap-3">
           <div className="w-56">
             <Segmented
@@ -713,7 +722,7 @@ function UsagePanel() {
               ]}
             />
             {d.totals.requests === 0 ? (
-              <div className="py-4 text-center text-[13px] text-muted">这段时间没有请求</div>
+              <div className="py-3 text-center text-[13px] text-muted">这段时间没有请求</div>
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-[13px]">
@@ -983,7 +992,7 @@ function NotifySection({ s, save }: { s: SettingsView; save: Save }) {
             <Toggle checked={s.notifyOn[k.kind]} onChange={(v) => void save({ notifyOn: { [k.kind]: v } })} label={`推送${k.title}`} />
           </SettingRow>
         ))}
-        <div className="py-2.5 text-xs text-muted">关掉的事项不再推送到设备，但仍会记在 App 的通知里。你设的定时提醒总会推送。</div>
+        <div className="py-2 text-xs text-muted">关掉的事项不再推送到设备，但仍会记在 App 的通知里。你设的定时提醒总会推送。</div>
       </SettingGroup>
       <SettingGroup title="免打扰">
         <SettingRow title="免打扰时段" desc="这段时间里推送静音到达、不发 Telegram；你设的定时提醒照常响铃。">
@@ -1017,7 +1026,7 @@ function NotifySection({ s, save }: { s: SettingsView; save: Save }) {
         </SettingRow>
       </SettingGroup>
       <Sheet open={tg} onClose={() => setTg(false)} title="Telegram 备用通知">
-        <div className="space-y-3.5">
+        <div className="space-y-3">
           <Field label="Bot Token" hint="在 @BotFather 创建机器人获得。留空保存可清除">
             <input className={cx(inputClass, "font-mono")} type="password" value={token} onChange={(e) => setToken(e.target.value)} autoComplete="off" />
           </Field>
@@ -1123,7 +1132,7 @@ function AuditList({ rows, agents }: { rows: AuditRow[]; agents: Agent[] }) {
   return (
     <>
       {rows.map((r) => (
-        <SettingRow key={r.id} title={<span className="font-normal">{AUDIT_TEXT[r.action] ?? r.action}</span>} desc={[timeAgo(r.ts), who(r.actor), extra(r)].filter(Boolean).join(" · ")} />
+        <SettingRow dense key={r.id} title={<span className="font-normal">{AUDIT_TEXT[r.action] ?? r.action}</span>} desc={[timeAgo(r.ts), who(r.actor), extra(r)].filter(Boolean).join(" · ")} />
       ))}
     </>
   );
@@ -1162,7 +1171,7 @@ function SecuritySection({ me }: { me: Me }) {
           </Button>
         </SettingRow>
         {me.passkeys.map((p) => (
-          <SettingRow key={p.id} title={<span className="font-normal pl-4">{p.name}</span>} desc={<span className="pl-4">{`${p.rp_id} · ${p.last_used_at ? `上次使用 ${timeAgo(p.last_used_at)}` : "未使用"}`}</span>}>
+          <SettingRow dense key={p.id} title={<span className="font-normal pl-4">{p.name}</span>} desc={<span className="pl-4">{`${p.rp_id} · ${p.last_used_at ? `上次使用 ${timeAgo(p.last_used_at)}` : "未使用"}`}</span>}>
             <Button size="sm" variant="ghost" className="text-danger" onClick={wrap(() => api.del(`/api/auth/passkeys/${encodeURIComponent(p.id)}`), "已删除")}>
               删除
             </Button>
@@ -1203,6 +1212,7 @@ function SecuritySection({ me }: { me: Me }) {
       <SettingGroup title="登录中的设备">
         {me.sessions.map((sess) => (
           <SettingRow
+            dense
             key={sess.id}
             title={
               <span className="flex items-center gap-1.5">
@@ -1234,7 +1244,7 @@ function SecuritySection({ me }: { me: Me }) {
       </Sheet>
       <Sheet open={!!totp} onClose={() => setTotp(null)} title="开启两步验证">
         {totp && (
-          <div className="space-y-3.5">
+          <div className="space-y-3">
             <img src={totp.qr} alt="TOTP 二维码" className="mx-auto rounded-lg bg-white p-2" />
             <div className="text-xs text-muted text-center break-all font-mono">{totp.secret}</div>
             <Field label="验证器里显示的 6 位数字">
@@ -1257,7 +1267,7 @@ function SecuritySection({ me }: { me: Me }) {
       </Sheet>
       <Sheet open={!!pw} onClose={() => setPw(null)} title="修改密码">
         {pw && (
-          <div className="space-y-3.5">
+          <div className="space-y-3">
             <Field label="当前密码">
               <input className={inputClass} type="password" value={pw.current} onChange={(e) => setPw({ ...pw, current: e.target.value })} autoComplete="current-password" />
             </Field>
@@ -1342,7 +1352,7 @@ function SystemSection({ s, save }: { s: SettingsView; save: Save }) {
       </SettingGroup>
       <SettingGroup title="容器">
         {d.containers.map((c) => (
-          <SettingRow key={c.name} title={<span className="font-mono text-[12.5px] font-normal">{c.name}</span>} desc={c.status}>
+          <SettingRow dense key={c.name} title={<span className="font-mono text-[12.5px] font-normal">{c.name}</span>} desc={c.status}>
             <Badge tone={c.state === "running" ? "ok" : "muted"}>{c.role}</Badge>
           </SettingRow>
         ))}

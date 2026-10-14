@@ -44,6 +44,8 @@ export interface Conversation {
   source: string;
   model?: string | null;
   effort?: Effort | null;
+  /** This conversation's single-turn time limit (0 = none); null follows the setting. */
+  run_timeout_minutes?: number | null;
   updated_at: string;
   created_at: string;
   last_status?: RunStatus | null;

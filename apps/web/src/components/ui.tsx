@@ -305,22 +305,25 @@ export function MenuDivider() {
 /** A settings section: heading, then rows separated by hairlines. */
 export function SettingGroup({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <section className="space-y-1">
-      <h2 className="text-base font-semibold">{title}</h2>
+    <section>
+      <h2 className="text-sm font-semibold pb-1">{title}</h2>
       <div className="divide-y divide-[var(--border)]">{children}</div>
     </section>
   );
 }
 
-/** One setting: title + description on the left, its control on the right (stacks on narrow screens when `wide`). */
-export function SettingRow({ title, desc, children, wide }: { title: ReactNode; desc?: ReactNode; children?: ReactNode; wide?: boolean }) {
+/**
+ * One setting: title + description on the left, its control on the right (stacks on narrow screens when `wide`).
+ * `dense` is for rows in a long list (models, providers, devices) where each row is just a name and a few buttons.
+ */
+export function SettingRow({ title, desc, children, wide, dense }: { title: ReactNode; desc?: ReactNode; children?: ReactNode; wide?: boolean; dense?: boolean }) {
   return (
-    <div className={cx("py-3.5 flex gap-x-6 gap-y-2", wide ? "flex-col sm:flex-row sm:items-center" : "items-center")}>
+    <div className={cx("flex gap-x-4 gap-y-1.5", dense ? "py-1.5" : "py-2.5", wide ? "flex-col sm:flex-row sm:items-center" : "items-center")}>
       <div className="flex-1 min-w-0">
-        <div className="text-sm font-medium">{title}</div>
-        {desc && <div className="text-[13px] text-muted mt-0.5 leading-relaxed">{desc}</div>}
+        <div className="text-[13.5px] font-medium">{title}</div>
+        {desc && <div className="text-xs text-muted mt-px leading-snug">{desc}</div>}
       </div>
-      {children != null && <div className="shrink-0 flex items-center gap-2">{children}</div>}
+      {children != null && <div className="shrink-0 flex items-center gap-1.5">{children}</div>}
     </div>
   );
 }

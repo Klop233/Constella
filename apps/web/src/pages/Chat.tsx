@@ -4,7 +4,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import { useNavigate, useParams } from "react-router";
 import { AgentDot } from "../components/AgentBits";
 import { ConversationArtifacts } from "../components/ArtifactList";
-import { ContextMeter, EffortPicker, ModelPicker } from "../components/ChatControls";
+import { ContextMeter, EffortPicker, ModelPicker, RunTimeoutPicker } from "../components/ChatControls";
 import { CONTINUE_TEXT, latestStats, RunView } from "../components/RunView";
 import { Button, Empty, Header, Loading, cx, toast } from "../components/ui";
 import { api, ApiError, fileToBase64 } from "../lib/api";
@@ -34,6 +34,8 @@ export default function Chat() {
   // This conversation's model / effort; null follows the agent.
   const [model, setModel] = useState<string | null>(null);
   const [effort, setEffort] = useState<Effort | null>(null);
+  // Likewise the single-turn time limit (0 = none).
+  const [runTimeout, setRunTimeout] = useState<number | null>(null);
   const [uploading, setUploading] = useState(false);
   const bottom = useRef<HTMLDivElement>(null);
   const scroller = useRef<HTMLDivElement>(null);
@@ -59,11 +61,13 @@ export default function Chat() {
   useEffect(() => {
     setModel(data?.conversation.model ?? null);
     setEffort(data?.conversation.effort ?? null);
-  }, [data?.conversation.id, data?.conversation.model, data?.conversation.effort]);
+    setRunTimeout(data?.conversation.run_timeout_minutes ?? null);
+  }, [data?.conversation.id, data?.conversation.model, data?.conversation.effort, data?.conversation.run_timeout_minutes]);
 
-  const changeModel = async (patch: { model?: string | null; effort?: Effort | null }) => {
+  const changeModel = async (patch: { model?: string | null; effort?: Effort | null; runTimeoutMinutes?: number | null }) => {
     if (patch.model !== undefined) setModel(patch.model);
     if (patch.effort !== undefined) setEffort(patch.effort);
+    if (patch.runTimeoutMinutes !== undefined) setRunTimeout(patch.runTimeoutMinutes);
     if (!conversationId) return; // a new conversation sends it with the first message
     try {
       await api.patch(`/api/conversations/${conversationId}`, patch);
@@ -140,7 +144,7 @@ export default function Chat() {
       const full = others.length ? `${body}\n\n附件：${others.join("、")}` : body;
       const res = await api.post<{ conversationId: string; runId: string; steered: boolean }>(
         conversationId ? `/api/conversations/${conversationId}/messages` : `/api/agents/${agentId}/messages`,
-        { text: full, images, ...(conversationId ? {} : { model, effort }) },
+        { text: full, images, ...(conversationId ? {} : { model, effort, runTimeoutMinutes: runTimeout }) },
       );
       setText("");
       setFiles([]);
@@ -239,6 +243,7 @@ export default function Chat() {
         {stats && agentId && conversationId && <ContextMeter stats={stats} runs={data!.runs} agentId={agentId} conversationId={conversationId} />}
         {a && <ModelPicker value={model} agentModel={a.model} onChange={(m) => void changeModel({ model: m })} />}
         {a && <EffortPicker value={effort} agentEffort={a.effort} model={model ?? a.model} onChange={(e) => void changeModel({ effort: e })} />}
+        {a && <RunTimeoutPicker value={runTimeout} onChange={(m) => void changeModel({ runTimeoutMinutes: m })} />}
       </div>
     </div>
   );
