@@ -377,7 +377,9 @@ export class PerfMonitor {
     // Field 22 (after the parenthesised command name) is the start time in clock ticks.
     const fields = stat?.slice(stat.lastIndexOf(")") + 2).split(" ");
     const start = Number(fields?.[19]);
-    return Number.isFinite(start) && start > 0 ? Math.max(0, kernel - start / 100) : kernel;
+    // Where /proc/uptime is already virtualised (lxcfs) the difference goes negative: it is the container's own then.
+    const up = Number.isFinite(start) && start > 0 ? kernel - start / 100 : kernel;
+    return up > 0 ? up : kernel;
   }
 
   async #hubContainerId(): Promise<string | null> {
