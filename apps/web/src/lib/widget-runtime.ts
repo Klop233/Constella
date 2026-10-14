@@ -143,7 +143,7 @@ const RUNTIME_JS = `
   const report = (message) => post("error", { message: String(message).slice(0, 500) });
   addEventListener("error", (e) => {
     if (e.message && /ResizeObserver loop/.test(e.message)) return;
-    report(e.message ? e.message + (e.lineno ? " (行 " + e.lineno + ")" : "") : "资源加载失败");
+    report(e.message || "资源加载失败");
   }, true);
   addEventListener("unhandledrejection", (e) => report(e.reason && e.reason.message ? e.reason.message : e.reason));
 
@@ -201,7 +201,7 @@ const RUNTIME_JS = `
     if (!C) return;
     C.defaults.color = css("--muted");
     C.defaults.borderColor = alpha(css("--text"), 0.1);
-    C.defaults.font.family = getComputedStyle(document.body || document.documentElement).fontFamily;
+    C.defaults.font.family = css("--font-display") || css("--font-sans") || "system-ui, sans-serif";
     C.defaults.font.size = 12;
     C.defaults.maintainAspectRatio = false;
     C.defaults.plugins.legend.labels.boxWidth = 10;
@@ -226,7 +226,8 @@ const RUNTIME_JS = `
       document.getElementById("cw-theme").textContent = m.css;
       document.documentElement.dataset.mode = m.mode;
       chartDefaults();
-      if (window.Chart) for (const c of Object.values(window.Chart.instances)) c.update("none");
+      // Resolved options are cached per chart; drop them so the new defaults apply.
+      if (window.Chart) for (const c of Object.values(window.Chart.instances)) { c.config.clearCache && c.config.clearCache(); c.update("none"); }
       for (const cb of themeCbs) try { cb(m.mode); } catch (err) { report(err && err.message); }
     }
   });
