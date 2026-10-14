@@ -84,6 +84,8 @@ export const AUDIT_FIELD: Record<string, string> = {
   reflectMinToolCalls: "复盘门槛",
   browserHtml: "网页读取方式",
   intelligentUi: "智能界面",
+  emojiUse: "表情符号用量",
+  plainHeadings: "标题不用表情",
   notifyOn: "推送事项",
   quietHours: "免打扰",
   backupKeep: "备份保留",
@@ -171,6 +173,7 @@ const SUB_FIELD: Record<string, Record<string, string>> = {
 const VALUE_TEXT: Record<string, Record<string, string>> = {
   approvalMode: { ask: "每次询问", smart: "智能", auto: "全部自动" },
   intelligentUi: { off: "关闭", balanced: "适度", rich: "丰富" },
+  emojiUse: { none: "不用", rare: "少用", some: "适度", free: "不限制" },
   approvalPolicy: { auto: "自动执行（容器内）", ask: "每条都问我" },
   modelNameFormat: { paren: "model (provider)", dash: "model - provider" },
   "desktopPolicy.mode": { none: "不用", on_demand: "按需借用", fixed: "固定一台" },

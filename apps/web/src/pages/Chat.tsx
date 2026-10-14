@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowUp, Archive, ArchiveRestore, ImagePlus, Loader2, Paperclip, Plus, Square, X } from "lucide-react";
+import { ArrowUp, Archive, ArchiveRestore, ImagePlus, Loader2, Monitor, Paperclip, Plus, Square, X } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router";
 import { AgentDot } from "../components/AgentBits";
@@ -11,7 +11,8 @@ import { WidgetHostProvider, type WidgetHost } from "../components/Widget";
 import { api, ApiError, fileToBase64 } from "../lib/api";
 import { useAppearance } from "../lib/appearance";
 import { useAgentEvents, useHubEvents } from "../lib/live";
-import type { Agent, AgentEvent, Approval, Conversation, Effort, Incident, Run } from "../lib/types";
+import { openInstanceWindow, useInstanceWindow } from "../lib/instanceWindow";
+import type { Agent, AgentEvent, Approval, Conversation, Desktop, Effort, Incident, Run } from "../lib/types";
 
 const coarsePointer = window.matchMedia("(pointer: coarse)").matches;
 
@@ -303,6 +304,7 @@ export default function Chat() {
         right={
           conversationId && (
             <div className="flex items-center gap-1">
+              {agentId && data && <InstanceButton agentId={agentId} runs={data.runs} />}
               <ConversationArtifacts conversationId={conversationId} />
               {data && (
                 <IconButton label={data.conversation.archived_at ? "取消归档" : "归档"} onClick={() => void toggleArchive()}>
@@ -360,6 +362,30 @@ export default function Chat() {
       </div>
       {!isNew && <div className="bg-app px-3 pb-2 pt-1 safe-bottom">{composer}</div>}
     </div>
+  );
+}
+
+/**
+ * Opens the floating instance window on the instance this conversation is using: the one its run holds right now,
+ * else the last one it touched, else one bound to the agent. The dot means the agent is operating it now.
+ */
+function InstanceButton({ agentId, runs }: { agentId: string; runs: Run[] }) {
+  const list = useQuery({ queryKey: ["desktops"], queryFn: () => api.get<Desktop[]>("/api/desktops") });
+  const shown = useInstanceWindow();
+  const desktops = list.data ?? [];
+  const runIds = new Set(runs.map((r) => r.id));
+  const held = desktops.find((d) => d.leaseInfo.holder === "agent" && runIds.has(d.leaseInfo.runId));
+  const used = runs
+    .flatMap((r) => r.events)
+    .findLast((e) => e.type === "desktop.action" || e.type === "desktop.help");
+  const usedId = used && "desktopId" in used ? used.desktopId : undefined;
+  const target = held ?? desktops.find((d) => d.id === usedId) ?? desktops.find((d) => d.agentIds.includes(agentId));
+  if (!target) return null;
+  return (
+    <IconButton label={held ? "小窗看它操作实例" : "小窗看实例"} onClick={() => openInstanceWindow(target.id)} className={cx("relative", shown === target.id && "text-[var(--text)] bg-surface-2")}>
+      <Monitor className="size-4" />
+      {held && <span className="absolute top-1.5 right-1.5 size-1.5 rounded-full bg-accent animate-pulse" />}
+    </IconButton>
   );
 }
 

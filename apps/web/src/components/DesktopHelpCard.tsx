@@ -2,6 +2,7 @@ import { ArrowUp, Hand, Monitor } from "lucide-react";
 import { useState } from "react";
 import { useNavigate } from "react-router";
 import { api } from "../lib/api";
+import { openInstanceWindow } from "../lib/instanceWindow";
 import { Button, Card, cx, toast } from "./ui";
 
 export interface DesktopHelp {
@@ -13,7 +14,7 @@ export interface DesktopHelp {
 }
 
 /**
- * The agent's request to take over its desktop, in the chat: take over right here (then operate on the desktop page),
+ * The agent's request to take over its desktop, in the chat: peek in the floating window, take over right here (then operate on the desktop page),
  * and hand it back from here too, with a note for the agent.
  */
 export function DesktopHelpCard({ help }: { help: DesktopHelp }) {
@@ -21,6 +22,7 @@ export function DesktopHelpCard({ help }: { help: DesktopHelp }) {
   const [busy, setBusy] = useState<"takeover" | "handback" | null>(null);
   const [note, setNote] = useState("");
   const open = () => nav(`/instances/${help.desktopId}`);
+  const peek = () => openInstanceWindow(help.desktopId);
   const takeover = async () => {
     setBusy("takeover");
     try {
@@ -52,7 +54,7 @@ export function DesktopHelpCard({ help }: { help: DesktopHelp }) {
       </div>
       <div className="mt-2 text-sm whitespace-pre-wrap">{help.reason}</div>
       {!taken && (
-        <button type="button" onClick={open} className="mt-2.5 block w-full overflow-hidden rounded-lg border border-line bg-surface-2" aria-label="查看实例">
+        <button type="button" onClick={peek} className="mt-2.5 block w-full overflow-hidden rounded-lg border border-line bg-surface-2" aria-label="小窗查看实例">
           <img src={`/api/desktops/${help.desktopId}/screenshot?width=640&h=${help.helpId}`} alt="" className="w-full max-h-56 object-cover object-top" onError={(e) => (e.currentTarget.parentElement!.style.display = "none")} />
         </button>
       )}
@@ -81,7 +83,7 @@ export function DesktopHelpCard({ help }: { help: DesktopHelp }) {
         </div>
       ) : (
         <div className="mt-2.5 grid grid-cols-2 gap-2">
-          <Button variant="secondary" onClick={open}>
+          <Button variant="secondary" onClick={peek}>
             <Monitor className="size-4" /> 先看看
           </Button>
           <Button variant="primary" loading={busy === "takeover"} disabled={!!busy} onClick={() => void takeover()}>

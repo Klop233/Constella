@@ -1,13 +1,13 @@
-import RFB from "@novnc/novnc";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronLeft, ClipboardPaste, Hand, Keyboard, Maximize, MoreVertical, Pause, Play, Power, RotateCcw, Settings2, Undo2 } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router";
 import { InstanceFields, type InstanceDraft } from "../components/InstanceFields";
 import { Button, Field, Sheet, cx, inputClass, toast } from "../components/ui";
 import { api } from "../lib/api";
 import { KIND_INFO, leaseText } from "../lib/instances";
 import type { Agent, Desktop, HostCaps } from "../lib/types";
+import { useVnc } from "../lib/vnc";
 
 const XK: Record<string, number> = {
   Escape: 0xff1b,
@@ -36,8 +36,6 @@ export default function DesktopView() {
   const qc = useQueryClient();
   const screen = useRef<HTMLDivElement>(null);
   const kbd = useRef<HTMLTextAreaElement>(null);
-  const rfb = useRef<RFB | null>(null);
-  const [connState, setConnState] = useState<"connecting" | "connected" | "disconnected">("connecting");
   const [fit, setFit] = useState(true);
   const [ctrl, setCtrl] = useState(false);
   const [menu, setMenu] = useState(false);
@@ -62,26 +60,7 @@ export default function DesktopView() {
   const running = d?.state === "running";
   const android = d?.kind === "android";
 
-  const connect = useCallback(async () => {
-    if (!screen.current || !id) return;
-    rfb.current?.disconnect();
-    setConnState("connecting");
-    try {
-      const { ticket } = await api.post<{ ticket: string }>(`/api/desktops/${id}/ticket`);
-      const proto = location.protocol === "https:" ? "wss" : "ws";
-      const r = new RFB(screen.current, `${proto}://${location.host}/api/desktops/${id}/vnc?ticket=${encodeURIComponent(ticket)}`, { shared: true });
-      r.scaleViewport = true;
-      r.resizeSession = false;
-      r.viewOnly = true;
-      r.background = "#0b0d18";
-      r.addEventListener("connect", () => setConnState("connected"));
-      r.addEventListener("disconnect", () => setConnState("disconnected"));
-      rfb.current = r;
-    } catch (err) {
-      setConnState("disconnected");
-      toast(err instanceof Error ? err.message : String(err), "danger");
-    }
-  }, [id]);
+  const { rfb, state: connState, connect } = useVnc(id, running, screen);
 
   // Opening a paused instance thaws it: the screen should be live while someone looks at it.
   useEffect(() => {
@@ -93,14 +72,6 @@ export default function DesktopView() {
       .catch((err) => toast(err instanceof Error ? err.message : String(err), "danger"))
       .finally(() => (resuming.current = false));
   }, [d?.state, id, qc]);
-
-  useEffect(() => {
-    if (running) void connect();
-    return () => {
-      rfb.current?.disconnect();
-      rfb.current = null;
-    };
-  }, [running, connect]);
 
   useEffect(() => {
     if (rfb.current) rfb.current.viewOnly = !mine;

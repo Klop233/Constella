@@ -31,6 +31,8 @@ import { Scheduler } from "./scheduler.ts";
 import { intelligentUiNote } from "./widgets.ts";
 import { Reflect } from "./reflect.ts";
 import type { ApprovalMode } from "./safety.ts";
+import { OfficeService } from "./office.ts";
+import { registerOfficeProxy } from "./office-proxy.ts";
 import { SecretBox, SecretStore } from "./secrets.ts";
 
 export interface Hub {
@@ -51,6 +53,8 @@ export interface Hub {
   /** What this host can run (instance kinds, Android backends), probed with throwaway containers. */
   hostcaps: HostCapabilities;
   containers: Containers;
+  /** Optional online Office editor (installed and managed from Settings). */
+  office: OfficeService;
   scheduler: Scheduler;
   notifier: Notifier;
   newapi: NewApi;
@@ -141,6 +145,8 @@ export class RunnerGateway {
 }
 
 /** Runtime settings editable from the app (env values are the defaults). */
+export type EmojiUse = "none" | "rare" | "some" | "free";
+
 export class Settings {
   #db: Db;
   #secrets: SecretStore;
@@ -199,6 +205,29 @@ export class Settings {
   intelligentUi(): IntelligentUiLevel {
     const v = kvGet(this.#db, "settings.intelligentUi");
     return INTELLIGENT_UI_LEVELS.find((l) => l === v) ?? "balanced";
+  }
+
+  /** How often agents use emoji in replies and artifacts ("free" = no instruction). */
+  emojiUse(): EmojiUse {
+    const v = kvGet(this.#db, "settings.emojiUse");
+    return v === "none" || v === "rare" || v === "some" || v === "free" ? v : "rare";
+  }
+
+  /** Keep emoji out of headings and titles (on unless turned off). */
+  plainHeadings(): boolean {
+    return this.#bool("plainHeadings", true);
+  }
+
+  /** Reply-style line for agent instructions, from the emoji settings. */
+  emojiNote(): string {
+    const use = {
+      none: "不要使用 emoji。",
+      rare: "少用 emoji：只在确实有助于表达时偶尔用一个，不要拿 emoji 当列表符号或装饰。",
+      some: "可以适度使用 emoji 让内容更生动，但不要每行都放。",
+      free: "",
+    }[this.emojiUse()];
+    const headings = this.plainHeadings() && this.emojiUse() !== "none" ? "标题（Markdown 标题，成果、文档和网页的标题）不加 emoji。" : "";
+    return use + headings;
   }
 
   /** How approvals are decided; "smart" (ask only for destructive actions) unless chosen otherwise. */
@@ -294,6 +323,8 @@ export class Settings {
       ...this.limits(),
       browserHtml: this.browserHtml(),
       intelligentUi: this.intelligentUi(),
+      emojiUse: this.emojiUse(),
+      plainHeadings: this.plainHeadings(),
       approvalMode: this.approvalMode(),
       agentIdleMinutes: this.agentIdleMinutes(),
       desktopIdleMinutes: this.desktopIdleMinutes(),
@@ -378,7 +409,7 @@ export async function createHub(opts: { dbPath?: string; webDist?: string; logge
       return {
         model: a.model,
         effort: a.effort ?? undefined,
-        instructions: agents.instructions(a, { desktopNote, uiNote: intelligentUiNote(settings.intelligentUi()) }),
+        instructions: agents.instructions(a, { desktopNote, uiNote: intelligentUiNote(settings.intelligentUi()), styleNote: settings.emojiNote() }),
         approvalPolicy: a.approval_policy,
         skillRoots: ["/home/agent/knowledge/skills", "/shared/skills"],
       };
@@ -479,8 +510,11 @@ export async function createHub(opts: { dbPath?: string; webDist?: string; logge
   await app.register(rateLimit, { global: false });
 
   const auth = new Auth(db);
+  const office = new OfficeService({ db, secrets, docker: containers.docker });
+  office.startIdleStop();
   const hub: Hub = {
     app,
+    office,
     db,
     auth,
     secrets,
@@ -579,6 +613,7 @@ export async function createHub(opts: { dbPath?: string; webDist?: string; logge
     instanceApproval: () => settings.instanceApproval(),
   });
   registerRoutes(hub);
+  registerOfficeProxy(hub);
 
   const webDist = opts.webDist ?? process.env.CONSTELLA_WEB_DIST ?? path.resolve(import.meta.dirname, "../../web/dist");
   if (fs.existsSync(webDist)) {
@@ -591,7 +626,7 @@ export async function createHub(opts: { dbPath?: string; webDist?: string; logge
       },
     });
     app.setNotFoundHandler((req, reply) => {
-      if (req.method === "GET" && !req.url.startsWith("/api/") && !req.url.startsWith("/mcp")) {
+      if (req.method === "GET" && !req.url.startsWith("/api/") && !req.url.startsWith("/mcp") && !req.url.startsWith("/office-ds/")) {
         return reply.header("Cache-Control", "no-cache").sendFile("index.html");
       }
       return reply.code(404).send({ error: "not found" });

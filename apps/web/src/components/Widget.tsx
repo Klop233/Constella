@@ -35,17 +35,18 @@ function useTheme(): WidgetTheme {
 
 /**
  * An agent reply: markdown, with any ```ui blocks rendered as interactive blocks in place.
- * `keyBase` (run and message id) makes each block's saved-state key.
+ * `keyBase` (run and message id) makes each block's saved-state key; `noHeadingEmoji` is passed
+ * through to the markdown parts (the 标题不用表情 setting).
  */
-export const RichMessage = memo(function RichMessage({ text, streaming, keyBase, runId, className }: { text: string; streaming: boolean; keyBase: string; runId: string; className?: string }) {
+export const RichMessage = memo(function RichMessage({ text, streaming, keyBase, runId, className, noHeadingEmoji }: { text: string; streaming: boolean; keyBase: string; runId: string; className?: string; noHeadingEmoji?: boolean }) {
   const parts = useMemo(() => splitWidgets(text), [text]);
-  if (parts.length === 1 && parts[0]?.kind === "md") return <Markdown text={text} className={className} />;
+  if (parts.length === 1 && parts[0]?.kind === "md") return <Markdown text={text} className={className} noHeadingEmoji={noHeadingEmoji} />;
   let n = 0;
   return (
     <div className="space-y-3">
       {parts.map((p, i) =>
         p.kind === "md" ? (
-          <Markdown key={i} text={p.text} className={className} />
+          <Markdown key={i} text={p.text} className={className} noHeadingEmoji={noHeadingEmoji} />
         ) : p.closed || !streaming ? (
           <Widget key={i} title={p.title} source={p.source} stateKey={`${keyBase}:${n++}`} runId={runId} />
         ) : (

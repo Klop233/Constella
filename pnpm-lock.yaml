@@ -205,9 +205,6 @@ importers:
       fastify:
         specifier: ^5.12.0
         version: 5.12.5
-      fflate:
-        specifier: ^0.8.3
-        version: 0.8.3
       otpauth:
         specifier: ^9.5.0
         version: 9.5.2
@@ -248,6 +245,9 @@ importers:
       '@constella/protocol':
         specifier: workspace:*
         version: link:../../packages/protocol
+      '@fontsource-variable/noto-emoji':
+        specifier: ^5.3.2
+        version: 5.3.2
       '@novnc/novnc':
         specifier: ^1.6.0
         version: 1.7.0
@@ -281,6 +281,9 @@ importers:
       react-router:
         specifier: ^8.0.0
         version: 8.4.0(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+      twemoji-colr-font:
+        specifier: ^15.0.3
+        version: 15.0.3
       workbox-precaching:
         specifier: ^7.4.0
         version: 7.4.1
@@ -878,6 +881,9 @@ packages:
 
   '@fastify/websocket@11.3.4':
     resolution: {integrity: sha512-firnJtEOv6pfdoXIzFDMbd+omgWwFNfLtdM8JejNFr/9lT/9DHkEhjTShuRFeE4phqrevD2B3JRW0v6uyzWhHQ==}
+
+  '@fontsource-variable/noto-emoji@5.3.2':
+    resolution: {integrity: sha512-LgtrM0SErtdfSvrI3CqtHeCtToGCVN66hX+HVNv9QHF5KX0Ko1swzUsSMv1y6Jwjxp3Wzkp8e5PPcl7GLZadOw==}
 
   '@grpc/grpc-js@1.14.6':
     resolution: {integrity: sha512-SgC/B3/VZ8lTyOZ4Cwk6f1skWhmkNAaVfiX90qd5u1rRXGKk1//8FTUEN9GvOUq7rfWIqAYkA3CoyumYVpOS6g==}
@@ -2126,9 +2132,6 @@ packages:
       picomatch:
         optional: true
 
-  fflate@0.8.3:
-    resolution: {integrity: sha512-tbZNuJrLwGUp3zshBtdy4W+ORxZuIh8a5ilyIEQDC5rY1f3U20JMry0Ll3WBzU58EZKsEuJFXhb5gwv8CsPvgA==}
-
   filelist@1.0.6:
     resolution: {integrity: sha512-5giy2PkLYY1cP39p17Ech+2xlpTRL9HLspOfEgm0L6CwBXBTgsK5ou0JtzYuepxkaQ/tvhCFIJ5uXo0OrM2DxA==}
 
@@ -3238,6 +3241,9 @@ packages:
   tweetnacl@0.14.5:
     resolution: {integrity: sha512-KXXFFdAbFXY4geFIwoyNK+f5Z1b7swfXABfL7HXCmoIWMKU3dmS26672A4EeQtDzLKy7SXmfBu51JolvEKwtGA==}
 
+  twemoji-colr-font@15.0.3:
+    resolution: {integrity: sha512-UsK4JUpaczeVoMGeYMnKaMTxKt7fujg1nQOk4NaC0teZmdOo+uAai0DIuaSzsMkShtG4J75F0OEsVdGJ+Q1pHQ==}
+
   type-fest@0.16.0:
     resolution: {integrity: sha512-eaBzG6MxNzEn9kiwvtre90cXaNLkmadMWa1zQMs3XORCXNbsH/OewwbxC5ia9dCxIxnTAsSxXJaa/p5y8DlvJg==}
     engines: {node: '>=10'}
@@ -4296,6 +4302,8 @@ snapshots:
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
+
+  '@fontsource-variable/noto-emoji@5.3.2': {}
 
   '@grpc/grpc-js@1.14.6':
     dependencies:
@@ -5498,8 +5506,6 @@ snapshots:
     optionalDependencies:
       picomatch: 4.0.7
 
-  fflate@0.8.3: {}
-
   filelist@1.0.6:
     dependencies:
       minimatch: 5.1.9
@@ -6635,6 +6641,8 @@ snapshots:
       tslib: 1.14.1
 
   tweetnacl@0.14.5: {}
+
+  twemoji-colr-font@15.0.3: {}
 
   type-fest@0.16.0: {}
 

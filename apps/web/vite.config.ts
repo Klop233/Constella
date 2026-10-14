@@ -13,7 +13,7 @@ export default defineConfig({
       filename: "sw.ts",
       registerType: "autoUpdate",
       injectRegister: false,
-      injectManifest: { globPatterns: ["**/*.{js,css,html,svg,png,woff2}"], maximumFileSizeToCacheInBytes: 4 * 1024 * 1024 },
+      injectManifest: { globPatterns: ["**/*.{js,css,html,svg,png,woff2}"], globIgnores: ["**/noto-emoji-*", "**/twemoji-*"], maximumFileSizeToCacheInBytes: 4 * 1024 * 1024 },
       manifest: {
         name: "Constella",
         short_name: "Constella",

@@ -11,6 +11,7 @@ import { api, ApiError, logout } from "./lib/api";
 import { startLive } from "./lib/live";
 import type { Approval, Overview } from "./lib/types";
 import { ApprovalCard } from "./components/ApprovalCard";
+import { InstanceWindow } from "./components/InstanceWindow";
 import Home from "./pages/Home";
 import Login from "./pages/Login";
 
@@ -396,6 +397,7 @@ function App() {
               </Routes>
             </Suspense>
           </Shell>
+          <InstanceWindow />
         </Gate>
       </BrowserRouter>
     </QueryClientProvider>

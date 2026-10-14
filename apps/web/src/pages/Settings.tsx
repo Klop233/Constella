@@ -28,6 +28,8 @@ interface SettingsView {
   runWatchdogMinutes: number;
   browserHtml: boolean;
   intelligentUi: "off" | "balanced" | "rich";
+  emojiUse: "none" | "rare" | "some" | "free";
+  plainHeadings: boolean;
   approvalMode: "ask" | "smart" | "auto";
   agentIdleMinutes: number;
   desktopIdleMinutes: number;
@@ -126,7 +128,7 @@ export default function Settings() {
       {current.id === "models" && <ModelsSection s={s} save={save} />}
       {current.id === "instances" && <InstancesSection s={s} save={save} />}
       {current.id === "learning" && <LearningSection s={s} save={save} />}
-      {current.id === "appearance" && <AppearanceSection />}
+      {current.id === "appearance" && <AppearanceSection s={s} save={save} />}
       {current.id === "notify" && <NotifySection s={s} save={save} />}
       {current.id === "security" && <SecuritySection me={me.data} />}
       {current.id === "system" && <SystemSection s={s} save={save} />}
@@ -923,7 +925,7 @@ const SIDEBAR_ITEMS = [
   { to: "/reflect", label: "回顾" },
 ];
 
-function AppearanceSection() {
+function AppearanceSection({ s, save }: { s: SettingsView; save: Save }) {
   const a = useAppearance();
   return (
     <>
@@ -971,6 +973,38 @@ function AppearanceSection() {
               onChange={(font) => setAppearance({ font })}
             />
           </div>
+        </SettingRow>
+        <SettingRow wide title="表情符号" desc="扁平为 Twemoji，单色跟随文字颜色，系统用设备自带的。只对这台设备生效。">
+          <div className="w-60">
+            <Segmented
+              value={a.emoji}
+              options={[
+                { value: "flat", label: "扁平" },
+                { value: "mono", label: "单色" },
+                { value: "system", label: "系统" },
+              ]}
+              onChange={(emoji) => setAppearance({ emoji })}
+            />
+          </div>
+        </SettingRow>
+      </SettingGroup>
+      <SettingGroup title="agent 回复">
+        <SettingRow wide title="表情符号用量" desc="agent 在回复和成果里用 emoji 的多少。对所有设备生效，从下一轮回复开始。">
+          <div className="w-60">
+            <Segmented
+              value={s.emojiUse}
+              options={[
+                { value: "none", label: "不用" },
+                { value: "rare", label: "少用" },
+                { value: "some", label: "适度" },
+                { value: "free", label: "不限制" },
+              ]}
+              onChange={(v) => void save({ emojiUse: v })}
+            />
+          </div>
+        </SettingRow>
+        <SettingRow title="标题不用表情" desc="回复里的标题和成果、文档的标题不加 emoji；已有回复里标题上的 emoji 也不再显示。">
+          <Toggle checked={s.plainHeadings} onChange={(v) => void save({ plainHeadings: v }, v ? "标题不再使用表情" : "标题可以使用表情")} label="标题不用表情" />
         </SettingRow>
       </SettingGroup>
       <SettingGroup title="侧栏">
@@ -1361,6 +1395,128 @@ function InstancesSection({ s, save }: { s: SettingsView; save: Save }) {
   );
 }
 
+interface OfficeStatus {
+  enabled: boolean;
+  image: string;
+  imagePresent: boolean;
+  imageSizeMb: number | null;
+  state: "off" | "stopped" | "starting" | "running" | "error";
+  pulling: { active: boolean; percent: number; error: string | null };
+  memoryMb: number;
+  usedMb: number | null;
+  idleMinutes: number;
+  memoryChoices: number[];
+  idleChoices: number[];
+}
+
+/** The optional online Office editor: install, turn off, resource limits, uninstall. */
+function OfficeGroup() {
+  const q = useQuery({
+    queryKey: ["office-status"],
+    queryFn: () => api.get<OfficeStatus>("/api/office/status"),
+    // Follow the download and start-up while they happen.
+    refetchInterval: (query) => (query.state.data?.pulling.active || query.state.data?.state === "starting" ? 2000 : 15_000),
+  });
+  const qc = useQueryClient();
+  const [busy, setBusy] = useState(false);
+  const o = q.data;
+  if (!o) return null;
+  const act = async (fn: () => Promise<unknown>, done?: string) => {
+    setBusy(true);
+    try {
+      await fn();
+      if (done) toast(done);
+      await qc.invalidateQueries({ queryKey: ["office-status"] });
+    } catch (err) {
+      toast(err instanceof Error ? err.message : String(err), "danger");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const gb = (mb: number) => `${mb / 1024} GB`;
+  const stateText = o.pulling.active
+    ? `正在下载镜像 ${o.pulling.percent}%`
+    : o.pulling.error
+      ? `下载失败：${o.pulling.error}`
+      : !o.enabled
+        ? o.imagePresent
+          ? "已关闭（镜像保留，再次开启不用重新下载）"
+          : "未启用"
+        : { off: "已就绪，打开文档时自动启动", stopped: "已就绪，闲置时已停止，打开文档时自动启动", starting: "正在启动…", running: o.usedMb !== null ? `运行中，占用 ${o.usedMb} MB` : "运行中", error: "出错了" }[o.state];
+  return (
+    <SettingGroup title="在线 Office 编辑器">
+      <SettingRow
+        title="在线编辑 Word / Excel / PowerPoint"
+        desc={
+          <>
+            用 OnlyOffice 在成果里直接打开和编辑 doc / docx、xls / xlsx、ppt / pptx 等文件，保存后生成新版本。可选功能：开启会下载约 {o.imageSizeMb ? `${(o.imageSizeMb / 1024).toFixed(1)}` : "3"} GB 的镜像，运行时需要约 2 GB 以上内存。
+            <span className="block mt-1">{stateText}</span>
+          </>
+        }
+      >
+        <Toggle
+          checked={o.enabled}
+          onChange={(v) => void act(() => api.post(v ? "/api/office/enable" : "/api/office/disable"), v ? "已开启，正在准备编辑器" : "已关闭")}
+          label="在线 Office 编辑器"
+        />
+      </SettingRow>
+      {o.enabled && (
+        <>
+          <SettingRow title="内存上限" desc="编辑器容器最多用多少内存；改动在下次启动时生效。文档大、页数多时调高。">
+            <Choice label="内存上限" value={o.memoryMb} options={o.memoryChoices.map((m) => ({ value: m, label: gb(m) }))} onChange={(v) => void act(() => api.patch("/api/office", { memoryMb: v }))} />
+          </SettingRow>
+          <SettingRow title="闲置后停止" desc="没人使用这么久就停掉释放内存，下次打开文档时自动启动（多等一会儿）。">
+            <Choice
+              label="闲置后停止"
+              value={o.idleMinutes}
+              options={o.idleChoices.map((m) => ({ value: m, label: m === 0 ? "一直开着" : fmtMinutes(m) }))}
+              onChange={(v) => void act(() => api.patch("/api/office", { idleMinutes: v }))}
+            />
+          </SettingRow>
+        </>
+      )}
+      <SettingRow title="镜像地址" desc="从哪里下载编辑器镜像。Docker Hub 很慢时，可以换成能访问的镜像源地址；改动后需要重新下载。">
+        <ImageInput value={o.image} disabled={busy || o.pulling.active} onSave={(v) => void act(() => api.patch("/api/office", { image: v }), "已保存镜像地址")} />
+      </SettingRow>
+      {(o.imagePresent || o.pulling.error) && (
+        <SettingRow title="卸载" desc={`删除编辑器容器和镜像${o.imageSizeMb ? `，释放约 ${(o.imageSizeMb / 1024).toFixed(1)} GB 磁盘` : ""}。文档本身不受影响。`}>
+          <Button
+            size="sm"
+            variant="soft"
+            loading={busy}
+            disabled={o.pulling.active}
+            onClick={() => {
+              if (confirm("卸载在线 Office 编辑器并删除镜像？之后再开启需要重新下载。")) void act(() => api.post("/api/office/uninstall"), "已卸载");
+            }}
+          >
+            卸载
+          </Button>
+        </SettingRow>
+      )}
+      {o.enabled && !o.imagePresent && !o.pulling.active && (
+        <SettingRow title="镜像还没有下载" desc={`${o.image}`}>
+          <Button size="sm" variant="primary" loading={busy} onClick={() => void act(() => api.post("/api/office/enable"))}>
+            重新下载
+          </Button>
+        </SettingRow>
+      )}
+    </SettingGroup>
+  );
+}
+
+function ImageInput({ value, disabled, onSave }: { value: string; disabled: boolean; onSave: (v: string) => void }) {
+  const [v, setV] = useState(value);
+  useEffect(() => setV(value), [value]);
+  return (
+    <div className="flex items-center gap-2">
+      <input value={v} onChange={(e) => setV(e.target.value)} aria-label="镜像地址" spellCheck={false} className={cx(inputClass, "h-8 w-56 sm:w-72 font-mono text-[12.5px]")} />
+      <Button size="sm" variant="soft" disabled={disabled || !v.trim() || v.trim() === value} onClick={() => onSave(v.trim())}>
+        保存
+      </Button>
+    </div>
+  );
+}
+
 function SystemSection({ s, save }: { s: SettingsView; save: Save }) {
   const sys = useQuery({
     queryKey: ["system"],
@@ -1422,6 +1578,7 @@ function SystemSection({ s, save }: { s: SettingsView; save: Save }) {
           </Link>
         </SettingRow>
       </SettingGroup>
+      <OfficeGroup />
       <SettingGroup title="环境">
         <SettingRow title="时区" desc="定时任务、用量统计、免打扰都按它算；在 deploy/.env 的 TZ 里改。">
           <span className="text-[13px] text-muted">{s.timezone}</span>
