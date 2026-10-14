@@ -10,10 +10,21 @@ export const compactBytes = (v: number) => (v === 0 ? "0" : bytes(v).replace(" "
 export const compactRate = (v: number) => (v === 0 ? "0" : rate(v).replace(" ", ""));
 export const compactCores = (v: number) => (v === 0 ? "0" : cores(v).replace(" ", ""));
 
-/** Tooltip and axis labels for a list of samples, with about five ticks across the range. */
+const hmsTime = (t: number) => new Date(t).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
+
+/** Tooltip and axis labels for a list of samples, with about five ticks across the range (seconds while it is still short). */
 export function timeScale(list: PerfPoint[]): { labels: string[]; ticks: string[] } {
   const step = Math.max(1, Math.ceil(list.length / 5));
-  return { labels: list.map((p) => hmTime(p.t)), ticks: list.map((p, i) => (i % step === 0 ? hmTime(p.t) : "")) };
+  const span = list.length ? list.at(-1)!.t - list[0]!.t : 0;
+  const fmt = span < 10 * 60_000 ? hmsTime : hmTime;
+  let last = "";
+  const ticks = list.map((p, i) => {
+    const s = i % step === 0 ? fmt(p.t) : "";
+    if (!s || s === last) return "";
+    last = s;
+    return s;
+  });
+  return { labels: list.map((p) => hmsTime(p.t)), ticks };
 }
 
 export interface PerfSeriesDef {
