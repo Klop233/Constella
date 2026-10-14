@@ -1,9 +1,11 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowUp, Archive, ArchiveRestore, ImagePlus, Loader2, Monitor, Paperclip, Plus, Square, X } from "lucide-react";
+import { IMAGE_EXT, withAttachments } from "@constella/protocol";
+import { ArrowUp, Archive, ArchiveRestore, Loader2, Monitor, Plus, Square } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router";
 import { AgentDot } from "../components/AgentBits";
 import { ConversationArtifacts } from "../components/ArtifactList";
+import { ComposerAttachments, type PendingFile } from "../components/Attachments";
 import { ContextMeter, EffortPicker, ModelPicker, RunTimeoutPicker } from "../components/ChatControls";
 import { CONTINUE_TEXT, latestStats, RunView } from "../components/RunView";
 import { Button, Empty, Header, IconButton, Loading, cx, toast } from "../components/ui";
@@ -15,6 +17,10 @@ import { openInstanceWindow, useInstanceWindow } from "../lib/instanceWindow";
 import type { Agent, AgentEvent, Approval, Conversation, Desktop, Effort, Incident, Run } from "../lib/types";
 
 const coarsePointer = window.matchMedia("(pointer: coarse)").matches;
+const MAX_FILES = 10;
+/** The hub passes at most this many images to the model per message. */
+const MAX_IMAGES = 8;
+const MAX_FILE_BYTES = 12 * 1024 * 1024;
 
 interface ConvData {
   conversation: Conversation;
@@ -31,14 +37,14 @@ export default function Chat() {
   const [loading, setLoading] = useState(!!conversationId);
   const [missing, setMissing] = useState(false);
   const [text, setText] = useState("");
-  const [files, setFiles] = useState<{ name: string; path: string; image: boolean }[]>([]);
+  const [files, setFiles] = useState<PendingFile[]>([]);
+  const [dragging, setDragging] = useState(false);
   const [sending, setSending] = useState(false);
   // This conversation's model / effort; null follows the agent.
   const [model, setModel] = useState<string | null>(null);
   const [effort, setEffort] = useState<Effort | null>(null);
   // Likewise the single-turn time limit (0 = none).
   const [runTimeout, setRunTimeout] = useState<number | null>(null);
-  const [uploading, setUploading] = useState(false);
   const bottom = useRef<HTMLDivElement>(null);
   const scroller = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
@@ -136,20 +142,23 @@ export default function Chat() {
   // The agent is waiting on a question: whatever is typed goes to it as the answer.
   const asked = !!active && active.status === "waiting_approval" && !!data?.approvals.some((ap) => ap.kind === "decision" && ap.run_id === active.id);
 
+  const uploading = files.some((f) => !f.path);
+  const canSend = !!text.trim() || interrupted || (files.length > 0 && !uploading);
   const send = async () => {
+    if (uploading) return toast("附件还在上传，稍等一下");
     const body = text.trim() || (interrupted && !files.length ? CONTINUE_TEXT : "");
-    if (!body || !agentId) return;
+    if ((!body && !files.length) || !agentId) return;
     setSending(true);
     try {
-      const images = files.filter((f) => f.image).map((f) => f.path);
-      const others = files.filter((f) => !f.image).map((f) => f.path);
-      const full = others.length ? `${body}\n\n附件：${others.join("、")}` : body;
+      const paths = files.map((f) => f.path!);
+      const images = files.filter((f) => f.image).map((f) => f.path!);
+      const full = withAttachments(body, paths);
       const res = await api.post<{ conversationId: string; runId: string; steered: boolean }>(
         conversationId ? `/api/conversations/${conversationId}/messages` : `/api/agents/${agentId}/messages`,
         { text: full, images, ...(conversationId ? {} : { model, effort, runTimeoutMinutes: runTimeout }) },
       );
       setText("");
-      setFiles([]);
+      clearFiles();
       stick.current = true;
       if (!conversationId) nav(`/c/${res.conversationId}`, { replace: true });
       else void load();
@@ -200,20 +209,48 @@ export default function Chat() {
     await api.post(`/api/runs/${active.id}/interrupt`).catch((e) => toast(e.message, "danger"));
   };
 
-  const upload = async (list: FileList | null) => {
-    if (!list?.length || !agentId) return;
-    setUploading(true);
-    try {
-      for (const f of Array.from(list).slice(0, 6)) {
-        if (f.size > 12 * 1024 * 1024) throw new Error(`${f.name} 超过 12MB`);
-        const res = await api.post<{ path: string; image: boolean }>(`/api/agents/${agentId}/uploads`, { name: f.name, data: await fileToBase64(f) });
-        setFiles((x) => [...x, { name: f.name, ...res }]);
+  const removeFile = (key: string) =>
+    setFiles((x) => {
+      const f = x.find((y) => y.key === key);
+      if (f?.preview) URL.revokeObjectURL(f.preview);
+      return x.filter((y) => y.key !== key);
+    });
+  const clearFiles = () =>
+    setFiles((x) => {
+      for (const f of x) if (f.preview) URL.revokeObjectURL(f.preview);
+      return [];
+    });
+  // Picked, pasted or dropped files: each shows up right away (images with a local thumbnail) and uploads in the background.
+  const upload = (list: File[]) => {
+    if (fileInput.current) fileInput.current.value = "";
+    if (!list.length || !agentId) return;
+    const room = MAX_FILES - files.length;
+    let imageRoom = MAX_IMAGES - files.filter((f) => f.image).length;
+    const accepted: { file: File; item: PendingFile }[] = [];
+    const rejected: string[] = [];
+    for (const raw of list) {
+      const file = named(raw);
+      const image = IMAGE_TYPE.test(file.type) || IMAGE_EXT.test(file.name);
+      if (accepted.length >= room || (image && imageRoom <= 0)) rejected.push(`最多 ${MAX_FILES} 个附件、${MAX_IMAGES} 张图片`);
+      else if (file.size > MAX_FILE_BYTES) rejected.push(`${file.name} 超过 12MB`);
+      else if (!file.size) rejected.push(`${file.name} 是空文件或文件夹`);
+      else {
+        if (image) imageRoom--;
+        accepted.push({ file, item: { key: `${Date.now()}-${Math.random()}`, name: file.name, image, preview: image ? URL.createObjectURL(file) : undefined } });
       }
-    } catch (err) {
-      toast(err instanceof Error ? err.message : String(err), "danger");
-    } finally {
-      setUploading(false);
-      if (fileInput.current) fileInput.current.value = "";
+    }
+    if (rejected.length) toast([...new Set(rejected)].join("；"), "danger");
+    if (!accepted.length) return;
+    setFiles((x) => [...x, ...accepted.map((a) => a.item)]);
+    for (const { file, item } of accepted) {
+      fileToBase64(file)
+        .then((data) => api.post<{ path: string; image: boolean }>(`/api/agents/${agentId}/uploads`, { name: file.name, data }))
+        // The hub decides what the model can take as an image (by extension); anything else goes as a file.
+        .then((res) => setFiles((x) => x.map((f) => (f.key === item.key ? { ...f, path: res.path, image: res.image } : f))))
+        .catch((err) => {
+          removeFile(item.key);
+          toast(`${file.name} 上传失败：${err instanceof Error ? err.message : String(err)}`, "danger");
+        });
     }
   };
 
@@ -235,24 +272,40 @@ export default function Chat() {
   };
   const composer = (
     <div className="w-full max-w-3xl mx-auto">
-      <div className="rounded-2xl border border-line bg-surface focus-within:border-[color-mix(in_oklab,var(--text)_30%,transparent)] transition-colors">
-        {files.length > 0 && (
-          <div className="flex gap-1.5 px-2.5 pt-2.5 overflow-x-auto no-scrollbar">
-            {files.map((f, i) => (
-              <span key={f.path} className="flex items-center gap-1 text-xs bg-surface-2 border border-line rounded-md pl-2 pr-1 py-0.5 shrink-0">
-                {f.image ? <ImagePlus className="size-3.5" /> : <Paperclip className="size-3.5" />}
-                <span className="max-w-32 truncate">{f.name}</span>
-                <button aria-label="移除" onClick={() => setFiles((x) => x.filter((_, j) => j !== i))}>
-                  <X className="size-3.5" />
-                </button>
-              </span>
-            ))}
-          </div>
+      <div
+        className={cx(
+          "rounded-2xl border bg-surface transition-colors",
+          dragging ? "border-[color-mix(in_oklab,var(--color-accent)_60%,transparent)] bg-[color-mix(in_oklab,var(--color-accent)_5%,var(--surface))]" : "border-line focus-within:border-[color-mix(in_oklab,var(--text)_30%,transparent)]",
         )}
+        onDragOver={(e) => {
+          if (!e.dataTransfer.types.includes("Files")) return;
+          e.preventDefault();
+          e.dataTransfer.dropEffect = "copy";
+          setDragging(true);
+        }}
+        onDragLeave={(e) => {
+          if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragging(false);
+        }}
+        onDrop={(e) => {
+          if (!e.dataTransfer.files.length) return;
+          e.preventDefault();
+          setDragging(false);
+          upload(Array.from(e.dataTransfer.files));
+        }}
+      >
+        {files.length > 0 && <ComposerAttachments files={files} onRemove={removeFile} />}
         <div className="flex items-end gap-1 p-1.5 pl-2">
         <textarea
           value={text}
           onChange={(e) => setText(e.target.value)}
+          onPaste={(e) => {
+            const pasted = Array.from(e.clipboardData.files);
+            if (!pasted.length) return;
+            // Office and web selections also carry a rendered image of themselves; there the text is what was meant.
+            if (e.clipboardData.getData("text/html") && e.clipboardData.getData("text/plain").trim()) return;
+            e.preventDefault();
+            upload(pasted);
+          }}
           onKeyDown={(e) => {
             // Enter sends; Ctrl/⌘/Shift+Enter inserts a newline. Ignore Enter while an IME is composing,
             // and on touch keyboards (no modifier keys) leave Enter as a newline.
@@ -272,21 +325,21 @@ export default function Chat() {
           placeholder={asked ? "直接写下你的回答…" : active ? "追加指示（任务进行中）" : interrupted ? "任务中断了，直接发送即可继续，也可以补充说明…" : !conversationId ? `今天想让${a?.name ?? "agent"}做点什么？` : "回复…"}
           className="flex-1 min-w-0 resize-none max-h-48 min-h-8 bg-transparent px-1.5 py-1.5 text-sm outline-none field-sizing-content placeholder:text-muted"
         />
-          {active && !text.trim() ? (
+          {active && !text.trim() && !files.length ? (
             <button aria-label="停止" onClick={stop} className="size-7 mb-0.5 grid place-items-center rounded-lg bg-[var(--text)] text-[var(--bg)] shrink-0">
               <Square className="size-3 fill-current" />
             </button>
           ) : (
-            <button aria-label={!text.trim() && interrupted ? "继续" : "发送"} title={!text.trim() && interrupted ? "继续中断的任务" : undefined} aria-busy={sending} onClick={send} disabled={(!text.trim() && !interrupted) || sending} className={cx("size-7 mb-0.5 grid place-items-center rounded-lg shrink-0 transition-colors", text.trim() || interrupted || sending ? "bg-accent text-white hover:brightness-95" : "bg-surface-2 text-muted")}>
+            <button aria-label={!text.trim() && interrupted ? "继续" : "发送"} title={!text.trim() && interrupted ? "继续中断的任务" : undefined} aria-busy={sending} onClick={send} disabled={!canSend || sending} className={cx("size-7 mb-0.5 grid place-items-center rounded-lg shrink-0 transition-colors", canSend || sending ? "bg-accent text-white hover:brightness-95" : "bg-surface-2 text-muted")}>
               {sending ? <Loader2 className="size-4 animate-spin" /> : <ArrowUp className="size-4" strokeWidth={2.4} />}
             </button>
           )}
         </div>
       </div>
       <div className="flex items-center gap-0.5 pt-1 min-w-0">
-        <input ref={fileInput} type="file" multiple hidden onChange={(e) => upload(e.target.files)} />
-        <button aria-label="添加附件" title="添加附件" className="size-7 grid place-items-center rounded-md text-muted hover:text-[var(--text)] hover:bg-surface-2 shrink-0" onClick={() => fileInput.current?.click()} disabled={uploading}>
-          {uploading ? <Loader2 className="size-4 animate-spin" /> : <Plus className="size-4" />}
+        <input ref={fileInput} type="file" multiple hidden onChange={(e) => upload(Array.from(e.target.files ?? []))} />
+        <button aria-label="添加附件" title="添加附件" className="size-7 grid place-items-center rounded-md text-muted hover:text-[var(--text)] hover:bg-surface-2 shrink-0" onClick={() => fileInput.current?.click()}>
+          <Plus className="size-4" />
         </button>
         <div className="flex-1 min-w-0" />
         {stats && agentId && conversationId && <ContextMeter stats={stats} runs={data!.runs} agentId={agentId} conversationId={conversationId} />}
@@ -387,6 +440,17 @@ function InstanceButton({ agentId, runs }: { agentId: string; runs: Run[] }) {
       {held && <span className="absolute top-1.5 right-1.5 size-1.5 rounded-full bg-accent animate-pulse" />}
     </IconButton>
   );
+}
+
+const IMAGE_TYPE = /^image\/(png|jpeg|gif|webp)$/;
+
+/** Clipboard images come in as "image.png"; give them a name that tells them apart. */
+function named(file: File): File {
+  if (!/^image\.\w+$/.test(file.name) && file.name) return file;
+  const ext = file.type.split("/")[1]?.replace("jpeg", "jpg") ?? "png";
+  const d = new Date();
+  const stamp = [d.getHours(), d.getMinutes(), d.getSeconds()].map((n) => String(n).padStart(2, "0")).join("");
+  return new File([file], `粘贴的图片-${stamp}.${ext}`, { type: file.type });
 }
 
 /** Time-of-day greeting for the empty new-conversation screen. */

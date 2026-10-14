@@ -44,7 +44,7 @@ async function handle(msg: HubToRunner): Promise<void> {
     case "start":
       return engine.start(msg);
     case "steer":
-      return engine.steer(msg.runId, msg.text);
+      return engine.steer(msg.runId, msg.text, msg.images);
     case "interrupt":
       return engine.interrupt(msg.runId);
     case "approval_decision":

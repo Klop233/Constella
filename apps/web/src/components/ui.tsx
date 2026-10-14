@@ -139,6 +139,25 @@ export function Sheet({ open, onClose, title, children }: { open: boolean; onClo
   );
 }
 
+/** An image shown full-screen over the page; click anywhere or Esc closes it. */
+export function Lightbox({ src, alt, onClose }: { src: string | null; alt: string; onClose: () => void }) {
+  useEffect(() => {
+    if (!src) return;
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [src, onClose]);
+  if (!src) return null;
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-black/80 p-4 safe-bottom" role="dialog" aria-modal="true" aria-label={alt} onClick={onClose}>
+      <img src={src} alt={alt} className="max-w-full max-h-full object-contain rounded-lg" />
+      <button aria-label="关闭" onClick={onClose} className="absolute top-3 right-3 size-8 grid place-items-center rounded-full bg-black/50 text-white hover:bg-black/70">
+        <X className="size-4" />
+      </button>
+    </div>
+  );
+}
+
 /** A labelled control. Use `group` when it holds several controls (buttons, segmented), so the label isn't folded into their names. */
 export function Field({ label, hint, children, group }: { label: string; hint?: ReactNode; children: ReactNode; group?: boolean }) {
   const body = (

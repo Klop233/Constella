@@ -37,7 +37,7 @@ export type HubToRunner =
       approvalPolicy: ApprovalPolicy;
       skillRoots: string[];
     }
-  | { t: "steer"; runId: string; text: string }
+  | { t: "steer"; runId: string; text: string; images?: string[] }
   | { t: "interrupt"; runId: string }
   | { t: "approval_decision"; runId: string; approvalId: string; decision: "approve" | "deny" }
   | { t: "ping" };

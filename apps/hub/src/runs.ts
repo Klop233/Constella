@@ -1,4 +1,4 @@
-import { canTransition, isTerminal, type EngineProvider, type HubToRunner, type RunStatus, type RunnerEvent } from "@constella/protocol";
+import { canTransition, IMAGE_EXT, isTerminal, splitAttachments, uploadName, type EngineProvider, type HubToRunner, type RunStatus, type RunnerEvent } from "@constella/protocol";
 import { config, newId, nowIso } from "./config.ts";
 import type { Effort } from "./catalog.ts";
 import { audit, type Db } from "./db.ts";
@@ -233,7 +233,7 @@ export class RunManager {
 
     const active = this.activeRun(conv.id);
     if (active && (active.status === "running" || active.status === "paused_by_user")) {
-      this.#d.sendToRunner(input.agentId, { t: "steer", runId: active.id, text: input.text });
+      this.#d.sendToRunner(input.agentId, { t: "steer", runId: active.id, text: input.text, ...(input.images?.length ? { images: input.images } : {}) });
       this.#append(active, { type: "message.completed", runId: active.id, messageId: newId("um"), text: `［追加指示］${input.text}` });
       return { conversationId: conv.id, runId: active.id, steered: true };
     }
@@ -802,6 +802,8 @@ function errMessage(err: unknown): string {
 }
 
 function titleFrom(text: string): string {
-  const t = text.replace(/\s+/g, " ").trim();
+  const { text: typed, paths } = splitAttachments(text);
+  const t = typed.replace(/\s+/g, " ").trim();
+  if (!t && paths.length) return paths.every((p) => IMAGE_EXT.test(p)) ? "图片" : uploadName(paths[0]!);
   return t.length > 30 ? `${t.slice(0, 30)}…` : t || "新对话";
 }
