@@ -44,6 +44,8 @@ export class Desktops {
   #handbackWaiters = new Map<string, ((note: string) => void)[]>();
   /** Agent lease displaced by a takeover, restored on hand-back. */
   #displaced = new Map<string, Extract<DesktopLease, { holder: "agent" }>>();
+  /** Open requests for the owner to take over, by desktop; their progress shows up in the run's chat. */
+  #help = new Map<string, { helpId: string; runId: string }>();
   #timer: NodeJS.Timeout | null = null;
   #idleMinutes: () => number;
 
@@ -159,17 +161,20 @@ export class Desktops {
       const l = JSON.parse(r.lease) as DesktopLease;
       if (l.holder === "agent" && l.runId === runId) this.#setLease(r.id, { holder: "none" });
       if (this.#displaced.get(r.id)?.runId === runId) this.#displaced.delete(r.id);
+      if (this.#help.get(r.id)?.runId === runId) this.#help.delete(r.id);
     }
   }
 
   takeover(id: string, actor: string): void {
     const l = this.lease(id);
     if (l.holder === "human") return;
+    const help = this.#help.get(id);
     if (l.holder === "agent") {
       this.#displaced.set(id, l);
       this.#runs.transition(l.runId, "paused_by_user");
-      this.#runs.appendFor(l.runId, { type: "desktop.action", runId: l.runId, desktopId: id, action: "用户接管了桌面" });
+      if (!help) this.#runs.appendFor(l.runId, { type: "desktop.action", runId: l.runId, desktopId: id, action: "用户接管了桌面" });
     }
+    if (help) this.#helpEvent(id, help, "taken");
     this.#setLease(id, { holder: "human", since: nowIso() });
     audit(this.#db, actor, "desktop.takeover", { id });
   }
@@ -179,11 +184,14 @@ export class Desktops {
     if (l.holder !== "human") return;
     const prev = this.#displaced.get(id);
     this.#displaced.delete(id);
+    const help = this.#help.get(id);
+    this.#help.delete(id);
+    if (help) this.#helpEvent(id, help, "returned", { note: note || undefined });
     const run = prev ? this.#runs.get(prev.runId) : undefined;
     if (prev && run && !["done", "failed", "cancelled"].includes(run.status)) {
       this.#setLease(id, { ...prev, since: nowIso() });
       this.#runs.transition(prev.runId, "running");
-      this.#runs.appendFor(prev.runId, { type: "desktop.action", runId: prev.runId, desktopId: id, action: `用户交还了桌面${note ? `：${note}` : ""}` });
+      if (!help) this.#runs.appendFor(prev.runId, { type: "desktop.action", runId: prev.runId, desktopId: id, action: `用户交还了桌面${note ? `：${note}` : ""}` });
     } else {
       this.#setLease(id, { holder: "none" });
     }
@@ -204,15 +212,29 @@ export class Desktops {
     });
   }
 
-  /** Agent asks the user to take over (login, captcha, payment). Resolves with the user's note on hand-back. */
-  async requestHelp(id: string, agentName: string, reason: string, notify: (title: string, body: string, url: string) => void): Promise<string> {
+  /**
+   * Agent asks the user to take over (login, captcha, payment): a push notification plus a card in the run's chat
+   * the owner can take over from. Resolves with the user's note on hand-back.
+   */
+  async requestHelp(id: string, runId: string, agentName: string, reason: string, notify: (title: string, body: string, url: string) => void): Promise<string> {
+    const help = { helpId: newId("help"), runId };
+    this.#help.set(id, help);
+    this.#helpEvent(id, help, "requested", { reason });
     notify(`${agentName} 需要你帮忙操作桌面`, reason, `/desktops/${id}`);
     this.#events.publish("desktop.help", { id, reason });
-    const l = this.lease(id);
-    if (l.holder === "agent") {
-      this.#runs.appendFor(l.runId, { type: "desktop.action", runId: l.runId, desktopId: id, action: `请求用户协助：${reason}` });
+    try {
+      return await this.waitForHandback(id);
+    } catch (err) {
+      if (this.#help.get(id) === help) {
+        this.#help.delete(id);
+        this.#helpEvent(id, help, "expired");
+      }
+      throw err;
     }
-    return this.waitForHandback(id);
+  }
+
+  #helpEvent(id: string, help: { helpId: string; runId: string }, state: "requested" | "taken" | "returned" | "expired", extra: { reason?: string; note?: string } = {}): void {
+    this.#runs.appendFor(help.runId, { type: "desktop.help", runId: help.runId, helpId: help.helpId, desktopId: id, state, ...extra });
   }
 
   controlUrl(id: string): string {

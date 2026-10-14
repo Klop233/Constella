@@ -1,4 +1,4 @@
-import { Brain, Check, ChevronRight, CircleSlash, CircleX, Eye, FileEdit, Globe, Loader2, MessageCircleQuestion, Monitor, RotateCw, ShieldCheck, ShieldX, Stethoscope, Terminal, ThumbsDown, ThumbsUp, Wrench, X } from "lucide-react";
+import { Brain, Check, ChevronRight, CircleSlash, CircleX, Eye, FileEdit, Globe, Hand, Loader2, MessageCircleQuestion, Monitor, RotateCw, ShieldCheck, ShieldX, Stethoscope, Terminal, ThumbsDown, ThumbsUp, Wrench, X } from "lucide-react";
 import { memo, useMemo, useState, type ReactNode } from "react";
 import { Link } from "react-router";
 import { api } from "../lib/api";
@@ -7,6 +7,7 @@ import { clock, duration, STATUS_TEXT, tokens } from "../lib/format";
 import { useModelLabel } from "../lib/models";
 import type { AgentEvent, Approval, DecisionOption, Incident, Run } from "../lib/types";
 import { ApprovalCard } from "./ApprovalCard";
+import { DesktopHelpCard, type DesktopHelp } from "./DesktopHelpCard";
 import { IncidentCard, IncidentStatus } from "./IncidentCard";
 import { Markdown } from "./Markdown";
 import { cx, toast } from "./ui";
@@ -17,6 +18,7 @@ type Item =
   | { kind: "tool"; id: string; name: string; input: unknown; output: string; done: boolean; ok: boolean; error?: string; result?: unknown }
   | { kind: "approval"; id: string; approvalId: string; summary: string; question: boolean; options?: DecisionOption[]; resolved?: "approve" | "deny"; by?: "user" | "policy"; answer?: string }
   | { kind: "desktop"; id: string; desktopId: string; action: string }
+  | ({ kind: "help"; id: string } & DesktopHelp)
   | { kind: "notice"; id: string; notice: "recovery" | "supervisor" | "incident"; text: string; incidentId?: string };
 
 const STEER_PREFIX = "［追加指示］";
@@ -106,6 +108,16 @@ export function buildItems(events: AgentEvent[]): { items: Item[]; usage: Usage 
       case "desktop.action":
         items.push({ kind: "desktop", id: ev.id, desktopId: ev.desktopId, action: ev.action });
         break;
+      case "desktop.help": {
+        const h = byId.get(`help:${ev.helpId}`) as Extract<Item, { kind: "help" }> | undefined;
+        if (h) Object.assign(h, { state: ev.state, note: ev.note ?? h.note });
+        else if (ev.state === "requested") {
+          const n: Item = { kind: "help", id: ev.id, helpId: ev.helpId, desktopId: ev.desktopId, reason: ev.reason ?? "", state: ev.state };
+          byId.set(`help:${ev.helpId}`, n);
+          items.push(n);
+        }
+        break;
+      }
       case "usage":
         usage.input += ev.inputTokens;
         usage.output += ev.outputTokens;
@@ -428,9 +440,9 @@ export function RunView({ run, approvals, incidents = [], onChanged }: { run: Ru
   const blocks = useMemo(() => groupSteps(items, new Set(pending.keys())), [items, pending]);
   const reports = new Map(incidents.map((i) => [i.id, i]));
   const seen = new Set<string>();
-  // A question card already says it's waiting for you; no extra spinner line under it.
-  const asking = blocks.some((b) => b.kind === "approval" && b.question && pending.has(b.approvalId));
   const finished = ["done", "failed", "cancelled"].includes(run.status);
+  // A question or takeover card already says it's waiting for you; no extra spinner line under it.
+  const asking = blocks.some((b) => (b.kind === "approval" && b.question && pending.has(b.approvalId)) || (b.kind === "help" && !finished && (b.state === "requested" || b.state === "taken")));
   const { usage: showUsage } = useAppearance();
   const feedback = async (value: 1 | -1) => {
     try {
@@ -455,6 +467,13 @@ export function RunView({ run, approvals, incidents = [], onChanged }: { run: Ru
             if (it.incidentId) seen.add(it.incidentId);
             return <NoticeLine key={it.id} item={it} incident={it.incidentId ? reports.get(it.incidentId) : undefined} first={first} onChanged={onChanged} />;
           }
+          case "help":
+            if (!finished && (it.state === "requested" || it.state === "taken")) return <DesktopHelpCard key={it.id} help={it} />;
+            return (
+              <StatusLine key={it.id} icon={<Hand className="size-3.5" />}>
+                请你接管「{it.reason.slice(0, 60)}」→ {it.state === "returned" ? `已交还${it.note ? `：${it.note}` : ""}` : it.state === "expired" ? "等待超时" : "已失效"}
+              </StatusLine>
+            );
           case "approval": {
             const a = pending.get(it.approvalId);
             if (a) return <ApprovalCard key={it.id} approval={a} showAgent={false} onResolved={onChanged} />;

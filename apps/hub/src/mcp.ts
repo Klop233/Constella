@@ -241,12 +241,12 @@ function buildServer(agent: AgentRow, d: McpDeps): McpServer {
     "desktop_request_help",
     {
       description:
-        "需要用户本人操作时调用（登录、验证码、扫码、支付确认等）。会推送通知请用户接管桌面，并一直等到用户交还（最多 15 分钟），返回用户留言。",
+        "需要用户本人操作时调用（登录、验证码、扫码、支付确认等）。会推送通知并在聊天里显示接管请求，请用户接管桌面，并一直等到用户交还（最多 15 分钟），返回用户留言。",
       inputSchema: { reason: z.string().max(300) },
     },
     guard(async ({ reason }) => {
-      const { id } = await desktop();
-      const note = await d.desktops.requestHelp(id, agent.name, reason, (t, b, u) => void d.notifier.send(t, b, u, { urgent: true }));
+      const { id, runId } = await desktop();
+      const note = await d.desktops.requestHelp(id, runId, agent.name, reason, (t, b, u) => void d.notifier.send(t, b, u, { urgent: true }));
       return text(`用户已交还桌面。${note ? `用户留言：${note}` : ""}请先截图确认当前状态再继续。`);
     }),
   );

@@ -83,6 +83,19 @@ export const AgentEvent = z.discriminatedUnion("type", [
     action: z.string(),
     thumbnail: z.string().optional(),
   }),
+  /**
+   * The agent asked the owner to take over a desktop (login, captcha, payment). Later events with the same
+   * helpId move it along: the owner took over, handed it back (with an optional note), or nobody came in time.
+   */
+  z.object({
+    ...envelope,
+    type: z.literal("desktop.help"),
+    helpId: z.string(),
+    desktopId: z.string(),
+    state: z.enum(["requested", "taken", "returned", "expired"]),
+    reason: z.string().optional(),
+    note: z.string().optional(),
+  }),
   z.object({
     ...envelope,
     type: z.literal("usage"),
