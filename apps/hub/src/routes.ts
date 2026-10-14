@@ -4,6 +4,7 @@ import type { FastifyReply, FastifyRequest } from "fastify";
 import { DesktopKind, DesktopOptions, IdleAction } from "@constella/protocol";
 import { z } from "zod";
 import { AgentInput, TEMPLATES } from "./agents.ts";
+import { isArchiveName, listArchive } from "./archive.ts";
 import { MAX_ARTIFACT_TEXT, type ArtifactVersionRow } from "./artifacts.ts";
 import type { Hub } from "./app.ts";
 import { EffortSchema } from "./catalog.ts";
@@ -410,6 +411,18 @@ export function registerRoutes(hub: Hub): void {
   app.get("/api/artifacts/:id/content", async (req) => {
     const a = artifactOr404(id(req));
     return artifacts.text(a.id, VersionQuery.parse(req.query).v);
+  });
+  // What is inside a compressed file (zip, rar, 7z, tar.* …), listed without extracting.
+  app.get("/api/artifacts/:id/archive", async (req, reply) => {
+    const q = VersionQuery.parse(req.query);
+    const a = artifactOr404(id(req));
+    const v = artifacts.version(a.id, q.v);
+    if (v.kind !== "file" || !isArchiveName(v.filename)) throw new HttpError(400, "这不是压缩包");
+    const listing = await listArchive(artifacts.filePath(a.id, v.version), v.filename).catch((err) => {
+      throw new HttpError(422, err instanceof Error ? err.message : String(err));
+    });
+    reply.header("Cache-Control", q.v ? "private, max-age=31536000, immutable" : "private, no-cache");
+    return listing;
   });
   // The file itself. Only types the browser can't run as a page are served inline; text (HTML included) is
   // served as plain text and everything else as a download, all sandboxed, so a delivered file can never act

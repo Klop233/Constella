@@ -117,6 +117,13 @@ const TYPES: Record<string, TypeInfo> = {
   "7z": { kind: "file", mime: "application/x-7z-compressed" },
   rar: { kind: "file", mime: "application/vnd.rar" },
   epub: { kind: "file", mime: "application/epub+zip" },
+  bz2: { kind: "file", mime: "application/x-bzip2" },
+  xz: { kind: "file", mime: "application/x-xz" },
+  zst: { kind: "file", mime: "application/zstd" },
+  tbz2: { kind: "file", mime: "application/x-bzip2" },
+  txz: { kind: "file", mime: "application/x-xz" },
+  cab: { kind: "file", mime: "application/vnd.ms-cab-compressed" },
+  iso: { kind: "file", mime: "application/x-iso9660-image" },
 };
 
 /** Types the browser renders by content: only stored as such when the bytes agree with the extension. */

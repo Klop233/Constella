@@ -1,9 +1,9 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, ChevronDown, ChevronLeft, Copy, Download, ExternalLink, MessageSquare, MoreHorizontal, Pencil, RotateCcw, Trash2, X } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, Folder, File as FileIcon, Lock, ChevronLeft, Copy, Download, ExternalLink, MessageSquare, MoreHorizontal, Pencil, RotateCcw, Trash2, X } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router";
 import { api, ApiError } from "../lib/api";
-import { bytes, fileUrl, isTextKind, KIND_LABEL, kindIcon, RENDERED_KINDS, useArtifactPanel } from "../lib/artifacts";
+import { ARCHIVE, bytes, fileUrl, isTextKind, KIND_LABEL, kindIcon, RENDERED_KINDS, useArtifactPanel } from "../lib/artifacts";
 import { timeAgo } from "../lib/format";
 import type { ArtifactDetail, ArtifactVersion } from "../lib/types";
 import { Markdown } from "./Markdown";
@@ -368,6 +368,7 @@ function Body({ id, ver, mode, text, loading, error }: { id: string; ver: Artifa
         <iframe title={ver.filename} src={url} className="block w-full h-full border-0" />
       );
     case "file":
+      if (ARCHIVE.test(ver.filename)) return <ArchiveView id={id} ver={ver} download={download} />;
       return <Empty title={ver.filename} hint={`${bytes(ver.size)} · 这类文件不能在线预览，下载后用对应的软件打开`} action={download} />;
   }
   if (loading) return <Loading />;
@@ -402,6 +403,115 @@ function Body({ id, ver, mode, text, loading, error }: { id: string; ver: Artifa
       return <CsvTable text={text.text} tsv={/\.tsv$/i.test(ver.filename)} />;
   }
   return null;
+}
+
+interface ArchiveEntry {
+  path: string;
+  size: number | null;
+  dir: boolean;
+  modified: string | null;
+  encrypted: boolean;
+}
+interface TreeNode {
+  name: string;
+  path: string;
+  dir: boolean;
+  size: number | null;
+  modified: string | null;
+  encrypted: boolean;
+  children: TreeNode[];
+}
+
+function buildTree(entries: ArchiveEntry[]): TreeNode[] {
+  const root: TreeNode = { name: "", path: "", dir: true, size: null, modified: null, encrypted: false, children: [] };
+  const index = new Map<string, TreeNode>([["", root]]);
+  const ensureDir = (path: string): TreeNode => {
+    const hit = index.get(path);
+    if (hit) return hit;
+    const cut = path.lastIndexOf("/");
+    const parent = ensureDir(cut < 0 ? "" : path.slice(0, cut));
+    const node: TreeNode = { name: path.slice(cut + 1), path, dir: true, size: null, modified: null, encrypted: false, children: [] };
+    parent.children.push(node);
+    index.set(path, node);
+    return node;
+  };
+  for (const e of entries) {
+    if (e.dir) {
+      const n = ensureDir(e.path);
+      n.modified = e.modified;
+      continue;
+    }
+    const cut = e.path.lastIndexOf("/");
+    const parent = ensureDir(cut < 0 ? "" : e.path.slice(0, cut));
+    parent.children.push({ name: e.path.slice(cut + 1), path: e.path, dir: false, size: e.size, modified: e.modified, encrypted: e.encrypted, children: [] });
+  }
+  const sort = (n: TreeNode) => {
+    n.children.sort((a, b) => Number(b.dir) - Number(a.dir) || a.name.localeCompare(b.name, "zh"));
+    n.children.forEach(sort);
+  };
+  sort(root);
+  return root.children;
+}
+
+/** The contents of a compressed file, listed on the hub without extracting anything. */
+function ArchiveView({ id, ver, download }: { id: string; ver: ArtifactVersion; download: ReactNode }) {
+  const q = useQuery({
+    queryKey: ["artifact-archive", id, ver.version],
+    queryFn: () => api.get<{ entries: ArchiveEntry[]; total: number; truncated: boolean; totalSize: number | null }>(`/api/artifacts/${id}/archive?v=${ver.version}`),
+    retry: false,
+    staleTime: Infinity,
+  });
+  const tree = useMemo(() => (q.data ? buildTree(q.data.entries) : []), [q.data]);
+  const [open, setOpen] = useState<Set<string>>(new Set());
+  const [filter, setFilter] = useState("");
+  if (q.isLoading) return <Loading />;
+  if (q.error || !q.data) return <Empty title={ver.filename} hint={q.error?.message ?? "读不出压缩包"} action={download} />;
+  const d = q.data;
+  const files = d.entries.filter((e) => !e.dir).length;
+  const needle = filter.trim().toLowerCase();
+  const hits = needle ? d.entries.filter((e) => !e.dir && e.path.toLowerCase().includes(needle)) : [];
+  const toggle = (p: string) =>
+    setOpen((s) => {
+      const n = new Set(s);
+      if (!n.delete(p)) n.add(p);
+      return n;
+    });
+  const row = (n: { name: string; dir: boolean; size: number | null; modified: string | null; encrypted: boolean }, depth: number, onClick?: () => void, expanded = false, key?: string) => (
+    <div
+      key={key}
+      role={onClick ? "button" : undefined}
+      onClick={onClick}
+      className={cx("flex items-center gap-2 py-1.5 pr-3 text-[13px] border-b border-line/60", onClick && "cursor-pointer hover:bg-surface-2")}
+      style={{ paddingLeft: 12 + depth * 16 }}
+    >
+      {n.dir ? <ChevronRight className={cx("size-3.5 shrink-0 text-muted transition-transform", expanded && "rotate-90")} /> : <span className="size-3.5 shrink-0" />}
+      {n.dir ? <Folder className="size-4 shrink-0 text-muted" strokeWidth={1.8} /> : <FileIcon className="size-4 shrink-0 text-muted" strokeWidth={1.8} />}
+      <span className="flex-1 min-w-0 truncate" title={n.name}>
+        {n.name}
+      </span>
+      {n.encrypted && <Lock className="size-3 shrink-0 text-muted" aria-label="已加密" />}
+      <span className="shrink-0 text-xs text-muted tabular-nums w-16 text-right">{n.size !== null && !n.dir ? bytes(n.size) : ""}</span>
+      <span className="shrink-0 text-xs text-muted tabular-nums w-28 text-right hidden sm:block">{n.modified?.slice(0, 16) ?? ""}</span>
+    </div>
+  );
+  const render = (nodes: TreeNode[], depth: number): ReactNode[] =>
+    nodes.flatMap((n) => {
+      const isOpen = open.has(n.path);
+      return [row(n, depth, n.dir ? () => toggle(n.path) : undefined, isOpen, n.path), ...(n.dir && isOpen ? render(n.children, depth + 1) : [])];
+    });
+  return (
+    <div className="min-w-0">
+      <div className="sticky top-0 z-10 bg-surface flex items-center gap-2 px-3 py-2 border-b border-line">
+        <input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="在压缩包里找文件" aria-label="筛选文件" className={cx(inputClass, "h-8 flex-1 min-w-0")} />
+        <span className="shrink-0 text-xs text-muted tabular-nums">
+          {files} 个文件{d.totalSize !== null ? ` · 解压后 ${bytes(d.totalSize)}` : ""}
+        </span>
+        {download}
+      </div>
+      {d.truncated && <div className="px-4 py-2 text-xs text-muted border-b border-line">共 {d.total} 项，只列出了前 {d.entries.length} 项。</div>}
+      {needle ? (hits.length ? hits.slice(0, 500).map((e) => row({ ...e, name: e.path }, 0, undefined, false, e.path)) : <Empty title="没有匹配的文件" />) : d.entries.length ? render(tree, 0) : <Empty title="空的压缩包" />}
+    </div>
+  );
 }
 
 function Centered({ children }: { children: ReactNode }) {
