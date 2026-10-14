@@ -1,5 +1,5 @@
 import http from "node:http";
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import WebSocket from "ws";
 import { config } from "./config.ts";
 import type { Hub } from "./app.ts";
@@ -32,10 +32,7 @@ export function registerOfficeProxy(hub: Hub): void {
       }
     });
 
-    scope.route({
-      method: ["GET", "POST", "PUT", "DELETE", "HEAD", "OPTIONS"],
-      url: `${OFFICE_PREFIX}/*`,
-      handler: (req, reply) => {
+    const proxyHttp = (req: FastifyRequest, reply: FastifyReply) => {
         office.touch();
         const headers: http.OutgoingHttpHeaders = {};
         for (const [k, v] of Object.entries(req.headers)) if (!HOP.has(k) && v !== undefined) headers[k] = v;
@@ -52,7 +49,12 @@ export function registerOfficeProxy(hub: Hub): void {
           reply.raw.end(JSON.stringify({ error: "在线编辑器没有响应，可能还在启动" }));
         });
         up.end(body?.length ? body : undefined);
-      },
+    };
+    scope.route({ method: ["POST", "PUT", "DELETE", "OPTIONS"], url: `${OFFICE_PREFIX}/*`, handler: proxyHttp });
+    scope.route({
+      method: "GET",
+      url: `${OFFICE_PREFIX}/*`,
+      handler: proxyHttp,
       wsHandler: (socket, req) => {
         office.touch();
         const headers: Record<string, string> = {};
