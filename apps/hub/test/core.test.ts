@@ -18,7 +18,7 @@ const { openDb } = await import("../src/db.ts");
 const { EventStore } = await import("../src/events.ts");
 const { Knowledge } = await import("../src/knowledge.ts");
 const { RunManager, isTransientError } = await import("../src/runs.ts");
-const { RfbClientFilter } = await import("../src/desktops.ts");
+const { Desktops, RfbClientFilter } = await import("../src/desktops.ts");
 const { SecretBox, redact } = await import("../src/secrets.ts");
 const { hashPassword, verifyPassword } = await import("../src/auth.ts");
 const { transcriptFor } = await import("../src/learning.ts");
@@ -237,6 +237,48 @@ describe("RunManager", () => {
     await expect(pending).resolves.toBe(false);
     runs.onRunnerHello("ag1", []);
     expect(runs.get(r.runId)!.status).toBe("failed");
+  });
+});
+
+describe("desktop takeover requests", () => {
+  it("shows the request in the run's chat and follows it through takeover and hand-back", async () => {
+    const db = openDb(":memory:");
+    db.prepare(
+      `INSERT INTO agents (id, name, emoji, template, persona, model, approval_policy, desktop_policy, token_hash, created_at, updated_at)
+       VALUES ('ag1', '助理', '✨', 'assistant', 'p', 'm', 'auto', '{"mode":"none"}', 'h', 'now', 'now')`,
+    ).run();
+    const events = new EventStore(db);
+    const runs = new RunManager({
+      db,
+      events,
+      ensureRunner: async () => {},
+      sendToRunner: () => true,
+      startPayload: () => ({ model: "m", instructions: "i", approvalPolicy: "auto", skillRoots: [] }),
+      notify: () => {},
+      autoResume: () => false,
+      approvalMode: () => "auto",
+    });
+    const desktops = new Desktops({ db, events, containers: {} as any, runs });
+    const r = await runs.send({ agentId: "ag1", text: "登录网站" });
+    await new Promise((res) => setTimeout(res, 10));
+    const dt = desktops.create("桌面");
+    db.prepare("UPDATE desktops SET lease = ? WHERE id = ?").run(JSON.stringify({ holder: "agent", agentId: "ag1", runId: r.runId, since: new Date().toISOString() }), dt.id);
+    const pushed: string[] = [];
+    const help = desktops.requestHelp(dt.id, r.runId, "助理", "需要扫码登录", (t) => pushed.push(t));
+    const helpEvents = () => events.forRun(r.runId).filter((e) => e.type === "desktop.help") as Extract<ReturnType<typeof events.forRun>[number], { type: "desktop.help" }>[];
+    expect(pushed).toHaveLength(1);
+    expect(helpEvents()).toMatchObject([{ state: "requested", reason: "需要扫码登录", desktopId: dt.id }]);
+    desktops.takeover(dt.id, "u");
+    expect(runs.get(r.runId)!.status).toBe("paused_by_user");
+    desktops.handback(dt.id, "已登录", "u");
+    await expect(help).resolves.toBe("已登录");
+    expect(helpEvents().map((e) => e.state)).toEqual(["requested", "taken", "returned"]);
+    expect(new Set(helpEvents().map((e) => e.helpId)).size).toBe(1);
+    expect(helpEvents().at(-1)!.note).toBe("已登录");
+    expect(runs.get(r.runId)!.status).toBe("running");
+    expect(desktops.lease(dt.id)).toMatchObject({ holder: "agent", runId: r.runId });
+    // Plain takeovers without a request still show as desktop action lines.
+    expect(events.forRun(r.runId).filter((e) => e.type === "desktop.action")).toHaveLength(0);
   });
 });
 
