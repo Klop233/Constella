@@ -1,9 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
-import { Bot, ChevronDown, RefreshCw, Server } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { Bot, ChevronDown, RefreshCw, Search, Server } from "lucide-react";
+import { useMemo, useState, type ReactNode } from "react";
 import { Link } from "react-router";
 import { PerfChart, compactBytes, compactRate } from "../components/PerfChart";
-import { Badge, Card, Header, Loading, Section, Segmented, StatTile, cx } from "../components/ui";
+import { Badge, Card, Header, Loading, Section, Segmented, StatTile, cx, inputClass } from "../components/ui";
 import { api } from "../lib/api";
 import { timeAgo } from "../lib/format";
 import { KIND_INFO } from "../lib/instances";
@@ -16,6 +16,13 @@ const SCOPE_NOTE: Record<HostInfo["scope"], string> = {
   cgroup: "hub 读到的是它所在 cgroup（LXC 容器或类似的资源切片）的用量，不是整台物理机。",
   container: "没有挂载宿主的 /proc 和 /sys/fs/cgroup，这里只有 hub 容器自己的数字；内存可能仍是整台机器的。",
 };
+
+const GROUP_SORTS = [
+  { value: "cpu", label: "CPU" },
+  { value: "mem", label: "内存" },
+  { value: "name", label: "名称" },
+] as const;
+type GroupSort = (typeof GROUP_SORTS)[number]["value"];
 
 function Item({ label, value, mono, title }: { label: string; value: ReactNode; mono?: boolean; title?: string }) {
   return (
@@ -111,12 +118,25 @@ function GroupRow({ g, hostCores }: { g: PerfGroup; hostCores: number | null }) 
 
 export default function Performance() {
   const [range, setRange] = useState<PerfRange>("1h");
+  const [groupFilter, setGroupFilter] = useState("");
+  const [groupSort, setGroupSort] = useState<GroupSort>("cpu");
   const q = useQuery({ queryKey: ["perf", range], queryFn: () => api.get<PerfData>(`/api/perf?range=${range}`), refetchInterval: 10_000 });
   const d = q.data;
   const info = d?.host.info ?? null;
   const now = d?.host.now ?? null;
   const history = d?.host.history ?? [];
   const groups = d?.groups ?? [];
+  const visibleGroups = useMemo(() => {
+    const needle = groupFilter.trim().toLocaleLowerCase();
+    return groups
+      .filter((g) => !needle || [g.name, g.id, g.type, g.kind, ...g.containers.map((c) => `${c.name} ${c.role}`)].some((v) => v?.toLocaleLowerCase().includes(needle)))
+      .sort((a, b) => {
+        if (groupSort === "name") return a.name.localeCompare(b.name, "zh-CN");
+        const av = a.now?.[groupSort === "cpu" ? "cpu" : "mem"] ?? -1;
+        const bv = b.now?.[groupSort === "cpu" ? "cpu" : "mem"] ?? -1;
+        return bv - av;
+      });
+  }, [groupFilter, groupSort, groups]);
   const hostCores = info?.cores ?? null;
   const value = (v: ReactNode) => <span className="text-[11px] tabular-nums text-muted">{v}</span>;
   const netLegend = (
@@ -144,34 +164,49 @@ export default function Performance() {
         }
       />
       <div className="px-4 pb-8 space-y-5">
-        <div className="flex items-center gap-2">
-          <div className="w-52">
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="min-w-0 flex-1 sm:flex-none sm:w-52">
             <Segmented value={range} options={RANGES} onChange={setRange} />
           </div>
-          <div className="flex-1" />
+          <div className="relative min-w-[10rem] flex-1 sm:max-w-xs">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted" />
+            <input
+              value={groupFilter}
+              onChange={(e) => setGroupFilter(e.target.value)}
+              placeholder="筛选实例、agent 或服务"
+              aria-label="筛选实例、agent 或服务"
+              className={cx(inputClass, "h-8 pl-8 pr-2.5")}
+            />
+          </div>
         </div>
 
+        {q.isError ? (
+          <Card className="flex items-center justify-between gap-3 border-[color-mix(in_oklab,var(--danger)_35%,var(--border))] p-3.5">
+            <div className="min-w-0">
+              <p className="text-sm font-medium">性能数据读取失败</p>
+              <p className="mt-0.5 truncate text-xs text-muted">检查 hub 状态后重试，已有数据仍会保留。</p>
+            </div>
+            <button type="button" onClick={() => void q.refetch()} className="shrink-0 text-xs text-accent hover:underline">重试</button>
+          </Card>
+        ) : null}
+
         {!d ? (
-          <Loading />
+          q.isError ? null : <Loading />
         ) : (
           <>
             <Section title="服务器">
               <Card className="p-3.5 space-y-2.5">
-                {info ? (
-                  <>
-                    <div className="flex min-w-0 items-center gap-2">
-                      <span className="truncate font-display text-[15px] font-semibold">{info.hostname}</span>
-                      <Badge tone="muted" className="shrink-0">
-                        {SCOPE_LABEL[info.scope]}
-                      </Badge>
-                    </div>
-                    {!!(SCOPE_NOTE[info.scope] || !info.network) && (
-                      <p className="text-xs leading-snug text-muted">
-                        {SCOPE_NOTE[info.scope]}
-                        {!info.network && `${SCOPE_NOTE[info.scope] ? " " : ""}读不到宿主网卡，网络数字为空。`}
-                      </p>
-                    )}
-                    <dl className="grid grid-cols-1 gap-x-5 gap-y-1.5 border-t border-line pt-2.5 sm:grid-cols-2">
+              {info ? (
+                <>
+                  <details className="group">
+                    <summary className="flex cursor-pointer list-none items-center gap-2 [&::-webkit-details-marker]:hidden">
+                      <Server className="size-4 shrink-0 text-muted" strokeWidth={1.8} />
+                      <span className="min-w-0 flex-1 truncate font-medium">{info.hostname}</span>
+                      <Badge tone="muted">{SCOPE_LABEL[info.scope]}</Badge>
+                      <span className="text-xs text-muted">配置</span>
+                      <ChevronDown className="size-4 shrink-0 text-muted transition-transform group-open:rotate-180" strokeWidth={1.8} />
+                    </summary>
+                    <dl className="mt-2.5 grid grid-cols-1 gap-x-5 gap-y-1.5 border-t border-line pt-2.5 sm:grid-cols-2">
                       <Item label="系统" value={info.os || "—"} title={info.os} />
                       <Item label="内核" value={info.kernel || "—"} mono title={info.kernel} />
                       <Item label="CPU" value={info.cpuModel || "—"} title={info.cpuModel} />
@@ -182,11 +217,18 @@ export default function Performance() {
                       <Item label="Docker" value={info.dockerVersion || "—"} mono />
                       <Item label="主机网络" value={info.network ? "可读" : "读不到"} />
                     </dl>
-                  </>
-                ) : (
-                  <p className="text-sm text-muted">还没有采到数据，hub 刚启动的话等十几秒。</p>
-                )}
-              </Card>
+                  </details>
+                  {!!(SCOPE_NOTE[info.scope] || !info.network) && (
+                    <p className="text-xs leading-snug text-muted">
+                      {SCOPE_NOTE[info.scope]}
+                      {!info.network && `${SCOPE_NOTE[info.scope] ? " " : ""}读不到宿主网卡，网络数字为空。`}
+                    </p>
+                  )}
+                </>
+              ) : (
+                <p className="text-sm text-muted">还没有采到数据，hub 刚启动的话等十几秒。</p>
+              )}
+            </Card>
             </Section>
 
             <Section title="实时占用">
@@ -236,12 +278,24 @@ export default function Performance() {
               </Card>
             </Section>
 
-            <Section title="实例、agent 和服务" action={<span className="text-xs text-muted">{groups.length} 个</span>}>
+            <Section
+              title="实例、agent 和服务"
+              action={
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-muted">{visibleGroups.length}/{groups.length} 个</span>
+                  <select aria-label="资源排序" value={groupSort} onChange={(e) => setGroupSort(e.target.value as GroupSort)} className="h-7 rounded-md border border-line bg-surface px-1.5 text-xs text-muted outline-none">
+                    {GROUP_SORTS.map((o) => <option key={o.value} value={o.value}>按{o.label}</option>)}
+                  </select>
+                </div>
+              }
+            >
               <Card className="divide-y divide-[var(--border)]">
                 {groups.length === 0 ? (
                   <div className="px-3.5 py-3 text-sm text-muted">还没有实例或 agent。</div>
+                ) : visibleGroups.length === 0 ? (
+                  <div className="px-3.5 py-5 text-center text-sm text-muted">没有匹配的资源</div>
                 ) : (
-                  groups.map((g) => <GroupRow key={`${g.type}:${g.id}`} g={g} hostCores={hostCores} />)
+                  visibleGroups.map((g) => <GroupRow key={`${g.type}:${g.id}`} g={g} hostCores={hostCores} />)
                 )}
               </Card>
             </Section>
