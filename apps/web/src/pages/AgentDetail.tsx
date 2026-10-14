@@ -38,7 +38,7 @@ export default function AgentDetail() {
             <div className="text-base font-semibold truncate">{a.name}</div>
             <AgentStatus agent={a} />
             <div className="text-xs text-muted mt-1 truncate">
-              {modelLabel(a.model)} · 桌面{a.desktop_policy.mode === "none" ? "：不用" : a.desktop_policy.mode === "fixed" ? "：固定" : "：按需"}
+              {modelLabel(a.model)} · {a.desktop_policy.desktopIds.length ? `实例 ${a.desktop_policy.desktopIds.length} 个` : "没有实例"}
               {a.host_access && " · 可操作宿主机"}
             </div>
           </div>

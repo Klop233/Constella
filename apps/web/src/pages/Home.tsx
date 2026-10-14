@@ -1,12 +1,14 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bell, Monitor, Plus } from "lucide-react";
+import { Bell, Plus } from "lucide-react";
 import { useState } from "react";
 import { useNavigate } from "react-router";
 import { ApprovalCard } from "../components/ApprovalCard";
 import { IncidentCard } from "../components/IncidentCard";
+import { InstanceThumb } from "../components/InstanceThumb";
 import { AgentAvatar, AgentStatus } from "../components/AgentBits";
 import { Badge, Card, Empty, Header, IconButton, Loading, Section, Sheet, cx } from "../components/ui";
 import { api } from "../lib/api";
+import { KIND_INFO } from "../lib/instances";
 import { STATUS_TEXT, statusTone, timeAgo } from "../lib/format";
 import { useLiveStatus } from "../lib/live";
 import { useModelLabel } from "../lib/models";
@@ -114,14 +116,14 @@ export default function Home() {
               <div className="flex gap-3 overflow-x-auto no-scrollbar -mx-4 px-4">
                 {data.desktops.map((d) => (
                   <Card key={d.id} className="w-44 lg:w-64 shrink-0 overflow-hidden" onClick={() => nav(`/desktops/${d.id}`)}>
-                    <div className="aspect-[16/10] bg-surface-2 grid place-items-center">
-                      {d.state === "running" ? (
-                        <img src={`/api/desktops/${d.id}/screenshot?width=360&t=${Math.floor(Date.now() / 30000)}`} alt="" className="w-full h-full object-cover" />
-                      ) : (
-                        <Monitor className="size-7 text-muted" />
-                      )}
+                    <InstanceThumb d={d} width={360} className="aspect-[16/10]" />
+                    <div className="px-3 py-2 text-sm truncate flex items-center gap-1.5">
+                      {(() => {
+                        const Icon = KIND_INFO[d.kind].icon;
+                        return <Icon className="size-3.5 text-muted shrink-0" />;
+                      })()}
+                      <span className="truncate">{d.name}</span>
                     </div>
-                    <div className="px-3 py-2 text-sm truncate">{d.name}</div>
                   </Card>
                 ))}
               </div>

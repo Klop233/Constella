@@ -1,6 +1,6 @@
 import { startRegistration } from "@simplewebauthn/browser";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bell, Boxes, Brain, ChevronRight, ClipboardCheck, Gauge, Layers, LogOut, Palette, Search, Server, Settings2, Shield, Sparkles, type LucideIcon } from "lucide-react";
+import { Bell, Boxes, Brain, ChevronRight, ClipboardCheck, Gauge, Layers, LogOut, Monitor, Palette, Search, Server, Settings2, Shield, Sparkles, type LucideIcon } from "lucide-react";
 import QRCode from "qrcode";
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
@@ -11,7 +11,8 @@ import { setAppearance, useAppearance, type Appearance } from "../lib/appearance
 import { fmtMinutes, RUN_TIMEOUTS, runTimeoutLabel, timeAgo, tokens } from "../lib/format";
 import { useModels, useProviders, type ModelEntry, type Provider } from "../lib/models";
 import { currentSubscription, disablePush, enablePush, pushSupported } from "../lib/push";
-import type { Agent, Effort, Schedule } from "../lib/types";
+import { KIND_INFO, KINDS } from "../lib/instances";
+import type { Agent, Effort, HostCaps, IdleAction, Schedule } from "../lib/types";
 
 type NotifyKind = "done" | "failed" | "approval" | "stuck";
 
@@ -27,6 +28,11 @@ interface SettingsView {
   approvalMode: "ask" | "smart" | "auto";
   agentIdleMinutes: number;
   desktopIdleMinutes: number;
+  desktopIdleAction: IdleAction;
+  androidBackend: "auto" | "redroid" | "emulator" | "off";
+  maxInstances: number;
+  maxAndroidInstances: number;
+  instanceApproval: { create: boolean; update: boolean };
   autoReflect: boolean;
   reflectMinToolCalls: number;
   notifyOn: Record<NotifyKind, boolean>;
@@ -55,6 +61,7 @@ type Save = (patch: Record<string, unknown>, ok?: string) => Promise<void>;
 const SECTIONS: { id: string; label: string; icon: LucideIcon }[] = [
   { id: "general", label: "通用", icon: Settings2 },
   { id: "models", label: "模型", icon: Boxes },
+  { id: "instances", label: "实例", icon: Monitor },
   { id: "learning", label: "学习", icon: Brain },
   { id: "appearance", label: "外观", icon: Palette },
   { id: "notify", label: "通知", icon: Bell },
@@ -114,6 +121,7 @@ export default function Settings() {
     <div className="space-y-5">
       {current.id === "general" && <GeneralSection s={s} save={save} />}
       {current.id === "models" && <ModelsSection s={s} save={save} />}
+      {current.id === "instances" && <InstancesSection s={s} save={save} />}
       {current.id === "learning" && <LearningSection s={s} save={save} />}
       {current.id === "appearance" && <AppearanceSection />}
       {current.id === "notify" && <NotifySection s={s} save={save} />}
@@ -1068,10 +1076,12 @@ const AUDIT_TEXT: Record<string, string> = {
   "approval.approve": "批准操作",
   "approval.deny": "拒绝操作",
   "run.interrupt": "停止任务",
-  "desktop.create": "新建桌面",
-  "desktop.delete": "删除桌面",
-  "desktop.takeover": "接管桌面",
-  "desktop.handback": "交还桌面",
+  "desktop.create": "新建实例",
+  "desktop.update": "修改实例",
+  "desktop.restart": "重启实例",
+  "desktop.delete": "删除实例",
+  "desktop.takeover": "接管实例",
+  "desktop.handback": "交还实例",
   "schedule.create": "新建定时任务",
   "schedule.update": "修改定时任务",
   "schedule.delete": "删除定时任务",
@@ -1094,7 +1104,12 @@ const FIELD_TEXT: Record<string, string> = {
   runWatchdogMinutes: "卡住处理",
   approvalMode: "审批方式",
   agentIdleMinutes: "agent 闲置休眠",
-  desktopIdleMinutes: "桌面闲置关闭",
+  desktopIdleMinutes: "实例闲置时间",
+  desktopIdleAction: "实例闲置处理",
+  androidBackend: "安卓后端",
+  maxInstances: "实例上限",
+  maxAndroidInstances: "安卓实例上限",
+  instanceApproval: "实例审批",
   autoReflect: "自动复盘",
   reflectMinToolCalls: "复盘门槛",
   notifyOn: "推送事项",
@@ -1112,7 +1127,7 @@ const FIELD_TEXT: Record<string, string> = {
   model: "模型",
   effort: "推理强度",
   approvalPolicy: "命令审批",
-  desktopPolicy: "桌面",
+  desktopPolicy: "实例",
   hostAccess: "宿主机权限",
   budgetDailyUsd: "每日预算",
 };
@@ -1284,6 +1299,105 @@ function SecuritySection({ me }: { me: Me }) {
   );
 }
 
+function InstancesSection({ s, save }: { s: SettingsView; save: Save }) {
+  const qc = useQueryClient();
+  const caps = useQuery({
+    queryKey: ["hostcaps"],
+    queryFn: () => api.get<HostCaps>("/api/desktops/capabilities"),
+    refetchInterval: (q) => (q.state.data?.checkedAt ? false : 3000),
+  });
+  const [checking, setChecking] = useState(false);
+  const recheck = async () => {
+    setChecking(true);
+    try {
+      qc.setQueryData(["hostcaps"], await api.post<HostCaps>("/api/desktops/capabilities/refresh"));
+      toast("已重新检测");
+    } catch (err) {
+      toast(err instanceof Error ? err.message : String(err), "danger");
+    } finally {
+      setChecking(false);
+    }
+  };
+  const c = caps.data;
+  const status = (ok: boolean | undefined) => <Badge tone={ok ? "ok" : "muted"}>{ok ? "可用" : c?.checkedAt ? "不可用" : "检测中"}</Badge>;
+  const backendDesc = (b: "redroid" | "emulator") => {
+    const x = c?.android[b];
+    if (!x) return "";
+    if (!x.ok) return x.reason ?? "";
+    const parts = [b === "redroid" ? "需要宿主内核带 binder" : "需要 /dev/kvm", `ARM 转译${x.arm ? "可用" : "不可用"}`, `Google Play ${x.googlePlay ? "可用" : "未构建"}`];
+    return [parts.join(" · "), ...(x.warnings ?? [])].join("；");
+  };
+  const idle = minuteOptions([10, 30, 60, 120, 360, 0], "从不");
+  return (
+    <>
+      <SettingGroup title="这台服务器能运行">
+        {KINDS.map((k) => (
+          <SettingRow key={k} title={KIND_INFO[k].label} desc={c?.kinds[k].ok ? KIND_INFO[k].hint : c?.kinds[k].reason}>
+            {status(c?.kinds[k].ok)}
+          </SettingRow>
+        ))}
+        <SettingRow title="安卓 · Redroid" desc={backendDesc("redroid")}>
+          {status(c?.android.redroid.ok)}
+        </SettingRow>
+        <SettingRow title="安卓 · 模拟器" desc={backendDesc("emulator")}>
+          {status(c?.android.emulator.ok)}
+        </SettingRow>
+        <SettingRow title="重新检测" desc={`构建了新镜像、或改了宿主设置（binder、KVM）后点一下。${c?.checkedAt ? `上次检测：${timeAgo(c.checkedAt)}` : ""}`}>
+          <Button size="sm" variant="soft" loading={checking || !!c?.checking} onClick={recheck}>
+            检测
+          </Button>
+        </SettingRow>
+      </SettingGroup>
+      <SettingGroup title="安卓">
+        <SettingRow title="运行方式" desc="新建安卓实例用哪种方式；「自动」优先用 Redroid（更轻），不行再用模拟器。已有的实例不受影响。">
+          <Choice
+            label="安卓运行方式"
+            value={s.androidBackend}
+            options={[
+              { value: "auto", label: "自动" },
+              { value: "redroid", label: "Redroid" },
+              { value: "emulator", label: "模拟器" },
+              { value: "off", label: "关闭" },
+            ]}
+            onChange={(v) => void save({ androidBackend: v }).then(() => qc.invalidateQueries({ queryKey: ["hostcaps"] }))}
+          />
+        </SettingRow>
+      </SettingGroup>
+      <SettingGroup title="闲置">
+        <SettingRow title="闲置多久" desc="实例这么久没人用、也没有人在看，就按下面的方式处理。每个实例也可以单独设置。">
+          <Choice label="闲置多久" value={s.desktopIdleMinutes} options={idle} onChange={(v) => void save({ desktopIdleMinutes: v })} />
+        </SettingRow>
+        <SettingRow title="闲置时" desc="暂停：冻结实例、保留内存，几秒就能恢复；停止：释放内存，下次重新启动（浏览器登录状态和安卓数据都会保留）。">
+          <Choice
+            label="闲置时"
+            value={s.desktopIdleAction}
+            options={[
+              { value: "pause", label: "暂停" },
+              { value: "stop", label: "停止" },
+              { value: "none", label: "一直运行" },
+            ]}
+            onChange={(v) => void save({ desktopIdleAction: v })}
+          />
+        </SettingRow>
+      </SettingGroup>
+      <SettingGroup title="上限与审批">
+        <SettingRow title="实例总数上限" desc="包括 agent 自己新建的。">
+          <Choice label="实例总数上限" value={s.maxInstances} options={[3, 5, 10, 20].map((n) => ({ value: n, label: `${n} 个` }))} onChange={(v) => void save({ maxInstances: v })} />
+        </SettingRow>
+        <SettingRow title="安卓实例上限" desc="安卓每个约占 2–4 GB 内存。">
+          <Choice label="安卓实例上限" value={s.maxAndroidInstances} options={[0, 1, 2, 3, 5].map((n) => ({ value: n, label: `${n} 个` }))} onChange={(v) => void save({ maxAndroidInstances: v })} />
+        </SettingRow>
+        <SettingRow title="agent 新建实例要我同意" desc="关掉后 agent 需要时直接新建（仍受上面的上限限制）。">
+          <Toggle label="agent 新建实例要我同意" checked={s.instanceApproval.create} onChange={(v) => void save({ instanceApproval: { create: v } })} />
+        </SettingRow>
+        <SettingRow title="agent 修改或重启实例要我同意" desc="agent 只能改分给它的实例，不能删除实例。">
+          <Toggle label="agent 修改或重启实例要我同意" checked={s.instanceApproval.update} onChange={(v) => void save({ instanceApproval: { update: v } })} />
+        </SettingRow>
+      </SettingGroup>
+    </>
+  );
+}
+
 function SystemSection({ s, save }: { s: SettingsView; save: Save }) {
   const sys = useQuery({
     queryKey: ["system"],
@@ -1339,8 +1453,10 @@ function SystemSection({ s, save }: { s: SettingsView; save: Save }) {
         <SettingRow title="agent 闲置休眠" desc="agent 容器这么久没活干就停掉省内存，下次发消息时自动启动（多等几秒）。">
           <Choice label="agent 闲置休眠" value={s.agentIdleMinutes} options={idle} onChange={(v) => void save({ agentIdleMinutes: v })} />
         </SettingRow>
-        <SettingRow title="桌面闲置关闭" desc="桌面这么久没人用就关掉，浏览器登录状态会保留。">
-          <Choice label="桌面闲置关闭" value={s.desktopIdleMinutes} options={idle} onChange={(v) => void save({ desktopIdleMinutes: v })} />
+        <SettingRow title="实例闲置" desc="浏览器、桌面和安卓实例闲置后暂停还是停止，在「实例」里设置。">
+          <Link className="text-[13px] text-accent" to="/settings?s=instances">
+            去设置
+          </Link>
         </SettingRow>
       </SettingGroup>
       <SettingGroup title="环境">

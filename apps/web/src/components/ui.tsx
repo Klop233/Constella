@@ -160,15 +160,19 @@ export function Field({ label, hint, children, group }: { label: string; hint?: 
 export const inputClass =
   "w-full rounded-lg bg-surface border border-line hover:border-[color-mix(in_oklab,var(--text)_25%,transparent)] focus:border-[var(--color-accent)] outline-none px-3 py-1.5 text-[13.5px] placeholder:text-muted transition-colors";
 
-export function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (v: boolean) => void; label?: string }) {
+export function Toggle({ checked, onChange, label, disabled }: { checked: boolean; onChange: (v: boolean) => void; label?: string; disabled?: boolean }) {
   return (
     <button
       type="button"
       role="switch"
       aria-checked={checked}
       aria-label={label}
+      disabled={disabled}
       onClick={() => onChange(!checked)}
-      className={cx("relative w-9 h-5 rounded-full transition shrink-0", checked ? "bg-accent" : "bg-[color-mix(in_oklab,var(--text)_18%,transparent)]")}
+      className={cx(
+        "relative w-9 h-5 rounded-full transition shrink-0 disabled:opacity-40",
+        checked ? "bg-accent" : "bg-[color-mix(in_oklab,var(--text)_18%,transparent)]",
+      )}
     >
       <span className={cx("absolute top-0.5 size-4 rounded-full bg-white shadow transition", checked ? "left-[18px]" : "left-0.5")} />
     </button>

@@ -1,12 +1,13 @@
 import RFB from "@novnc/novnc";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronLeft, ClipboardPaste, Hand, Keyboard, Maximize, MoreVertical, Play, Power, Undo2 } from "lucide-react";
+import { ChevronLeft, ClipboardPaste, Hand, Keyboard, Maximize, MoreVertical, Pause, Play, Power, RotateCcw, Settings2, Undo2 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router";
+import { InstanceFields, type InstanceDraft } from "../components/InstanceFields";
 import { Button, Field, Sheet, cx, inputClass, toast } from "../components/ui";
 import { api } from "../lib/api";
-import type { Agent, Desktop } from "../lib/types";
-import { leaseText } from "./Desktops";
+import { KIND_INFO, leaseText } from "../lib/instances";
+import type { Agent, Desktop, HostCaps } from "../lib/types";
 
 const XK: Record<string, number> = {
   Escape: 0xff1b,
@@ -45,6 +46,9 @@ export default function DesktopView() {
   const [paste, setPaste] = useState(false);
   const [pasteText, setPasteText] = useState("");
   const [busy, setBusy] = useState(false);
+  const [editing, setEditing] = useState<InstanceDraft | null>(null);
+  const [gsf, setGsf] = useState<string | null>(null);
+  const resuming = useRef(false);
 
   const desktop = useQuery({
     queryKey: ["desktops", id],
@@ -52,9 +56,11 @@ export default function DesktopView() {
     refetchInterval: 10_000,
   });
   const agents = useQuery({ queryKey: ["agents"], queryFn: () => api.get<Agent[]>("/api/agents") });
+  const caps = useQuery({ queryKey: ["hostcaps"], queryFn: () => api.get<HostCaps>("/api/desktops/capabilities"), enabled: !!editing });
   const d = desktop.data;
   const mine = d?.leaseInfo.holder === "human";
   const running = d?.state === "running";
+  const android = d?.kind === "android";
 
   const connect = useCallback(async () => {
     if (!screen.current || !id) return;
@@ -76,6 +82,17 @@ export default function DesktopView() {
       toast(err instanceof Error ? err.message : String(err), "danger");
     }
   }, [id]);
+
+  // Opening a paused instance thaws it: the screen should be live while someone looks at it.
+  useEffect(() => {
+    if (d?.state !== "paused" || resuming.current) return;
+    resuming.current = true;
+    void api
+      .post(`/api/desktops/${id}/resume`)
+      .then(() => qc.invalidateQueries({ queryKey: ["desktops"] }))
+      .catch((err) => toast(err instanceof Error ? err.message : String(err), "danger"))
+      .finally(() => (resuming.current = false));
+  }, [d?.state, id, qc]);
 
   useEffect(() => {
     if (running) void connect();
@@ -123,6 +140,42 @@ export default function DesktopView() {
 
   const l = d ? leaseText(d, agents.data) : null;
 
+  /** Android: text goes in through the device's input method (any language), not as VNC key presses. */
+  const typeText = (text: string) => {
+    if (!text) return;
+    api.post(`/api/desktops/${id}/clipboard`, { text }).catch((err) => toast(err instanceof Error ? err.message : String(err), "danger"));
+  };
+  const androidKey = (keys: string) => {
+    api.post(`/api/desktops/${id}/action`, { type: "key", keys }).catch((err) => toast(err instanceof Error ? err.message : String(err), "danger"));
+  };
+  const openSettings = () => {
+    if (!d) return;
+    setEditing({ name: d.name, kind: d.kind, options: d.options, agentIds: d.agentIds });
+    setMenu(false);
+  };
+  const saveSettings = async (confirmDataLoss = false) => {
+    if (!editing || !d) return;
+    try {
+      setBusy(true);
+      const r = await api.patch<{ restarted: boolean; wiped: boolean }>(`/api/desktops/${id}`, {
+        name: editing.name.trim() || d.name,
+        options: editing.options,
+        agentIds: editing.agentIds,
+        confirmDataLoss,
+      });
+      toast(r.restarted ? "已保存，实例已重启" : "已保存");
+      setEditing(null);
+      await qc.invalidateQueries({ queryKey: ["desktops"] });
+      void qc.invalidateQueries({ queryKey: ["agents"] });
+    } catch (err) {
+      const e = err as Error & { code?: string };
+      if (e.code === "confirm" && confirm(`${e.message}。继续吗？`)) return saveSettings(true);
+      toast(e.message ?? String(err), "danger");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <div className="fixed inset-0 lg:left-64 bg-[#0b0d18] text-white flex flex-col">
       <div className="safe-top bg-black/60 backdrop-blur z-10">
@@ -131,7 +184,10 @@ export default function DesktopView() {
             <ChevronLeft className="size-6" />
           </button>
           <div className="flex-1 min-w-0">
-            <div className="text-sm font-medium truncate">{d?.name ?? "桌面"}</div>
+            <div className="text-sm font-medium truncate">
+              {d?.name ?? "桌面"}
+              {d && <span className="ml-1.5 text-[11px] font-normal opacity-70">{KIND_INFO[d.kind].label}</span>}
+            </div>
             <div className="text-[11px] opacity-70 truncate">
               {l?.text}
               {connState === "connecting" && running && " · 连接中…"}
@@ -160,10 +216,10 @@ export default function DesktopView() {
         ) : (
           <div className="absolute inset-0 grid place-items-center">
             <div className="text-center space-y-3">
-              <div className="opacity-70 text-sm">{desktop.isLoading ? "加载中…" : "桌面未运行"}</div>
-              {!desktop.isLoading && (
+              <div className="opacity-70 text-sm">{desktop.isLoading ? "加载中…" : d?.state === "paused" ? "正在恢复…" : d?.state === "starting" ? "正在启动…" : "实例未运行"}</div>
+              {!desktop.isLoading && d?.state !== "paused" && (
                 <Button variant="primary" loading={busy} onClick={() => act(() => api.post(`/api/desktops/${id}/start`), "已启动")}>
-                  <Play className="size-4" /> 启动桌面
+                  <Play className="size-4" /> 启动{android ? "（安卓需要一两分钟）" : ""}
                 </Button>
               )}
             </div>
@@ -177,7 +233,7 @@ export default function DesktopView() {
           </div>
         )}
         {running && !mine && d?.leaseInfo.holder === "agent" && (
-          <div className="absolute top-2 inset-x-2 text-center text-xs bg-black/55 rounded-xl px-3 py-2">agent 正在操作，你在旁观。需要你登录或输入验证码时点「接管」。</div>
+          <div className="absolute top-2 inset-x-2 text-center text-xs bg-black/55 rounded-xl px-3 py-2">agent 正在操作，你在旁观。需要你登录、输入验证码或扫码时点「接管」。</div>
         )}
       </div>
 
@@ -187,14 +243,32 @@ export default function DesktopView() {
             <ToolKey label="键盘" onClick={() => kbd.current?.focus()}>
               <Keyboard className="size-4" />
             </ToolKey>
-            <ToolKey label="Ctrl" active={ctrl} onClick={() => setCtrl(!ctrl)}>
-              Ctrl
-            </ToolKey>
-            {(["Escape", "Tab", "Return", "BackSpace", "Left", "Up", "Down", "Right"] as const).map((k) => (
-              <ToolKey key={k} label={k} onClick={() => sendKey(XK[k]!)}>
-                {{ Escape: "Esc", Tab: "Tab", Return: "↵", BackSpace: "⌫", Left: "←", Up: "↑", Down: "↓", Right: "→" }[k]}
-              </ToolKey>
-            ))}
+            {android ? (
+              (
+                [
+                  ["back", "返回", "◁"],
+                  ["home", "主页", "○"],
+                  ["recents", "多任务", "□"],
+                  ["enter", "回车", "↵"],
+                  ["backspace", "删除", "⌫"],
+                ] as const
+              ).map(([k, label, glyph]) => (
+                <ToolKey key={k} label={label} onClick={() => androidKey(k)}>
+                  {glyph}
+                </ToolKey>
+              ))
+            ) : (
+              <>
+                <ToolKey label="Ctrl" active={ctrl} onClick={() => setCtrl(!ctrl)}>
+                  Ctrl
+                </ToolKey>
+                {(["Escape", "Tab", "Return", "BackSpace", "Left", "Up", "Down", "Right"] as const).map((k) => (
+                  <ToolKey key={k} label={k} onClick={() => sendKey(XK[k]!)}>
+                    {{ Escape: "Esc", Tab: "Tab", Return: "↵", BackSpace: "⌫", Left: "←", Up: "↑", Down: "↓", Right: "→" }[k]}
+                  </ToolKey>
+                ))}
+              </>
+            )}
             <ToolKey label="粘贴文字" onClick={() => setPaste(true)}>
               <ClipboardPaste className="size-4" />
             </ToolKey>
@@ -207,17 +281,29 @@ export default function DesktopView() {
             autoCorrect="off"
             spellCheck={false}
             onInput={(e) => {
+              // Wait for the input method to finish composing (Chinese etc.) before sending.
+              if ((e.nativeEvent as InputEvent).isComposing) return;
               const v = e.currentTarget.value;
-              for (const ch of v) sendKey(keysymFor(ch));
+              if (android) typeText(v);
+              else for (const ch of v) sendKey(keysymFor(ch));
+              e.currentTarget.value = "";
+            }}
+            onCompositionEnd={(e) => {
+              const v = e.currentTarget.value;
+              if (android) typeText(v);
+              else for (const ch of v) sendKey(keysymFor(ch));
               e.currentTarget.value = "";
             }}
             onKeyDown={(e) => {
+              if (e.nativeEvent.isComposing) return;
               if (e.key === "Backspace") {
                 e.preventDefault();
-                sendKey(XK.BackSpace!);
+                if (android) androidKey("backspace");
+                else sendKey(XK.BackSpace!);
               } else if (e.key === "Enter") {
                 e.preventDefault();
-                sendKey(XK.Return!);
+                if (android) androidKey("enter");
+                else sendKey(XK.Return!);
               }
             }}
           />
@@ -229,22 +315,80 @@ export default function DesktopView() {
           <Button className="w-full" onClick={() => (setFit(!fit), setMenu(false))}>
             <Maximize className="size-4" /> {fit ? "原始大小（拖动查看）" : "适应屏幕"}
           </Button>
-          <div className="text-xs text-muted px-1">提示：横屏查看更清楚。接管后：单指点击＝左键，双指点击＝右键，双指拖动＝滚动。</div>
+          <div className="text-xs text-muted px-1">
+            {android
+              ? "接管后：点击＝点按，拖动＝滑动，右键＝返回；输入中文用「键盘」或「粘贴文字」。"
+              : "提示：横屏查看更清楚。接管后：单指点击＝左键，双指点击＝右键，双指拖动＝滚动。"}
+          </div>
+          <Button className="w-full" onClick={openSettings}>
+            <Settings2 className="size-4" /> 实例设置
+          </Button>
+          {android && d?.options.googlePlay && running && (
+            <Button
+              className="w-full"
+              onClick={() =>
+                act(async () => {
+                  const r = await api.get<{ id: string | null; error?: string }>(`/api/desktops/${id}/android/gsf-id`);
+                  if (!r.id) throw new Error(r.error ?? "还没有生成设备 ID，打开一次 Play 商店后再试");
+                  setGsf(r.id);
+                })
+              }
+            >
+              Google 设备登记
+            </Button>
+          )}
           {running && d?.leaseInfo.holder === "none" && (
+            <Button className="w-full" onClick={() => act(() => api.post(`/api/desktops/${id}/pause`), "已暂停").then(() => setMenu(false))}>
+              <Pause className="size-4" /> 暂停（保留内存）
+            </Button>
+          )}
+          {(running || d?.state === "paused") && (
+            <Button
+              className="w-full"
+              onClick={() => {
+                if (d?.leaseInfo.holder === "agent" && !confirm("agent 正在使用这个实例，重启会打断它的操作。继续吗？")) return;
+                void act(() => api.post(`/api/desktops/${id}/restart`), "已重启").then(() => setMenu(false));
+              }}
+            >
+              <RotateCcw className="size-4" /> 重启
+            </Button>
+          )}
+          {(running || d?.state === "paused") && d?.leaseInfo.holder === "none" && (
             <Button className="w-full" onClick={() => act(() => api.post(`/api/desktops/${id}/stop`), "已停止").then(() => setMenu(false))}>
-              <Power className="size-4" /> 停止桌面
+              <Power className="size-4" /> 停止
             </Button>
           )}
           <Button
             variant="danger"
             className="w-full"
             onClick={() => {
-              if (!confirm("删除这台桌面？里面的浏览器登录状态和文件会一并删除。")) return;
+              if (!confirm(`删除「${d?.name ?? ""}」？里面的${android ? "App 和数据" : "浏览器登录状态和文件"}会一并删除，分给它的 agent 也会解除绑定。`)) return;
               void act(() => api.del(`/api/desktops/${id}`), "已删除").then(() => nav("/desktops", { replace: true }));
             }}
           >
-            删除桌面
+            删除
           </Button>
+        </div>
+      </Sheet>
+
+      <Sheet open={!!editing} onClose={() => setEditing(null)} title="实例设置">
+        {editing && (
+          <div className="space-y-4 text-[var(--text)]">
+            <InstanceFields draft={editing} onChange={setEditing} caps={caps.data} agents={agents.data} editing />
+            <Button variant="primary" className="w-full" loading={busy} onClick={() => saveSettings()}>
+              保存{running ? "（选项有变化时会重启）" : ""}
+            </Button>
+          </div>
+        )}
+      </Sheet>
+
+      <Sheet open={!!gsf} onClose={() => setGsf(null)} title="Google 设备登记">
+        <div className="space-y-3 text-[var(--text)] text-sm">
+          <p>这台安卓没有经过 Google 认证。第一次登录 Play 商店前，用你的 Google 账号把下面的设备 ID 登记一次，等几分钟再登录。</p>
+          <div className="font-mono text-base select-all bg-surface-2 rounded-lg px-3 py-2 break-all">{gsf}</div>
+          <a className="text-accent underline" href="https://www.google.com/android/uncertified/" target="_blank" rel="noreferrer">
+            打开 Google 登记页面
+          </a>
         </div>
       </Sheet>
 
@@ -269,9 +413,14 @@ export default function DesktopView() {
         </div>
       </Sheet>
 
-      <Sheet open={paste} onClose={() => setPaste(false)} title="粘贴文字到桌面">
+      <Sheet open={paste} onClose={() => setPaste(false)} title="粘贴文字">
         <div className="space-y-4 text-[var(--text)]">
-          <textarea className={cx(inputClass, "min-h-32")} value={pasteText} onChange={(e) => setPasteText(e.target.value)} placeholder="内容会放进桌面剪贴板并按 Ctrl+V" />
+          <textarea
+            className={cx(inputClass, "min-h-32")}
+            value={pasteText}
+            onChange={(e) => setPasteText(e.target.value)}
+            placeholder={android ? "内容会直接输入到当前输入框" : "内容会放进桌面剪贴板并按 Ctrl+V"}
+          />
           <Button
             variant="primary"
             className="w-full"
@@ -279,7 +428,7 @@ export default function DesktopView() {
               act(async () => {
                 await api.post(`/api/desktops/${id}/clipboard`, { text: pasteText });
                 const r = rfb.current;
-                if (r) {
+                if (r && !android) {
                   r.sendKey(XK.Control_L!, "ControlLeft", true);
                   r.sendKey(0x76, "KeyV");
                   r.sendKey(XK.Control_L!, "ControlLeft", false);

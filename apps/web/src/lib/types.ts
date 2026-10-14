@@ -1,6 +1,6 @@
-import type { AgentEvent, ArtifactKind, DesktopLease, DesktopPolicy, RunStatus } from "@constella/protocol";
+import type { AgentEvent, AndroidBackend, ArtifactKind, DesktopKind, DesktopLease, DesktopOptions, DesktopPolicy, IdleAction, RunStatus } from "@constella/protocol";
 
-export type { AgentEvent, ArtifactKind, DesktopLease, DesktopPolicy, RunStatus };
+export type { AgentEvent, AndroidBackend, ArtifactKind, DesktopKind, DesktopLease, DesktopOptions, DesktopPolicy, IdleAction, RunStatus };
 
 /** Codex reasoning level ("low", "medium", "high", "xhigh", "max", …); which ones apply depends on the model. */
 export type Effort = string;
@@ -131,13 +131,38 @@ export interface AuditEntry {
   detail: string | null;
 }
 
+/** An instance: bare browser, Linux desktop or Android. */
 export interface Desktop {
   id: string;
   name: string;
-  pinned_agent_id: string | null;
+  kind: DesktopKind;
+  options: DesktopOptions;
+  /** running | paused | stopped | missing | starting | error */
   state: string;
   leaseInfo: DesktopLease;
+  /** Agents bound to it. */
+  agentIds: string[];
+  viewers: number;
   last_used_at: string;
+}
+
+export interface Availability {
+  ok: boolean;
+  reason?: string;
+  warnings?: string[];
+}
+
+export interface BackendCaps extends Availability {
+  arm: boolean;
+  googlePlay: boolean;
+}
+
+/** What the host can run, from the hub's probes. */
+export interface HostCaps {
+  checkedAt: string | null;
+  checking: boolean;
+  kinds: Record<DesktopKind, Availability>;
+  android: { setting: "auto" | AndroidBackend | "off"; backend: AndroidBackend | null; redroid: BackendCaps; emulator: BackendCaps };
 }
 
 export interface Schedule {

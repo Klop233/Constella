@@ -5,9 +5,16 @@ import { useNavigate, useParams } from "react-router";
 import { AgentAvatar } from "../components/AgentBits";
 import { Button, Card, Field, Header, Loading, Segmented, Toggle, cx, inputClass, toast } from "../components/ui";
 import { api } from "../lib/api";
+import { KIND_INFO } from "../lib/instances";
 import { useModelLabel, useModels, type ModelEntry } from "../lib/models";
 import { effortLabel, fitIndex, modelEfforts } from "../lib/effort";
 import type { Agent, Desktop, DesktopPolicy, Template } from "../lib/types";
+
+/** Position of an instance in an agent's bindings (unbound ones last). */
+function rank(p: DesktopPolicy, id: string): number {
+  const i = p.desktopIds.indexOf(id);
+  return i < 0 ? Number.MAX_SAFE_INTEGER : i;
+}
 
 /** Model picker for forms: options grouped by provider, ✓ for models whose test passed in settings. */
 export function ModelSelect({ value, onChange }: { value: string; onChange: (v: string) => void }) {
@@ -49,7 +56,7 @@ export default function AgentEdit() {
   const [emoji, setEmoji] = useState("");
   const [model, setModel] = useState("");
   const [persona, setPersona] = useState("");
-  const [desktopPolicy, setDesktopPolicy] = useState<DesktopPolicy>({ mode: "on_demand" });
+  const [desktopPolicy, setDesktopPolicy] = useState<DesktopPolicy>({ desktopIds: [] });
   const [approvalPolicy, setApprovalPolicy] = useState<"auto" | "ask">("auto");
   const [hostAccess, setHostAccess] = useState(false);
   const [effort, setEffort] = useState<string>("");
@@ -84,7 +91,7 @@ export default function AgentEdit() {
     setTemplate(t.id);
     setEmoji(t.emoji);
     setPersona(t.persona);
-    setDesktopPolicy(t.desktopPolicy);
+    // Instance bindings are the owner's pick, not part of a template.
     setApprovalPolicy(t.approvalPolicy);
     setHostAccess(t.hostAccess);
     if (!name || templates.data?.some((x) => x.name === name)) setName(t.name);
@@ -149,29 +156,39 @@ export default function AgentEdit() {
         <Field label="模型" hint="✓ 表示在「设置 → 模型」里测试通过">
           <ModelSelect value={model} onChange={setModel} />
         </Field>
-        <Field group label="桌面">
-          <Segmented
-            value={desktopPolicy.mode}
-            onChange={(m) => setDesktopPolicy(m === "fixed" ? { mode: "fixed", desktopId: desktops.data?.[0]?.id ?? "" } : { mode: m })}
-            options={[
-              { value: "none", label: "不用" },
-              { value: "on_demand", label: "按需借用" },
-              { value: "fixed", label: "固定一台" },
-            ]}
-          />
-        </Field>
-        {desktopPolicy.mode === "fixed" &&
-          (desktops.data?.length ? (
-            <select className={inputClass} value={desktopPolicy.desktopId} onChange={(e) => setDesktopPolicy({ mode: "fixed", desktopId: e.target.value })}>
-              {desktops.data.map((d) => (
-                <option key={d.id} value={d.id}>
-                  {d.name}
-                </option>
-              ))}
-            </select>
+        <Field group label="实例" hint="按选择的顺序优先使用；agent 需要时也可以自己新建">
+          {desktops.data?.length ? (
+            <div className="space-y-1.5">
+              {[...desktops.data]
+                .sort((a, b) => rank(desktopPolicy, a.id) - rank(desktopPolicy, b.id))
+                .map((d) => {
+                  const ids = desktopPolicy.desktopIds;
+                  const idx = ids.indexOf(d.id);
+                  const Icon = KIND_INFO[d.kind].icon;
+                  return (
+                    <button
+                      key={d.id}
+                      type="button"
+                      onClick={() => setDesktopPolicy({ desktopIds: idx >= 0 ? ids.filter((x) => x !== d.id) : [...ids, d.id] })}
+                      className={cx(
+                        "w-full flex items-center gap-2.5 rounded-lg border px-3 h-10 text-left text-[13.5px] transition",
+                        idx >= 0 ? "border-[var(--color-accent)] bg-surface-2" : "border-line text-muted hover:text-[var(--text)]",
+                      )}
+                    >
+                      <Icon className="size-4 shrink-0" />
+                      <span className="flex-1 truncate">{d.name}</span>
+                      <span className="text-xs text-muted">{KIND_INFO[d.kind].label}</span>
+                      <span className={cx("size-5 rounded-full text-[11px] grid place-items-center", idx >= 0 ? "bg-accent text-white" : "border border-line")}>
+                        {idx >= 0 ? idx + 1 : ""}
+                      </span>
+                    </button>
+                  );
+                })}
+            </div>
           ) : (
-            <div className="text-sm text-warn">还没有桌面，请先到「桌面」页新建一台。</div>
-          ))}
+            <div className="text-sm text-muted">还没有实例。可以到「桌面」页新建，或让 agent 需要时自己新建。</div>
+          )}
+        </Field>
         <Field group label="命令审批">
           <Segmented
             value={approvalPolicy}
