@@ -1,3 +1,4 @@
+import dns from "node:dns/promises";
 import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
@@ -593,9 +594,13 @@ export class Desktops {
     let browser = this.#browsers.get(id);
     if (!browser?.isConnected()) {
       await this.#post(id, "/browser/ensure", {});
-      const host = this.#containers.desktopName(id);
-      const version = (await (await fetch(`http://${host}:9223/json/version`)).json()) as { webSocketDebuggerUrl: string };
-      const wsUrl = version.webSocketDebuggerUrl.replace(/^ws:\/\/[^/]+/, `ws://${host}:9223`);
+      // Chromium only serves DevTools when the Host header is an IP or localhost, so address it by IP.
+      const { address, family } = await dns.lookup(this.#containers.desktopName(id));
+      const host = `${family === 6 ? `[${address}]` : address}:9223`;
+      const res = await fetch(`http://${host}/json/version`, { signal: AbortSignal.timeout(10_000) });
+      if (!res.ok) throw new Error(`浏览器调试接口不可用：${(await res.text()).slice(0, 120)}`);
+      const version = (await res.json()) as { webSocketDebuggerUrl: string };
+      const wsUrl = version.webSocketDebuggerUrl.replace(/^ws:\/\/[^/]+/, `ws://${host}`);
       browser = await chromium.connectOverCDP(wsUrl, { timeout: 20_000 });
       browser.on("disconnected", () => this.#browsers.delete(id));
       this.#browsers.set(id, browser);
