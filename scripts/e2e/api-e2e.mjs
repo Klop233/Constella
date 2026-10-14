@@ -1,6 +1,7 @@
 // End-to-end test against a running hub (normally the throwaway instance from scripts/e2e/run.sh).
 // Exercises: setup/login, agent create, real model run with shell + memory tool, approvals,
-// steer/interrupt, desktop + browser tools, takeover/hand-back, VNC bridge, schedules, learning.
+// steer/interrupt, instances (agent-created with and without approval, pause/resume/restart, settings),
+// desktop + browser tools, takeover/hand-back, VNC bridge, schedules, learning.
 import assert from "node:assert/strict";
 import fs from "node:fs";
 
@@ -50,7 +51,7 @@ await post("/api/auth/login", { password: "e2e-password-123" });
 await assert.rejects(fetch(BASE + "/api/agents", { method: "POST", headers: { cookie } }).then((r) => (r.ok ? r : Promise.reject(new Error(String(r.status))))), "CSRF header required");
 
 step("create agent");
-const agent = await post("/api/agents", { name: "测试助理", template: "assistant", desktopPolicy: { mode: "on_demand" } });
+const agent = await post("/api/agents", { name: "测试助理", template: "assistant", desktopPolicy: { desktopIds: [] } });
 assert.equal(agent.model, "gpt-6-astra");
 
 step("run with shell + memory tool (real model)");
@@ -102,25 +103,99 @@ await post(`/api/runs/${r.runId}/interrupt`);
 ({ run } = await waitRun(r.conversationId, done, 60_000));
 assert.equal(run.status, "cancelled");
 
-step("desktop + browser tools");
-r = await post(`/api/agents/${agent.id}/messages`, { text: "用 browser_open 打开 https://example.com ，告诉我页面的主标题文字。只回复标题。" });
-({ run } = await waitRun(r.conversationId, done, 400_000));
+step("host capabilities");
+let caps = await get("/api/desktops/capabilities");
+for (let i = 0; !caps.checkedAt && i < 30; i++) {
+  await sleep(2000);
+  caps = await get("/api/desktops/capabilities");
+}
+console.log("  kinds", JSON.stringify(caps.kinds));
+assert.ok(caps.kinds.browser.ok && caps.kinds.desktop.ok, "browser and desktop instances available");
+if (!caps.kinds.android.ok) assert.ok(caps.kinds.android.reason, "android says why it can't run");
+
+step("agent creates a browser instance (owner approves) and uses browser tools");
+r = await post(`/api/agents/${agent.id}/messages`, {
+  text: "用 instance_create 新建一个浏览器实例（kind=browser，名字：测试浏览器），然后用 browser_open 打开 https://example.com ，告诉我页面的主标题文字。只回复标题。",
+});
+let asked = 0;
+for (const end = Date.now() + 400_000; ; ) {
+  const conv = await get(`/api/conversations/${r.conversationId}`);
+  for (const ap of conv.approvals.filter((a) => a.status === "pending")) {
+    assert.match(ap.summary, /新建浏览器实例/);
+    await post(`/api/approvals/${ap.id}`, { decision: "approve" });
+    asked++;
+  }
+  if (done(conv.runs.at(-1))) break;
+  if (Date.now() > end) throw new Error("timeout waiting for the browser instance run");
+  await sleep(2000);
+}
+({ run } = await waitRun(r.conversationId, done));
 console.log("  status", run.status, run.error ?? "", "tools:", tools(run).join(", "));
 assert.equal(run.status, "done");
+assert.ok(asked >= 1, "instance creation asked the owner");
+assert.ok(tools(run).includes("constella.instance_create"));
 assert.ok(tools(run).some((t) => t.startsWith("constella.browser_")));
 const final = run.events.filter((e) => e.type === "message.completed").map((e) => e.text).join("");
 assert.match(final, /Example Domain/i);
-const desktops = await get("/api/desktops");
+let desktops = await get("/api/desktops");
 assert.equal(desktops.length, 1);
 const dt = desktops[0];
+assert.equal(dt.kind, "browser");
+assert.deepEqual(dt.agentIds, [agent.id]);
 assert.equal(dt.leaseInfo.holder, "none", "lease released after run");
 const shot = await fetch(`${BASE}/api/desktops/${dt.id}/screenshot?width=320`, { headers: { cookie } });
 assert.equal(shot.headers.get("content-type"), "image/jpeg");
 assert.ok((await shot.arrayBuffer()).byteLength > 1000);
 
+step("agent creates a Linux desktop without approval when the setting allows it");
+await call("PATCH", "/api/settings", { instanceApproval: { create: false } });
+r = await post(`/api/agents/${agent.id}/messages`, {
+  text: "用 instance_create 新建一个 Linux 桌面实例（kind=desktop，名字：测试桌面），然后用 desktop_screenshot 截一张图，回复屏幕尺寸（例如 1280x800）。",
+});
+({ run } = await waitRun(r.conversationId, done, 400_000));
+console.log("  status", run.status, run.error ?? "", "tools:", tools(run).join(", "));
+assert.equal(run.status, "done");
+assert.equal((await get(`/api/conversations/${r.conversationId}`)).approvals.length, 0, "no approval asked");
+assert.ok(tools(run).includes("constella.desktop_screenshot"));
+desktops = await get("/api/desktops");
+const linux = desktops.find((d) => d.kind === "desktop");
+assert.ok(linux, "desktop instance created");
+assert.match(run.events.filter((e) => e.type === "message.completed").map((e) => e.text).join(""), /1280\s*[x×]\s*800/);
+assert.deepEqual((await get(`/api/agents/${agent.id}`)).desktop_policy.desktopIds, [dt.id, linux.id]);
+
+step("pause, thaw on view, restart, change options");
+await post(`/api/desktops/${dt.id}/pause`);
+assert.equal((await get("/api/desktops")).find((d) => d.id === dt.id).state, "paused");
+const frozen = await fetch(`${BASE}/api/desktops/${dt.id}/screenshot?width=320`, { headers: { cookie } });
+assert.equal(frozen.status, 200, "last frame served while paused");
+await post(`/api/desktops/${dt.id}/ticket`);
+assert.equal((await get("/api/desktops")).find((d) => d.id === dt.id).state, "running", "opening the viewer thaws it");
+await post(`/api/desktops/${linux.id}/restart`);
+assert.equal((await get("/api/desktops")).find((d) => d.id === linux.id).state, "running");
+const upd = await call("PATCH", `/api/desktops/${linux.id}`, { name: "改名桌面", options: { width: 1440, height: 900, idleAction: "pause" } });
+assert.equal(upd.restarted, true);
+const linux2 = (await get("/api/desktops")).find((d) => d.id === linux.id);
+assert.equal(linux2.name, "改名桌面");
+assert.deepEqual(linux2.options, { width: 1440, height: 900, idleAction: "pause" });
+const big = await fetch(`${BASE}/api/desktops/${linux.id}/screenshot?width=1280`, { headers: { cookie } });
+assert.equal(big.status, 200);
+await call("DELETE", `/api/desktops/${linux.id}`);
+assert.deepEqual((await get(`/api/agents/${agent.id}`)).desktop_policy.desktopIds, [dt.id], "deleting unbinds");
+
+if (caps.kinds.android.ok) {
+  step("android instance");
+  const phone = await post("/api/desktops", { name: "测试手机", kind: "android", agentIds: [agent.id] });
+  await post(`/api/desktops/${phone.id}/start`);
+  const ps = await fetch(`${BASE}/api/desktops/${phone.id}/screenshot?width=320`, { headers: { cookie } });
+  assert.equal(ps.status, 200);
+  await call("DELETE", `/api/desktops/${phone.id}`);
+} else {
+  console.log(`  (android skipped: ${caps.kinds.android.reason})`);
+}
+
 step("takeover / hand-back + VNC bridge");
 await post(`/api/desktops/${dt.id}/takeover`);
-assert.equal((await get("/api/desktops"))[0].leaseInfo.holder, "human");
+assert.equal((await get("/api/desktops")).find((d) => d.id === dt.id).leaseInfo.holder, "human");
 const { ticket } = await post(`/api/desktops/${dt.id}/ticket`);
 const banner = await new Promise((resolve, reject) => {
   const ws = new WebSocket(`${BASE.replace("http", "ws")}/api/desktops/${dt.id}/vnc?ticket=${ticket}`);
@@ -141,7 +216,7 @@ await assert.rejects(
   }),
 );
 await post(`/api/desktops/${dt.id}/handback`, { note: "测试交还" });
-assert.equal((await get("/api/desktops"))[0].leaseInfo.holder, "none");
+assert.equal((await get("/api/desktops")).find((d) => d.id === dt.id).leaseInfo.holder, "none");
 
 step("schedules");
 const sc = await post("/api/schedules", { name: "测试提醒", cron: "0 8 * * *", kind: "notify", payload: { title: "测试", body: "喝水" } });

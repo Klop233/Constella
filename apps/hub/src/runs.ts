@@ -659,7 +659,8 @@ export class RunManager {
   }
 
   /** Approval raised by a hub-side tool (e.g. host_exec); resolves when the user decides. */
-  requestHubApproval(runId: string, kind: "host_access" | "desktop" | "other", summary: string, detail?: string): Promise<boolean> {
+  /** `ownerOnly`: the owner explicitly asked to decide these (e.g. agents creating instances), so the approval mode's policy doesn't. */
+  requestHubApproval(runId: string, kind: "host_access" | "desktop" | "other", summary: string, detail?: string, opts: { ownerOnly?: boolean } = {}): Promise<boolean> {
     const run = this.get(runId);
     if (!run || isTerminal(run.status)) return Promise.resolve(false);
     const approvalId = newId("ap");
@@ -670,7 +671,7 @@ export class RunManager {
       .run(approvalId, runId, run.agent_id, kind, summary, detail ?? null, nowIso());
     this.#append(run, { type: "approval.requested", runId, approvalId, kind, summary, detail });
     const decided = new Promise<boolean>((resolve) => this.#hubApprovals.set(approvalId, { resolve: (r) => resolve(r.approved), runId }));
-    const { approve, why } = decideApproval(this.#d.approvalMode?.() ?? "ask", kind, summary);
+    const { approve, why } = opts.ownerOnly ? { approve: false, why: null } : decideApproval(this.#d.approvalMode?.() ?? "ask", kind, summary);
     if (approve) {
       void this.resolveApproval(approvalId, "approve", "policy", "policy");
       return decided;

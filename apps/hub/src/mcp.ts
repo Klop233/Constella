@@ -95,7 +95,8 @@ function buildServer(agent: AgentRow, d: McpDeps): McpServer {
   };
   const approve = async (need: boolean, runId: string, summary: string, reason: string) => {
     if (!need) return;
-    if (!(await d.runs.requestHubApproval(runId, "desktop", summary, reason))) throw new Error("主人没有同意");
+    // The owner turned this approval on explicitly, so it always goes to them (not the approval mode's policy).
+    if (!(await d.runs.requestHubApproval(runId, "desktop", summary, reason, { ownerOnly: true }))) throw new Error("主人没有同意");
   };
   const logAction = (runId: string, desktopId: string, action: string) =>
     d.runs.appendFor(runId, { type: "desktop.action", runId, desktopId, action });

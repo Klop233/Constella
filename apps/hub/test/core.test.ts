@@ -184,6 +184,18 @@ describe("RunManager", () => {
     expect(runs.get(r2.runId)!.status).toBe("failed");
   });
 
+  it("leaves approvals the owner asked to decide (ownerOnly) to the owner even in auto mode", async () => {
+    mode = "auto";
+    const r = await runs.send({ agentId: "ag1", text: "x" });
+    await new Promise((res) => setTimeout(res, 10));
+    let decided: boolean | undefined;
+    void runs.requestHubApproval(r.runId, "desktop", "新建浏览器实例「x」", "需要", { ownerOnly: true }).then((v) => (decided = v));
+    await new Promise((res) => setTimeout(res, 10));
+    expect(decided).toBeUndefined();
+    expect(runs.get(r.runId)!.status).toBe("waiting_approval");
+    expect(notes.at(-1)).toContain("新建浏览器实例");
+  });
+
   it("auto-approves everything in auto mode, and only non-destructive actions in smart mode", async () => {
     mode = "auto";
     const r = await runs.send({ agentId: "ag1", text: "x" });
