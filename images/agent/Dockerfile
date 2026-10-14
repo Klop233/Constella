@@ -8,6 +8,8 @@ ARG NPM_REGISTRY=https://registry.npmmirror.com
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates curl git python3 python3-pip python3-venv ripgrep jq \
       procps bubblewrap openssh-client less unzip xz-utils file \
+      fontconfig fonts-noto-cjk \
+ && fc-cache -f \
  && rm -rf /var/lib/apt/lists/* \
  && npm config set registry "$NPM_REGISTRY" \
  && npm i -g "@openai/codex@${CODEX_VERSION}" \
@@ -17,8 +19,9 @@ RUN apt-get update \
  && mkdir -p /workspace && chown agent:agent /workspace
 
 COPY apps/runner/src /opt/constella/runner/src
+COPY images/agent/matplotlibrc /etc/matplotlibrc
 
-ENV CODEX_HOME=/home/agent/.codex NODE_NO_WARNINGS=1
+ENV CODEX_HOME=/home/agent/.codex NODE_NO_WARNINGS=1 MATPLOTLIBRC=/etc/matplotlibrc
 USER agent
 WORKDIR /workspace
 CMD ["node", "/opt/constella/runner/src/index.ts"]
