@@ -54,6 +54,10 @@ export const AUDIT_ACTION: Record<string, string> = {
   "supervisor.restart": "监督员：重启这一轮",
   "supervisor.rebuild": "监督员：重建 agent 容器",
   "supervisor.escalate": "监督员：请你决定",
+  "artifact.rename": "重命名成果",
+  "artifact.edit": "编辑成果",
+  "artifact.restore": "恢复成果的旧版本",
+  "artifact.delete": "删除成果",
 };
 
 /** Field names in the `fields` / `changes` of settings.update and agent.update details, and other detail keys. */
@@ -103,6 +107,7 @@ const DETAIL_KEY: Record<string, string> = {
   cron: "时间",
   provider: "提供方",
   count: "数量",
+  version: "版本",
   ref: "模型",
   note: "备注",
   error: "错误",

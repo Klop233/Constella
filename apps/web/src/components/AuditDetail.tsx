@@ -69,12 +69,12 @@ function Body({ entry, refs, loading, agents }: { entry: AuditEntry; refs: Audit
   if (r.run) hidden.add("runId");
   if (r.conversation) hidden.add("conversationId");
   if (r.agent) hidden.add("agentId");
-  if (r.agent || r.schedule || r.desktop || r.incident) {
+  if (r.agent || r.schedule || r.desktop || r.incident || r.artifact) {
     hidden.add("id");
     hidden.add("name");
   }
   const rest = Object.entries(d).filter(([k, v]) => !hidden.has(k) && v !== null && v !== undefined && v !== "");
-  const hasObject = r.agent || r.conversation || r.run || r.approval || r.schedule || r.desktop || r.incident;
+  const hasObject = r.agent || r.conversation || r.run || r.approval || r.schedule || r.desktop || r.incident || r.artifact;
 
   return (
     <div className="space-y-5">
@@ -153,6 +153,17 @@ function Body({ entry, refs, loading, agents }: { entry: AuditEntry; refs: Audit
                   <Link to={`/desktops/${r.desktop.id}`} className="hover:underline">
                     {r.desktop.name}
                   </Link>
+                </Kv>
+              )}
+              {r.artifact && (
+                <Kv label="成果">
+                  <Link to={`/artifacts?artifact=${r.artifact.id}`} className="hover:underline">
+                    {r.artifact.title}
+                  </Link>
+                  <span className="text-muted">
+                    {" "}
+                    · {r.artifact.filename} · v{r.artifact.version}
+                  </span>
                 </Kv>
               )}
               {r.incident && (

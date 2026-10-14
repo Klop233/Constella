@@ -112,6 +112,17 @@ describe("auditRefs", () => {
     expect(auditRefs(db, { action: "provider.update", detail: '{"id":"ag1"}' })).toEqual({});
   });
 
+  it("resolves an artifact entry to the artifact and the agent that made it", () => {
+    const db = fixture();
+    db.prepare(
+      `INSERT INTO artifacts (id, agent_id, title, kind, filename, mime, size, version, created_at, updated_at)
+       VALUES ('art1', 'ag1', '体检报告', 'document', 'report.md', 'text/markdown', 10, 3, 'now', 'now')`,
+    ).run();
+    const refs = auditRefs(db, { action: "artifact.edit", detail: '{"id":"art1","version":3}' });
+    expect(refs.artifact).toEqual({ id: "art1", title: "体检报告", filename: "report.md", version: 3 });
+    expect(refs.agent?.name).toBe("助理");
+  });
+
   it("returns nothing for objects that are gone, and survives bad detail", () => {
     const db = fixture();
     expect(auditRefs(db, { action: "approval.deny", detail: '{"approvalId":"nope"}' })).toEqual({});

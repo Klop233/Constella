@@ -19,6 +19,7 @@ export interface AuditRefs {
   desktop?: { id: string; name: string };
   schedule?: { id: string; name: string; cron: string; enabled: boolean };
   incident?: { id: string; title: string; kind: string; status: string };
+  artifact?: { id: string; title: string; filename: string; version: number };
 }
 
 const PROMPT_MAX = 300;
@@ -69,7 +70,13 @@ export function auditRefs(db: Db, row: { action: string; detail: string | null }
   const schedule = kind === "schedule" ? one<{ id: string; name: string; cron: string; enabled: number }>("SELECT id, name, cron, enabled FROM schedules WHERE id = ?", str("id")) : undefined;
   if (schedule) refs.schedule = { ...schedule, enabled: !!schedule.enabled };
 
-  const agentId = str("agentId") ?? (kind === "agent" ? str("id") : undefined) ?? approval?.agent_id ?? run?.agent_id;
+  const artifact = kind === "artifact" ? one<NonNullable<AuditRefs["artifact"]> & { agent_id: string }>("SELECT id, agent_id, title, filename, version FROM artifacts WHERE id = ?", str("id")) : undefined;
+  if (artifact) {
+    const { agent_id: _a, ...shown } = artifact;
+    refs.artifact = shown;
+  }
+
+  const agentId = str("agentId") ?? (kind === "agent" ? str("id") : undefined) ?? approval?.agent_id ?? run?.agent_id ?? artifact?.agent_id;
   const agent = one<{ id: string; name: string; emoji: string; archived: number }>("SELECT id, name, emoji, archived FROM agents WHERE id = ?", agentId);
   if (agent) refs.agent = { ...agent, archived: !!agent.archived };
 

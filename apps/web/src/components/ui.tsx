@@ -7,6 +7,21 @@ export function cx(...c: (string | false | null | undefined)[]): string {
 }
 
 type Variant = "primary" | "secondary" | "soft" | "ghost" | "danger";
+type Size = "sm" | "md" | "lg";
+
+const BUTTON_STYLES: Record<Variant, string> = {
+  primary: "bg-accent-grad text-white hover:brightness-95 active:brightness-90 disabled:opacity-50",
+  secondary: "bg-surface border border-line hover:bg-surface-2 active:bg-surface-2 disabled:opacity-50",
+  soft: "bg-surface-2 hover:bg-[color-mix(in_oklab,var(--text)_12%,transparent)] disabled:opacity-50",
+  ghost: "hover:bg-surface-2 active:bg-surface-2 disabled:opacity-50",
+  danger: "bg-[var(--danger)] text-white active:opacity-85 disabled:opacity-50",
+};
+const BUTTON_SIZES: Record<Size, string> = { sm: "h-7 px-2.5 text-[13px] rounded-md", md: "h-8 px-3 text-[13.5px] rounded-md", lg: "h-10 px-4 text-sm rounded-lg" };
+
+/** Button looks for something that isn't a <button>, e.g. a download link. */
+export function buttonClass(variant: Variant = "secondary", size: Size = "md"): string {
+  return cx("inline-flex items-center justify-center gap-1.5 font-medium transition select-none", BUTTON_STYLES[variant], BUTTON_SIZES[size]);
+}
 
 export function Button({
   variant = "secondary",
@@ -15,20 +30,12 @@ export function Button({
   className,
   children,
   ...rest
-}: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: Variant; size?: "sm" | "md" | "lg"; loading?: boolean }) {
-  const styles: Record<Variant, string> = {
-    primary: "bg-accent-grad text-white hover:brightness-95 active:brightness-90 disabled:opacity-50",
-    secondary: "bg-surface border border-line hover:bg-surface-2 active:bg-surface-2 disabled:opacity-50",
-    soft: "bg-surface-2 hover:bg-[color-mix(in_oklab,var(--text)_12%,transparent)] disabled:opacity-50",
-    ghost: "hover:bg-surface-2 active:bg-surface-2 disabled:opacity-50",
-    danger: "bg-[var(--danger)] text-white active:opacity-85 disabled:opacity-50",
-  };
-  const sizes = { sm: "h-7 px-2.5 text-[13px] rounded-md", md: "h-8 px-3 text-[13.5px] rounded-md", lg: "h-10 px-4 text-sm rounded-lg" };
+}: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: Variant; size?: Size; loading?: boolean }) {
   return (
     <button
       {...rest}
       disabled={rest.disabled || loading}
-      className={cx("inline-flex items-center justify-center gap-1.5 font-medium transition select-none", styles[variant], sizes[size], className)}
+      className={cx(buttonClass(variant, size), className)}
     >
       {loading && <Loader2 className="size-4 animate-spin" />}
       {children}
@@ -298,8 +305,8 @@ export function MenuDivider() {
 /** A settings section: heading, then rows separated by hairlines. */
 export function SettingGroup({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <section className="space-y-1">
-      <h2 className="text-base font-semibold">{title}</h2>
+    <section>
+      <h2 className="text-sm font-semibold pb-1">{title}</h2>
       <div className="divide-y divide-[var(--border)]">{children}</div>
     </section>
   );
@@ -307,9 +314,10 @@ export function SettingGroup({ title, children }: { title: string; children: Rea
 
 /**
  * One setting: title + description on the left, its control on the right (stacks on narrow screens when `wide`).
+ * `dense` is for rows in a long list (models, providers, devices) where each row is just a name and a few buttons.
  * With `onClick` the whole row opens something (an entry's details): hover tint, keyboard-activatable.
  */
-export function SettingRow({ title, desc, children, wide, onClick }: { title: ReactNode; desc?: ReactNode; children?: ReactNode; wide?: boolean; onClick?: () => void }) {
+export function SettingRow({ title, desc, children, wide, dense, onClick }: { title: ReactNode; desc?: ReactNode; children?: ReactNode; wide?: boolean; dense?: boolean; onClick?: () => void }) {
   const press = onClick && {
     role: "button" as const,
     tabIndex: 0,
@@ -325,16 +333,17 @@ export function SettingRow({ title, desc, children, wide, onClick }: { title: Re
     <div
       {...press}
       className={cx(
-        "py-3.5 flex gap-x-6 gap-y-2",
+        "flex gap-x-4 gap-y-1.5",
+        dense ? "py-1.5" : "py-2.5",
         wide ? "flex-col sm:flex-row sm:items-center" : "items-center",
         onClick && "-mx-2 px-2 rounded-md cursor-pointer hover:bg-[color-mix(in_oklab,var(--text)_5%,transparent)]",
       )}
     >
       <div className="flex-1 min-w-0">
-        <div className="text-sm font-medium">{title}</div>
-        {desc && <div className="text-[13px] text-muted mt-0.5 leading-relaxed">{desc}</div>}
+        <div className="text-[13.5px] font-medium">{title}</div>
+        {desc && <div className="text-xs text-muted mt-px leading-snug">{desc}</div>}
       </div>
-      {children != null && <div className="shrink-0 flex items-center gap-2">{children}</div>}
+      {children != null && <div className="shrink-0 flex items-center gap-1.5">{children}</div>}
     </div>
   );
 }
