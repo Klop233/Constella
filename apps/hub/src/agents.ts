@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { DesktopPolicy, LegacyDesktopPolicy, ApprovalPolicy } from "@constella/protocol";
 import { z } from "zod";
+import { changesOf } from "./audit.ts";
 import { EffortSchema } from "./catalog.ts";
 import { config, newId, nowIso } from "./config.ts";
 import { audit, type Db } from "./db.ts";
@@ -26,6 +27,21 @@ export interface AgentRow {
   created_at: string;
   updated_at: string;
   archived: number;
+}
+
+/** An agent row in the shape of the edit form, minus secrets, for the before/after of an audit entry. */
+function auditView(r: AgentRow): Record<string, unknown> {
+  return {
+    name: r.name,
+    emoji: r.emoji,
+    persona: r.persona,
+    model: r.model,
+    effort: r.effort,
+    approvalPolicy: r.approval_policy,
+    desktopPolicy: JSON.parse(r.desktop_policy),
+    hostAccess: !!r.host_access,
+    budgetDailyUsd: r.budget_daily_usd,
+  };
 }
 
 export interface Template {
@@ -189,13 +205,15 @@ export class Agents {
         nowIso(),
         id,
       );
-    audit(this.#db, actor, "agent.update", { id, fields: Object.keys(p) });
-    return this.get(id);
+    const next = this.get(id);
+    audit(this.#db, actor, "agent.update", { id, name: next.name, fields: Object.keys(p), changes: changesOf(auditView(cur), auditView(next), Object.keys(p)) });
+    return next;
   }
 
   archive(id: string, actor: string): void {
+    const name = (this.#db.prepare("SELECT name FROM agents WHERE id = ?").get(id) as { name: string } | undefined)?.name;
     this.#db.prepare("UPDATE agents SET archived = 1, updated_at = ? WHERE id = ?").run(nowIso(), id);
-    audit(this.#db, actor, "agent.archive", { id });
+    audit(this.#db, actor, "agent.archive", { id, name });
   }
 
   setNewApiToken(id: string, tokenId: number | null, key: string | null): void {
