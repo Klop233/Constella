@@ -20,7 +20,7 @@ export function DesktopHelpCard({ help }: { help: DesktopHelp }) {
   const nav = useNavigate();
   const [busy, setBusy] = useState<"takeover" | "handback" | null>(null);
   const [note, setNote] = useState("");
-  const open = () => nav(`/desktops/${help.desktopId}`);
+  const open = () => nav(`/instances/${help.desktopId}`);
   const takeover = async () => {
     setBusy("takeover");
     try {
@@ -48,11 +48,11 @@ export function DesktopHelpCard({ help }: { help: DesktopHelp }) {
     <Card className="p-3.5 border-[color-mix(in_oklab,var(--warn)_45%,transparent)]">
       <div className="flex items-center gap-2 text-sm">
         <Hand className="size-4 text-warn" />
-        <span className="font-medium">{taken ? "你正在操作桌面" : "需要你接管桌面"}</span>
+        <span className="font-medium">{taken ? "你正在操作实例" : "需要你接管实例"}</span>
       </div>
       <div className="mt-2 text-sm whitespace-pre-wrap">{help.reason}</div>
       {!taken && (
-        <button type="button" onClick={open} className="mt-2.5 block w-full overflow-hidden rounded-lg border border-line bg-surface-2" aria-label="查看桌面">
+        <button type="button" onClick={open} className="mt-2.5 block w-full overflow-hidden rounded-lg border border-line bg-surface-2" aria-label="查看实例">
           <img src={`/api/desktops/${help.desktopId}/screenshot?width=640&h=${help.helpId}`} alt="" className="w-full max-h-56 object-cover object-top" onError={(e) => (e.currentTarget.parentElement!.style.display = "none")} />
         </button>
       )}
@@ -72,7 +72,7 @@ export function DesktopHelpCard({ help }: { help: DesktopHelp }) {
           </form>
           <div className="grid grid-cols-2 gap-2">
             <Button variant="secondary" onClick={open}>
-              <Monitor className="size-4" /> 回到桌面
+              <Monitor className="size-4" /> 回到实例
             </Button>
             <Button variant="primary" loading={busy === "handback"} disabled={!!busy} onClick={() => void handback()}>
               交还

@@ -18,7 +18,9 @@ const listeners = new Set<() => void>();
 
 function read(): Appearance {
   try {
-    return { ...DEFAULTS, ...JSON.parse(localStorage.getItem(KEY) ?? "{}") };
+    const saved = { ...DEFAULTS, ...JSON.parse(localStorage.getItem(KEY) ?? "{}") } as Appearance;
+    // The 桌面 page became 实例 (/instances).
+    return { ...saved, navFolded: saved.navFolded.map((p) => (p === "/desktops" ? "/instances" : p)) };
   } catch {
     return DEFAULTS;
   }

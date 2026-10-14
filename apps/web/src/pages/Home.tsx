@@ -112,10 +112,10 @@ export default function Home() {
           </Section>
 
           {data.desktops.length > 0 && (
-            <Section title="桌面" action={<button className="text-xs text-muted hover:text-[var(--text)]" onClick={() => nav("/desktops")}>全部</button>}>
+            <Section title="实例" action={<button className="text-xs text-muted hover:text-[var(--text)]" onClick={() => nav("/instances")}>全部</button>}>
               <div className="flex gap-3 overflow-x-auto no-scrollbar -mx-4 px-4">
                 {data.desktops.map((d) => (
-                  <Card key={d.id} className="w-44 lg:w-64 shrink-0 overflow-hidden" onClick={() => nav(`/desktops/${d.id}`)}>
+                  <Card key={d.id} className="w-44 lg:w-64 shrink-0 overflow-hidden" onClick={() => nav(`/instances/${d.id}`)}>
                     <InstanceThumb d={d} width={360} className="aspect-[16/10]" />
                     <div className="px-3 py-2 text-sm truncate flex items-center gap-1.5">
                       {(() => {

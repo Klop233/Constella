@@ -151,7 +151,7 @@ const DETAIL_KEY: Record<string, string> = {
 const SUB_FIELD: Record<string, Record<string, string>> = {
   notifyOn: { approval: "审批和选择", done: "任务完成", failed: "任务失败", stuck: "任务卡住" },
   quietHours: { enabled: "开关", start: "开始", end: "结束" },
-  desktopPolicy: { desktopIds: "实例", mode: "方式", desktopId: "桌面" },
+  desktopPolicy: { desktopIds: "实例", mode: "方式", desktopId: "实例" },
   instanceApproval: { create: "新建", update: "修改或重启" },
   options: {
     width: "屏幕宽",
@@ -184,7 +184,7 @@ export const APPROVAL_KIND: Record<string, string> = {
   command: "执行命令",
   file_change: "修改文件",
   host_access: "宿主机操作",
-  desktop: "桌面操作",
+  desktop: "实例操作",
   decision: "选择",
   other: "操作",
 };

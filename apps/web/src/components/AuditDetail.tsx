@@ -149,8 +149,8 @@ function Body({ entry, refs, loading, agents }: { entry: AuditEntry; refs: Audit
                 </Kv>
               )}
               {r.desktop && (
-                <Kv label="桌面">
-                  <Link to={`/desktops/${r.desktop.id}`} className="hover:underline">
+                <Kv label="实例">
+                  <Link to={`/instances/${r.desktop.id}`} className="hover:underline">
                     {r.desktop.name}
                   </Link>
                 </Kv>
