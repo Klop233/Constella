@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "./emoji.css";
 
 @custom-variant dark (&:where(.dark, .dark *));
 
@@ -16,9 +17,9 @@
 }
 
 @theme {
-  --font-sans: "Inter", "PingFang SC", "HarmonyOS Sans SC", "MiSans", "Noto Sans CJK SC", system-ui, sans-serif;
-  --font-serif: "Tiempos Text", "Source Serif 4", Georgia, "Noto Serif SC", "Source Han Serif SC", "Songti SC", ui-serif, serif;
-  --font-mono: "JetBrains Mono", "SFMono-Regular", "Cascadia Mono", ui-monospace, monospace;
+  --font-sans: var(--font-emoji), "Inter", "PingFang SC", "HarmonyOS Sans SC", "MiSans", "Noto Sans CJK SC", system-ui, sans-serif;
+  --font-serif: var(--font-emoji), "Tiempos Text", "Source Serif 4", Georgia, "Noto Serif SC", "Source Han Serif SC", "Songti SC", ui-serif, serif;
+  --font-mono: var(--font-emoji), "JetBrains Mono", "SFMono-Regular", "Cascadia Mono", ui-monospace, monospace;
   /* Titles and agent replies; switchable in Settings → 外观. */
   --font-display: var(--font-sans);
   --color-accent: #8b5cf6;
@@ -38,6 +39,7 @@
  *   data-mode    light | dark        (resolved; "跟随系统" is handled in JS)
  *   data-palette nebula | clay | ocean
  *   data-font    sans | serif
+ *   data-emoji   mono | flat | system
  */
 :root {
   --bg: #faf9fc;
@@ -136,6 +138,11 @@
 :root[data-font="serif"] {
   --font-display: var(--font-serif);
 }
+
+/* Emoji style (data-emoji): faces in emoji.css only cover pictographs, so they can lead every stack. */
+:root { --font-emoji: "Constella Emoji Mono"; }
+:root[data-emoji="flat"] { --font-emoji: "Constella Emoji Flat"; }
+:root[data-emoji="system"] { --font-emoji: "Constella Emoji System"; }
 
 html,
 body,

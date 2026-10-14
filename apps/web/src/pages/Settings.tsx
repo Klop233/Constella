@@ -950,6 +950,19 @@ function AppearanceSection() {
             />
           </div>
         </SettingRow>
+        <SettingRow wide title="表情符号" desc="单色跟随文字颜色，扁平为 Twemoji，系统用设备自带的。">
+          <div className="w-60">
+            <Segmented
+              value={a.emoji}
+              options={[
+                { value: "mono", label: "单色" },
+                { value: "flat", label: "扁平" },
+                { value: "system", label: "系统" },
+              ]}
+              onChange={(emoji) => setAppearance({ emoji })}
+            />
+          </div>
+        </SettingRow>
       </SettingGroup>
       <SettingGroup title="侧栏">
         {SIDEBAR_ITEMS.map((t) => (

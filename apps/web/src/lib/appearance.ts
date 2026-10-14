@@ -5,6 +5,8 @@ export interface Appearance {
   theme: "system" | "light" | "dark";
   palette: "nebula" | "clay" | "ocean";
   font: "sans" | "serif";
+  /** Emoji glyphs: monochrome Noto Emoji, flat Twemoji, or the device's own. */
+  emoji: "mono" | "flat" | "system";
   /** Show context / token / speed stats in conversations. */
   usage: boolean;
   /** Sidebar entries (route paths) tucked under 更多. */
@@ -12,7 +14,7 @@ export interface Appearance {
 }
 
 const KEY = "constella:appearance";
-const DEFAULTS: Appearance = { theme: "system", palette: "nebula", font: "sans", usage: true, navFolded: ["/artifacts", "/audit", "/usage", "/reflect"] };
+const DEFAULTS: Appearance = { theme: "system", palette: "nebula", font: "sans", emoji: "mono", usage: true, navFolded: ["/artifacts", "/audit", "/usage", "/reflect"] };
 const dark = window.matchMedia("(prefers-color-scheme: dark)");
 const listeners = new Set<() => void>();
 
@@ -33,6 +35,7 @@ function apply(): void {
   root.dataset.mode = current.theme === "system" ? (dark.matches ? "dark" : "light") : current.theme;
   root.dataset.palette = current.palette;
   root.dataset.font = current.font;
+  root.dataset.emoji = current.emoji;
   const bg = getComputedStyle(root).getPropertyValue("--bg").trim();
   if (bg) document.querySelector('meta[name="theme-color"]')?.setAttribute("content", bg);
 }
