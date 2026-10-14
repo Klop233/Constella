@@ -193,7 +193,7 @@ describe("RunManager", () => {
     await new Promise((res) => setTimeout(res, 10));
     expect(decided).toBeUndefined();
     expect(runs.get(r.runId)!.status).toBe("waiting_approval");
-    expect(notes.at(-1)).toContain("新建浏览器实例");
+    expect(notes.at(-1)).toContain("请求审批");
   });
 
   it("auto-approves everything in auto mode, and only non-destructive actions in smart mode", async () => {
