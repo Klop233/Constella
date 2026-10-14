@@ -37,8 +37,9 @@
 | `agents.ts` | agent 配置、凭据、引擎配置文件、注入给 agent 的 instructions |
 | `containers.ts` | dockerode：agent / desktop 容器的创建、重建、休眠 |
 | `desktops.ts` | 桌面池、租约（同一时刻只有一方操作）、接管/交还、VNC 桥接与输入过滤 |
-| `mcp.ts` | 给 agent 的工具：`memory_*`、`ask_user`、`notify_user`、`schedule_*`、`desktop_*`、`browser_*`、`host_exec` |
-| `knowledge.ts` / `learning.ts` / `reflect.ts` | 记忆与技能（git，可撤销）/ 复盘与每周整理 / 回顾统计 |
+| `mcp.ts` | 给 agent 的工具：`memory_*`、`ask_user`、`notify_user`、`schedule_*`、`send_file`、`artifact_*`、`desktop_*`、`browser_*`、`host_exec` |
+| `artifacts.ts` | 成果：agent 交付到对话里的文件和文档，带版本，可预览、可原地编辑 |
+| `knowledge.ts` / `learning.ts` / `reflect.ts` | 记忆与技能（git，可撤销；含从别的助手导入记忆）/ 复盘与每周整理 / 回顾统计 |
 | `models.ts` / `newapi.ts` / `catalog.ts` | 模型提供方与 `model@provider` 引用 / new-api 管理接口 / 各模型支持的推理强度 |
 | `auth.ts` / `secrets.ts` / `safety.ts` / `trusted.ts` | 登录与 ticket / 加密存储与脱敏 / 审批策略 / 开发用免登录入口 |
 | `scheduler.ts` / `notify.ts` / `usage.ts` | 定时任务 / Web Push + Telegram / 用量统计 |
@@ -48,7 +49,8 @@
 
 - `pages/`：一个文件一个页面，路由在 `main.tsx`（页面按需加载）。
 - `components/ui.tsx`：通用组件（Button、Card、Sheet、Field…），新页面优先用它，不重新发明。
-- `components/RunView.tsx`：把一个 run 的事件流渲染成对话（工具调用折叠、审批内联）。
+- `components/RunView.tsx`：把一个 run 的事件流渲染成对话（工具调用折叠、审批内联、成果卡片）。
+- `pages/Artifacts.tsx`、`components/Artifact*.tsx`、`lib/artifacts.ts`：成果库与预览/编辑。
 - `lib/api.ts`：fetch 封装；`lib/live.ts`：SSE；`lib/types.ts`：前端用的类型（事件类型从 protocol 引）；`sw.ts`：Service Worker 与推送。
 
 ## 改什么去哪里
@@ -59,6 +61,7 @@
 | 给 agent 加工具 | `apps/hub/src/mcp.ts`；如需提示词说明，在 `app.ts` 的 `startPayload` 或 `agents.ts` 的 `instructions` |
 | 加一个 API | `routes.ts`（对应分段）→ web `lib/api.ts` 的调用处和 `lib/types.ts` |
 | 加一项设置 | `app.ts` 的 `Settings` → `routes.ts` 的 `/api/settings` → `pages/Settings.tsx` |
+| agent 往对话里交付文件或文档 | `artifacts.ts`（存储与版本）、`mcp.ts` 的 `send_file` / `artifact_*`、protocol 的 `artifact` 事件、web 的 `Artifact*` 组件 |
 | 加表或列 | `db.ts`，见下面的「数据库迁移」 |
 | 接新的 agent 引擎 | `apps/runner/src/engines/` 新增适配器，事件统一成 protocol 事件 |
 | 改桌面镜像或桌面控制 | `images/desktop/`；hub 侧在 `desktops.ts` 和 `mcp.ts` 的 `desktop_*` |
@@ -82,7 +85,7 @@ Node 22.18+，pnpm 12。TypeScript 由 Node 直接运行（`node src/index.ts`�
 
 - **TS**：import 带 `.ts` 后缀；`erasableSyntaxOnly`，不用 `enum`、`namespace`、构造器参数属性（私有字段用 `#`）；`noUncheckedIndexedAccess` 已开。
 - **语言**：界面文案和给 agent 的提示词用中文，代码注释用英文。
-- **数据库迁移**：`db.ts` 里已有的迁移不改，也不在 `MIGRATIONS` 里抢新编号（多个分支并行时会撞号）；新增表用 `ENSURE` 里的 `CREATE TABLE IF NOT EXISTS`，需要给旧表加列才追加迁移。
+- **数据库迁移**：`db.ts` 里已有的迁移不改，也不在 `MIGRATIONS` 里抢新编号（多个分支并行时会撞号）。新增表写进 `ENSURE`（`CREATE TABLE IF NOT EXISTS`）；给旧表加列，照 `openDb` 末尾的做法：先 `PRAGMA table_info` 判断，缺了再 `ALTER`。
 - **密钥**：只放 `SecretStore`（加密），写进事件、知识库、日志之前先过 `redact`。
 - **审批**：什么算「危险操作」由 `safety.ts` 决定，保守地标记、宽松地匹配；不要在别处另写一套判断。
 - **`approvals` 表里不只有审批**：agent 的选择题（`ask_user`，`kind = 'decision'`）也存在这里。
