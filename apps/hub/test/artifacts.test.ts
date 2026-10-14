@@ -12,10 +12,19 @@ process.env.CONSTELLA_SETUP_CODE = "setup-code";
 
 const { openDb } = await import("../src/db.ts");
 const { EventStore } = await import("../src/events.ts");
-const { Artifacts, applyEdits, classify, safeFilename, textFilename } = await import("../src/artifacts.ts");
+const { Artifacts, applyEdits, classify, decodeLegacyText, safeFilename, textFilename } = await import("../src/artifacts.ts");
 const { createHub } = await import("../src/app.ts");
 
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13]);
+
+describe("decodeLegacyText", () => {
+  it("reads GBK and UTF-16 text, and refuses binary", () => {
+    const gbk = Buffer.from([0xd6, 0xd0, 0xce, 0xc4, 0x0a]); // 中文\n
+    expect(decodeLegacyText(gbk)).toBe("中文\n");
+    expect(decodeLegacyText(Buffer.from([0xff, 0xfe, 0x2d, 0x4e, 0x87, 0x65]))).toBe("中文");
+    expect(decodeLegacyText(Buffer.from([0x00, 0x01, 0x02, 0xff]))).toBeNull();
+  });
+});
 
 describe("classify", () => {
   it("goes by extension, but only trusts browser-rendered types when the bytes agree", () => {

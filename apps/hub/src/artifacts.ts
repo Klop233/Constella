@@ -154,6 +154,31 @@ export function classify(filename: string, head: Buffer): TypeInfo {
   return looksLikeText(head) ? { kind: "text", mime: "text/plain" } : BINARY;
 }
 
+/**
+ * Text saved in an older encoding (GBK / GB18030, UTF-16): decoded to a string so it can be stored as UTF-8 and
+ * shown and edited like any other text. Returns null when the bytes aren't text in one of those encodings.
+ */
+export function decodeLegacyText(buf: Buffer): string | null {
+  if (buf.length === 0) return null;
+  const tryDecode = (label: string, b: Buffer) => {
+    try {
+      return new TextDecoder(label, { fatal: true }).decode(b);
+    } catch {
+      return null;
+    }
+  };
+  if (buf[0] === 0xff && buf[1] === 0xfe) return tryDecode("utf-16le", buf.subarray(2));
+  if (buf[0] === 0xfe && buf[1] === 0xff) {
+    const sw = Buffer.from(buf.subarray(2));
+    sw.swap16();
+    return tryDecode("utf-16le", sw);
+  }
+  if (buf.includes(0)) return null;
+  const text = tryDecode("gb18030", buf);
+  // Control characters other than whitespace mean this is not prose.
+  return text !== null && !/[\u0000-\u0008\u000e-\u001f]/.test(text) ? text : null;
+}
+
 function looksLikeText(head: Buffer): boolean {
   if (head.includes(0)) return false;
   const decoder = new TextDecoder("utf-8", { fatal: true });
@@ -388,7 +413,16 @@ export class Artifacts {
       const head = Buffer.alloc(8192);
       const n = fs.readSync(fd, head, 0, head.length, 0);
       const filename = safeFilename(path.posix.basename(file.container));
-      const type = classify(filename, head.subarray(0, n));
+      let type = classify(filename, head.subarray(0, n));
+      let legacy: string | null = null;
+      if (type.kind === "file" && type.mime === BINARY.mime) {
+        // A .txt / .md / .csv … that isn't UTF-8 (typically GBK): convert it to UTF-8 so it opens as text.
+        const intended = classify(filename, Buffer.from("x"));
+        if (isTextKind(intended.kind) && fs.fstatSync(fd).size <= MAX_ARTIFACT_TEXT) {
+          legacy = decodeLegacyText(fs.readFileSync(fd));
+          if (legacy !== null) type = intended;
+        }
+      }
       const title = (input.title?.trim() || filename).slice(0, 120);
       const existing =
         target ??
@@ -396,7 +430,14 @@ export class Artifacts {
           .prepare("SELECT * FROM artifacts WHERE agent_id = ? AND conversation_id IS ? AND source_path = ? AND title = ? ORDER BY updated_at DESC LIMIT 1")
           .get(input.agentId, input.conversationId, file.container, title) as ArtifactRow | undefined);
       tmp = this.#tmp(existing?.id);
-      const { sha256, size } = await copyFd(fd, tmp);
+      let sha256: string;
+      let size: number;
+      if (legacy !== null) {
+        const out = Buffer.from(legacy, "utf8");
+        fs.writeFileSync(tmp, out, { flag: "wx" });
+        sha256 = createHash("sha256").update(out).digest("hex");
+        size = out.length;
+      } else ({ sha256, size } = await copyFd(fd, tmp));
       return this.#commit({ existing, agentId: input.agentId, runId: input.runId, conversationId: input.conversationId, title, type, filename, size, sha256, note: input.note, author: "agent", sourcePath: file.container, tmp });
     } catch (err) {
       if (tmp) fs.rmSync(tmp, { force: true });
