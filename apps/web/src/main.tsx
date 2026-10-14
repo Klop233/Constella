@@ -1,12 +1,12 @@
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
-import { Brain, CalendarClock, ChevronsUpDown, ClipboardCheck, Gauge, House, Layers, LogOut, Monitor, Palette, Plus, Search, Settings as SettingsIcon, Shield, SlidersHorizontal, Sparkles, ExternalLink, X } from "lucide-react";
+import { Brain, CalendarClock, ChevronDown, ChevronsUpDown, ClipboardCheck, Gauge, House, Layers, LogOut, Monitor, Palette, Plus, Search, Settings as SettingsIcon, Shield, SlidersHorizontal, Sparkles, ExternalLink, X } from "lucide-react";
 import { lazy, StrictMode, Suspense, useEffect, useState, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter, NavLink, Route, Routes, useLocation, useNavigate, useSearchParams } from "react-router";
 import { registerSW } from "virtual:pwa-register";
 import { cx, Loading, MenuDivider, MenuItem, navItemClass, Popover } from "./components/ui";
 import "./index.css";
-import "./lib/appearance";
+import { useAppearance } from "./lib/appearance";
 import { api, ApiError, logout } from "./lib/api";
 import { startLive } from "./lib/live";
 import type { Approval, Overview } from "./lib/types";
@@ -144,6 +144,12 @@ function Sidebar() {
     agent: a,
     convs: (overview.data?.conversations ?? []).filter((c) => c.agent_id === a.id && (!needle || c.title.toLowerCase().includes(needle) || a.name.toLowerCase().includes(needle))),
   }));
+  const folded = useAppearance().navFolded;
+  const [more, setMore] = useState(false);
+  const loc = useLocation();
+  const isFolded = (to: string) => folded.includes(to);
+  const inMore = NAV.filter((t) => isFolded(t.to));
+  const activeFolded = (t: (typeof NAV)[number]) => (t.end ? loc.pathname === t.to : loc.pathname === t.to || loc.pathname.startsWith(`${t.to}/`));
   const name = me.data?.name ?? "";
   const toHandle = overview.data?.incidents?.length ?? 0;
   return (
@@ -159,13 +165,25 @@ function Sidebar() {
           <Plus className="size-4" strokeWidth={1.8} />
           新建 agent
         </NavLink>
-        {NAV.map((t) => (
+        {NAV.filter((t) => !isFolded(t.to) || more || activeFolded(t)).map((t) => (
           <NavLink key={t.to} to={t.to} end={t.end} className={item}>
             <t.icon className="size-4" strokeWidth={1.8} />
             <span className="flex-1">{t.label}</span>
             {t.to === "/audit" && toHandle > 0 && <span className="text-[11px] text-warn tabular-nums">{toHandle}</span>}
           </NavLink>
         ))}
+        {inMore.length > 0 && (
+          <button
+            type="button"
+            aria-expanded={more}
+            onClick={() => setMore((v) => !v)}
+            className="w-full flex items-center gap-2.5 h-7 px-2.5 rounded-md text-[13px] text-muted hover:text-[var(--text)] hover:bg-[color-mix(in_oklab,var(--text)_5%,transparent)]"
+          >
+            <ChevronDown className={cx("size-4 transition-transform", more && "rotate-180")} strokeWidth={1.8} />
+            <span className="flex-1 text-left">{more ? "收起" : "更多"}</span>
+            {!more && isFolded("/audit") && toHandle > 0 && <span className="text-[11px] text-warn tabular-nums">{toHandle}</span>}
+          </button>
+        )}
       </nav>
       <div className="flex-1 overflow-y-auto px-2 pt-3 pb-2 space-y-3">
         {groups.map(({ agent: a, convs }) =>

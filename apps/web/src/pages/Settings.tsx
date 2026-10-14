@@ -890,6 +890,17 @@ const PALETTES: { value: Appearance["palette"]; label: string; swatch: [string, 
   { value: "ocean", label: "海洋", swatch: ["#2563eb", "#06b6d4"] },
 ];
 
+const SIDEBAR_ITEMS = [
+  { to: "/", label: "首页" },
+  { to: "/desktops", label: "桌面" },
+  { to: "/tasks", label: "任务" },
+  { to: "/learning", label: "学习" },
+  { to: "/artifacts", label: "成果" },
+  { to: "/audit", label: "审计" },
+  { to: "/usage", label: "用量" },
+  { to: "/reflect", label: "回顾" },
+];
+
 function AppearanceSection() {
   const a = useAppearance();
   return (
@@ -939,6 +950,17 @@ function AppearanceSection() {
             />
           </div>
         </SettingRow>
+      </SettingGroup>
+      <SettingGroup title="侧栏">
+        {SIDEBAR_ITEMS.map((t) => (
+          <SettingRow key={t.to} title={`折叠「${t.label}」`} desc="折叠后收进侧栏底部的「更多」。">
+            <Toggle
+              checked={a.navFolded.includes(t.to)}
+              onChange={(v) => setAppearance({ navFolded: v ? [...a.navFolded, t.to] : a.navFolded.filter((x) => x !== t.to) })}
+              label={`折叠${t.label}`}
+            />
+          </SettingRow>
+        ))}
       </SettingGroup>
       <SettingGroup title="对话">
         <SettingRow title="显示用量" desc="在输入框旁显示上下文占用和输出速度，在每次回复下方显示 token 数和耗时。">

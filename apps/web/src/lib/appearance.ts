@@ -7,10 +7,12 @@ export interface Appearance {
   font: "sans" | "serif";
   /** Show context / token / speed stats in conversations. */
   usage: boolean;
+  /** Sidebar entries (route paths) tucked under 更多. */
+  navFolded: string[];
 }
 
 const KEY = "constella:appearance";
-const DEFAULTS: Appearance = { theme: "system", palette: "nebula", font: "sans", usage: true };
+const DEFAULTS: Appearance = { theme: "system", palette: "nebula", font: "sans", usage: true, navFolded: ["/artifacts", "/audit", "/usage", "/reflect"] };
 const dark = window.matchMedia("(prefers-color-scheme: dark)");
 const listeners = new Set<() => void>();
 
