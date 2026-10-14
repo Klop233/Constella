@@ -1,13 +1,21 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronLeft, ClipboardPaste, Hand, Keyboard, Maximize, MoreVertical, Pause, Play, Power, RotateCcw, Settings2, Undo2 } from "lucide-react";
+import { Activity, ChevronLeft, ClipboardPaste, Hand, Keyboard, Maximize, MoreVertical, Pause, Play, Power, RotateCcw, Settings2, Undo2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router";
 import { InstanceFields, type InstanceDraft } from "../components/InstanceFields";
-import { Button, Field, Sheet, cx, inputClass, toast } from "../components/ui";
+import { PerfChart, compactBytes, compactCores, compactRate, type PerfSeriesDef } from "../components/PerfChart";
+import { Button, Empty, Field, Loading, Segmented, Sheet, StatTile, cx, inputClass, toast } from "../components/ui";
 import { api } from "../lib/api";
 import { KIND_INFO, leaseText } from "../lib/instances";
+import { RANGES, ROLE_LABEL, bytes, cores, rate, type InstancePerf, type PerfPoint, type PerfRange } from "../lib/perf";
 import type { Agent, Desktop, HostCaps } from "../lib/types";
 import { useVnc } from "../lib/vnc";
+
+const PERF_METRICS: { value: "cpu" | "mem" | "net"; label: string }[] = [
+  { value: "cpu", label: "CPU" },
+  { value: "mem", label: "内存" },
+  { value: "net", label: "网络" },
+];
 
 const XK: Record<string, number> = {
   Escape: 0xff1b,
@@ -46,6 +54,9 @@ export default function DesktopView() {
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState<InstanceDraft | null>(null);
   const [gsf, setGsf] = useState<string | null>(null);
+  const [perfOpen, setPerfOpen] = useState(false);
+  const [perfRange, setPerfRange] = useState<PerfRange>("1h");
+  const [perfMetric, setPerfMetric] = useState<"cpu" | "mem" | "net">("cpu");
   const resuming = useRef(false);
 
   const desktop = useQuery({
@@ -55,6 +66,13 @@ export default function DesktopView() {
   });
   const agents = useQuery({ queryKey: ["agents"], queryFn: () => api.get<Agent[]>("/api/agents") });
   const caps = useQuery({ queryKey: ["hostcaps"], queryFn: () => api.get<HostCaps>("/api/desktops/capabilities"), enabled: !!editing });
+  // This instance's own containers, sampled by the hub; only while the panel is open.
+  const perf = useQuery({
+    queryKey: ["desktop-perf", id, perfRange],
+    queryFn: () => api.get<InstancePerf>(`/api/desktops/${id}/perf?range=${perfRange}`),
+    enabled: perfOpen && !!id,
+    refetchInterval: 10_000,
+  });
   const d = desktop.data;
   const mine = d?.leaseInfo.holder === "human";
   const running = d?.state === "running";
@@ -110,6 +128,22 @@ export default function DesktopView() {
   };
 
   const l = d ? leaseText(d, agents.data) : null;
+  const pg = perf.data?.group ?? null;
+  const pNow = pg?.now ?? null;
+  const pHistory = pg?.history ?? [];
+  const pSeries: { format: (v: number) => string; tickFormat: (v: number) => string; max?: number; series: PerfSeriesDef[] } =
+    perfMetric === "cpu"
+      ? { format: cores, tickFormat: compactCores, max: perf.data?.cores ?? undefined, series: [{ name: "使用", value: (p: PerfPoint) => p.cpu }] }
+      : perfMetric === "mem"
+        ? { format: bytes, tickFormat: compactBytes, series: [{ name: "已用", value: (p: PerfPoint) => p.mem }] }
+        : {
+            format: rate,
+            tickFormat: compactRate,
+            series: [
+              { name: "下行", value: (p: PerfPoint) => p.rx, color: "var(--series-1)" },
+              { name: "上行", value: (p: PerfPoint) => p.tx, color: "var(--series-2)" },
+            ],
+          };
 
   /** Android: text goes in through the device's input method (any language), not as VNC key presses. */
   const typeText = (text: string) => {
@@ -294,6 +328,9 @@ export default function DesktopView() {
           <Button className="w-full" onClick={openSettings}>
             <Settings2 className="size-4" /> 实例设置
           </Button>
+          <Button className="w-full" onClick={() => (setMenu(false), setPerfOpen(true))}>
+            <Activity className="size-4" /> 性能
+          </Button>
           {android && d?.options.googlePlay && running && (
             <Button
               className="w-full"
@@ -339,6 +376,40 @@ export default function DesktopView() {
           >
             删除
           </Button>
+        </div>
+      </Sheet>
+
+      <Sheet open={perfOpen} onClose={() => setPerfOpen(false)} title={`性能 · ${d?.name ?? "实例"}`}>
+        <div className="space-y-3 text-[var(--text)]">
+          {perf.isLoading && !perf.data ? (
+            <Loading />
+          ) : !pg ? (
+            <Empty title="还没有这个实例的数据" hint="实例启动后十几秒就有采样了" />
+          ) : (
+            <>
+              <div className="grid grid-cols-3 gap-2">
+                <StatTile size="sm" label="CPU" value={cores(pNow?.cpu)} sub={perf.data?.cores ? `整机 ${perf.data.cores} 核` : undefined} />
+                <StatTile size="sm" label="内存" value={bytes(pNow?.mem)} sub={pg.memLimit ? `上限 ${bytes(pg.memLimit)}` : undefined} />
+                <StatTile size="sm" label="网络" value={rate(pNow?.rx)} sub={`↑ ${rate(pNow?.tx)}`} />
+              </div>
+              {pg.containers.length > 0 && (
+                <div className="truncate text-xs text-muted">
+                  {pg.containers.map((c) => `${ROLE_LABEL[c.role] ?? c.role}${c.running ? "" : "（未运行）"}`).join(" · ")} · 进程 {pg.pids ?? "—"}
+                </div>
+              )}
+              {!pg.running && <div className="text-xs text-muted">实例未运行，下面显示的是最后一次采样。</div>}
+              <div className="flex gap-2">
+                <div className="flex-1">
+                  <Segmented value={perfMetric} options={PERF_METRICS} onChange={setPerfMetric} />
+                </div>
+                <div className="flex-1">
+                  <Segmented value={perfRange} options={RANGES} onChange={setPerfRange} />
+                </div>
+              </div>
+              <PerfChart title={PERF_METRICS.find((m) => m.value === perfMetric)?.label ?? "性能"} list={pHistory} height={130} {...pSeries} />
+              <div className="text-[11px] text-muted">每 {perf.data?.interval ?? 10} 秒采样一次，保留最近 24 小时；CPU 按核计，内存不含页缓存。</div>
+            </>
+          )}
         </div>
       </Sheet>
 
