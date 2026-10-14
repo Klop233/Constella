@@ -19,6 +19,7 @@ import { requestSource } from "./request-source.ts";
 import { isTrusted } from "./trusted.ts";
 import { loadUsage, rangeStart, usageStats } from "./usage.ts";
 import { contextBreakdown } from "./context.ts";
+import { intelligentUiNote } from "./widgets.ts";
 import { ScheduleInput } from "./scheduler.ts";
 import { IMPORT_TEXT_MAX } from "./learning.ts";
 
@@ -340,7 +341,7 @@ export function registerRoutes(hub: Hub): void {
     const runRows = db.prepare("SELECT id, prompt FROM runs WHERE conversation_id = ? ORDER BY created_at").all(conv.id) as { id: string; prompt: string }[];
     return (
       contextBreakdown({
-        persona: agents.instructions(a, { desktopNote: "" }).replace(memory.user.trim(), "").replace(memory.agent.trim(), ""),
+        persona: agents.instructions(a, { desktopNote: "", uiNote: intelligentUiNote(settings.intelligentUi()) }).replace(memory.user.trim(), "").replace(memory.agent.trim(), ""),
         memory: memoryText,
         skills: knowledge
           .skills(a.id)
@@ -367,6 +368,7 @@ export function registerRoutes(hub: Hub): void {
     db.prepare("DELETE FROM events WHERE run_id IN (SELECT id FROM runs WHERE conversation_id = ?)").run(conv.id);
     db.prepare("DELETE FROM approvals WHERE run_id IN (SELECT id FROM runs WHERE conversation_id = ?)").run(conv.id);
     db.prepare("DELETE FROM runs WHERE conversation_id = ?").run(conv.id);
+    db.prepare("DELETE FROM widget_state WHERE conversation_id = ?").run(conv.id);
     db.prepare("DELETE FROM conversations WHERE id = ?").run(conv.id);
     return { ok: true };
   });
@@ -527,6 +529,16 @@ export function registerRoutes(hub: Hub): void {
     }
     return reply.header("Content-Length", size).send(fs.createReadStream(file));
   });
+  // The owner keeps an interactive reply block (智能界面) as an html artifact of that conversation.
+  app.post("/api/artifacts", { bodyLimit: 3 * 1024 * 1024 }, async (req) => {
+    const b = z.object({ conversationId: z.string(), runId: z.string().optional(), title: z.string().trim().min(1).max(120), html: z.string().min(1).max(MAX_ARTIFACT_TEXT) }).parse(req.body);
+    const conv = runs.conversation(b.conversationId);
+    if (!conv) throw new HttpError(404, "conversation not found");
+    const run = b.runId ? (db.prepare("SELECT id FROM runs WHERE id = ? AND conversation_id = ?").get(b.runId, conv.id) as { id: string } | undefined) : undefined;
+    const a = artifacts.saveText({ agentId: conv.agent_id, runId: run?.id ?? null, conversationId: conv.id, title: b.title, kind: "html", content: b.html, note: "从对话里的交互界面保存", author: "user" });
+    audit(db, actor(req), "artifact.create", { id: a.id, title: a.title, conversationId: conv.id });
+    return a;
+  });
   app.patch("/api/artifacts/:id", async (req) => {
     const b = z.object({ title: z.string().trim().min(1).max(120) }).parse(req.body);
     const cur = artifactOr404(id(req));
@@ -551,6 +563,24 @@ export function registerRoutes(hub: Hub): void {
     const a = artifactOr404(id(req));
     artifacts.remove(a.id);
     audit(db, actor(req), "artifact.delete", { id: a.id, title: a.title });
+    return { ok: true };
+  });
+
+  // ── interactive reply blocks (智能界面): what the owner entered, kept across reloads and devices ─
+  app.get("/api/widget-state", async (req) => {
+    const { conversation } = z.object({ conversation: z.string() }).parse(req.query);
+    const rows = db.prepare("SELECT key, data FROM widget_state WHERE conversation_id = ?").all(conversation) as { key: string; data: string }[];
+    return Object.fromEntries(rows.map((r) => [r.key, JSON.parse(r.data) as unknown]));
+  });
+  app.put("/api/widget-state/:key", { bodyLimit: 80 * 1024 }, async (req) => {
+    const key = z.string().min(1).max(200).parse((req.params as { key: string }).key);
+    const b = z.object({ conversationId: z.string(), data: z.record(z.string(), z.unknown()) }).parse(req.body);
+    if (!runs.conversation(b.conversationId)) throw new HttpError(404, "conversation not found");
+    const data = JSON.stringify(b.data);
+    if (data.length > 64 * 1024) throw new HttpError(413, "界面状态太大（上限 64KB）");
+    db.prepare(
+      "INSERT INTO widget_state (key, conversation_id, data, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(key) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at",
+    ).run(key, b.conversationId, data, nowIso());
     return { ok: true };
   });
 
@@ -929,6 +959,7 @@ export function registerRoutes(hub: Hub): void {
     telegramChatId: z.string().optional(),
     autoResume: z.boolean().optional(),
     browserHtml: z.boolean().optional(),
+    intelligentUi: z.enum(["off", "balanced", "rich"]).optional(),
     maxAutoResumes: z.number().int().min(1).max(10).optional(),
     runTimeoutMinutes: minutes(RUN_TIMEOUTS).optional(),
     runWatchdogMinutes: minutes([0, 5, 10, 20, 30, 60]).optional(),
@@ -953,7 +984,7 @@ export function registerRoutes(hub: Hub): void {
     checkModel(b.defaultModel);
     checkModel(b.reflectModel);
     const set = (key: string, v: unknown) => v !== undefined && kvSet(db, `settings.${key}`, String(v));
-    for (const key of ["approvalMode", "autoResume", "browserHtml", "maxAutoResumes", "runTimeoutMinutes", "runWatchdogMinutes", "agentIdleMinutes", "desktopIdleMinutes", "desktopIdleAction", "androidBackend", "maxInstances", "maxAndroidInstances", "autoReflect", "reflectMinToolCalls", "backupKeep", "modelNameFormat"] as const)
+    for (const key of ["approvalMode", "autoResume", "browserHtml", "intelligentUi", "maxAutoResumes", "runTimeoutMinutes", "runWatchdogMinutes", "agentIdleMinutes", "desktopIdleMinutes", "desktopIdleAction", "androidBackend", "maxInstances", "maxAndroidInstances", "autoReflect", "reflectMinToolCalls", "backupKeep", "modelNameFormat"] as const)
       set(key, b[key]);
     if (b.defaultModel) kvSet(db, "settings.defaultModel", b.defaultModel);
     if (b.reflectModel) kvSet(db, "settings.reflectModel", b.reflectModel);

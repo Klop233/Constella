@@ -27,6 +27,7 @@ interface SettingsView {
   runTimeoutMinutes: number;
   runWatchdogMinutes: number;
   browserHtml: boolean;
+  intelligentUi: "off" | "balanced" | "rich";
   approvalMode: "ask" | "smart" | "auto";
   agentIdleMinutes: number;
   desktopIdleMinutes: number;
@@ -243,6 +244,21 @@ function GeneralSection({ s, save }: { s: SettingsView; save: Save }) {
           <Choice label="卡住处理" value={s.runWatchdogMinutes} options={minuteOptions([5, 10, 20, 30, 60, 0], "不处理")} onChange={(v) => void save({ runWatchdogMinutes: v })} />
         </SettingRow>
       </SettingGroup>
+      <SettingGroup title="回答">
+        <SettingRow wide title="智能界面" desc={UI_DESC[s.intelligentUi]}>
+          <div className="w-64">
+            <Segmented
+              value={s.intelligentUi}
+              options={[
+                { value: "off", label: "关闭" },
+                { value: "balanced", label: "适度" },
+                { value: "rich", label: "丰富" },
+              ]}
+              onChange={(v) => void save({ intelligentUi: v })}
+            />
+          </div>
+        </SettingRow>
+      </SettingGroup>
       <SettingGroup title="浏览器">
         <SettingRow title="直接读取网页 HTML" desc="agent 用浏览器查信息时优先直接读页面 HTML，比看截图更快更准；要看布局、图片或验证码时照样截图。对新对话生效。">
           <Toggle checked={s.browserHtml} onChange={(v) => void save({ browserHtml: v }, v ? "已开启读取网页 HTML" : "已关闭读取网页 HTML")} label="直接读取网页 HTML" />
@@ -269,6 +285,12 @@ function GeneralSection({ s, save }: { s: SettingsView; save: Save }) {
     </>
   );
 }
+
+const UI_DESC: Record<SettingsView["intelligentUi"], string> = {
+  off: "回复只用文字和 Markdown。之前回复里的交互界面照常显示。",
+  balanced: "像 ChatGPT 的智能界面：在明显比文字好用时（计算器、图表、示意图、小测验、按钮），回复里直接嵌入可交互的小界面，一条最多一个。下一条消息起生效。",
+  rich: "更主动地用图表、计算器、示意图、测验和按钮，一条回复可以有多个。下一条消息起生效。",
+};
 
 const APPROVAL_DESC: Record<SettingsView["approvalMode"], string> = {
   ask: "agent 每次请求审批都要你批准。",

@@ -45,6 +45,7 @@
 | `scheduler.ts` / `notify.ts` / `usage.ts` | 定时任务 / Web Push + Telegram / 用量统计 |
 | `audit.ts` / `request-source.ts` | 审计详情：把记录里的 ID 解析成对象、算改动的前后值 / 当前请求的设备和 IP（`audit()` 自动附进 `via`） |
 | `db.ts` / `config.ts` | 迁移与 `kv` / 环境变量与目录布局 |
+| `widgets.ts` | 智能界面（回复里的 `ui` 块）：给 agent 的说明，按设置分关闭 / 适度 / 丰富；块本身的解析在 `packages/protocol/src/widgets.ts` |
 
 ### web（`apps/web/src`）
 
@@ -54,6 +55,7 @@
 - `pages/Artifacts.tsx`、`components/Artifact*.tsx`、`lib/artifacts.ts`：成果库与预览/编辑。
 - `lib/audit.ts`、`components/AuditDetail.tsx`：操作记录的动作/字段中文名、一行摘要，和点开的详情面板（设置页与审计页共用）。
 - `lib/api.ts`：fetch 封装；`lib/live.ts`：SSE；`lib/types.ts`：前端用的类型（事件类型从 protocol 引）；`sw.ts`：Service Worker 与推送。
+- `components/Widget.tsx`、`lib/widget-runtime.ts`：回复正文里的 ` ```ui ` 块（智能界面）——拆分、沙盒 iframe、主题同步、给界面的样式与桥接运行时（`ui.send` / `ui.state` / `Chart`）。
 
 ## 改什么去哪里
 
@@ -66,6 +68,7 @@
 | agent 往对话里交付文件或文档 | `artifacts.ts`（存储与版本）、`mcp.ts` 的 `send_file` / `artifact_*`、protocol 的 `artifact` 事件、web 的 `Artifact*` 组件 |
 | 新增会写审计的操作 | 调用处 `audit(db, actor, action, detail)`：`detail` 里记对象的名字，改动类再加 `changes: changesOf(前, 后, 字段)`（不记密钥明文）；中文名登记到 web `lib/audit.ts`；新的对象类型在 `audit.ts` 的 `auditRefs` 里加解析 |
 | 加表或列 | `db.ts`，见下面的「数据库迁移」 |
+| 改智能界面（交互式回复块） | 解析 `packages/protocol/src/widgets.ts` → 给 agent 的说明 `apps/hub/src/widgets.ts` → 渲染 `apps/web/src/components/Widget.tsx` + `lib/widget-runtime.ts`；设置项 `intelligentUi` |
 | 接新的 agent 引擎 | `apps/runner/src/engines/` 新增适配器，事件统一成 protocol 事件 |
 | 改桌面镜像或桌面控制 | `images/desktop/`；hub 侧在 `desktops.ts` 和 `mcp.ts` 的 `desktop_*` |
 | 改前端样式 | 先读 `docs/design-system.md`，新的通用样式写回规范 |

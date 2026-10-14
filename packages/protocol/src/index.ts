@@ -203,3 +203,4 @@ export const LegacyDesktopPolicy = z.union([
 export type LegacyDesktopPolicy = z.infer<typeof LegacyDesktopPolicy>;
 
 export * from "./runner.ts";
+export * from "./widgets.ts";

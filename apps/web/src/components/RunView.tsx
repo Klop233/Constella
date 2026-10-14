@@ -10,7 +10,7 @@ import { ApprovalCard } from "./ApprovalCard";
 import { ArtifactCard, type DeliveredArtifact } from "./ArtifactCard";
 import { DesktopHelpCard, type DesktopHelp } from "./DesktopHelpCard";
 import { IncidentCard, IncidentStatus } from "./IncidentCard";
-import { Markdown } from "./Markdown";
+import { RichMessage } from "./Widget";
 import { cx, toast } from "./ui";
 
 type Item =
@@ -470,7 +470,11 @@ export function RunView({ run, approvals, incidents = [], onChanged }: { run: Ru
       {blocks.map((it, i) => {
         switch (it.kind) {
           case "message":
-            return it.user ? <UserBubble key={it.id} text={it.text} meta="追加指示" /> : <Markdown key={it.id} text={it.text} className="font-display text-sm" />;
+            return it.user ? (
+              <UserBubble key={it.id} text={it.text} meta="追加指示" />
+            ) : (
+              <RichMessage key={it.id} text={it.text} streaming={it.streaming && !finished} keyBase={`${run.id}:${it.id}`} runId={run.id} className="font-display text-sm" />
+            );
           case "steps":
             return <StepGroup key={it.id} steps={it.steps} live={!finished && i === blocks.length - 1} ended={finished} />;
           case "notice": {

@@ -129,6 +129,10 @@ const ENSURE = `
     filename TEXT NOT NULL, mime TEXT NOT NULL, size INTEGER NOT NULL, sha256 TEXT NOT NULL, note TEXT, author TEXT NOT NULL, source_path TEXT, created_at TEXT NOT NULL,
     PRIMARY KEY (artifact_id, version)
   );
+  CREATE TABLE IF NOT EXISTS widget_state (
+    key TEXT PRIMARY KEY, conversation_id TEXT NOT NULL, data TEXT NOT NULL, updated_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS widget_state_conversation ON widget_state(conversation_id);
 `;
 
 export type Db = DatabaseSync;

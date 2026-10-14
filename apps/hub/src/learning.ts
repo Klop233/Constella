@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { z } from "zod";
-import type { AgentEvent } from "@constella/protocol";
+import { stripWidgets, type AgentEvent } from "@constella/protocol";
 import { config } from "./config.ts";
 import type { Db } from "./db.ts";
 import type { EventStore } from "./events.ts";
@@ -231,7 +231,7 @@ export function transcriptFor(run: Pick<RunRow, "prompt" | "status" | "error">, 
         lines.push(`工具：${tools.get(ev.callId) ?? ev.callId} → ${ev.ok ? "成功" : `失败${ev.error ? `：${ev.error.slice(0, 200)}` : ""}`}`);
         break;
       case "message.completed":
-        lines.push(`助手：${ev.text.slice(0, 1500)}`);
+        lines.push(`助手：${stripWidgets(ev.text).slice(0, 1500)}`);
         break;
       case "approval.resolved":
         lines.push(`审批：${ev.decision === "approve" ? "批准" : "拒绝"}`);

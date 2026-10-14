@@ -257,6 +257,9 @@ importers:
       '@tanstack/react-query':
         specifier: ^5.100.0
         version: 5.104.2(react@19.3.0)
+      chart.js:
+        specifier: ^4.5.1
+        version: 4.5.1
       dompurify:
         specifier: ^3.3.0
         version: 3.4.16
@@ -924,6 +927,9 @@ packages:
 
   '@js-sdsl/ordered-map@4.4.2':
     resolution: {integrity: sha512-iUKgm52T8HOE/makSxjqoWhe95ZJA1/G1sYsGev2JDKUSS14KAgg1LHb+Ba+IPow0xflbnSkOsZcO08C7w1gYw==}
+
+  '@kurkle/color@0.3.4':
+    resolution: {integrity: sha512-M5UknZPHRu3DEDWoipU6sE8PdkZ6Z/S+v4dD+Ke8IaNlpdSQah50lz1KtcFBa2vsdOnwbbnxJwVM4wty6udA5w==}
 
   '@levischuck/tiny-cbor@0.2.11':
     resolution: {integrity: sha512-llBRm4dT4Z89aRsm6u2oEZ8tfwL/2l6BwpZ7JcyieouniDECM5AqNgr/y08zalEIvW3RSK4upYyybDcmjXqAow==}
@@ -1815,6 +1821,10 @@ packages:
   chai@6.3.0:
     resolution: {integrity: sha512-XWAtwJ6OHO+tj0EKCs0Y2UamnyOxseZWltU4x2U2wh8g4AigdjwvtUjvLP2tqkA/avxHEtzxNaqGq/YGNwckKg==}
     engines: {node: '>=18'}
+
+  chart.js@4.5.1:
+    resolution: {integrity: sha512-GIjfiT9dbmHRiYi6Nl2yFCq7kkwdkp1W/lp2J99rX0yo9tgJGn3lKQATztIjb5tVtevcBtIdICNWqlq5+E8/Pw==}
+    engines: {pnpm: '>=8'}
 
   chownr@1.1.4:
     resolution: {integrity: sha512-jJ0bqzaylmJtVnNgzTeSOs8DPavpbYgEr/b0YL8/2GO3xJEhInFmhKMUnEJQjZumK7KXGFhUy89PrsJWlakBVg==}
@@ -4340,6 +4350,8 @@ snapshots:
 
   '@js-sdsl/ordered-map@4.4.2': {}
 
+  '@kurkle/color@0.3.4': {}
+
   '@levischuck/tiny-cbor@0.2.11': {}
 
   '@lukeed/ms@2.0.2': {}
@@ -5098,6 +5110,10 @@ snapshots:
   caniuse-lite@1.0.30001815: {}
 
   chai@6.3.0: {}
+
+  chart.js@4.5.1:
+    dependencies:
+      '@kurkle/color': 0.3.4
 
   chownr@1.1.4: {}
 

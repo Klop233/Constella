@@ -297,7 +297,7 @@ persistence = "save-all"
   }
 
   /** Developer instructions for a new thread: persona, memory, platform rules. */
-  instructions(agent: AgentRow, extras: { desktopNote: string }): string {
+  instructions(agent: AgentRow, extras: { desktopNote: string; uiNote?: string }): string {
     const memory = this.#knowledge.memory(agent.id);
     const secrets = this.userSecretNames(agent.id);
     return [
@@ -318,6 +318,7 @@ ${secrets.length ? `- 可用的环境变量密钥（只用于调用，不要输�
 - 需要主人拍板时，不要用文字提问后结束，而是调用 ask_user：把问题一次问全，给出 2-4 个具体选项，推荐的放第一个并填 recommended（只在按它继续是安全、可撤销的时候填）。等待期间不要做依赖这个决定的事；主人没回复时按工具返回的指引继续。
 - 消息里出现「［监督员］」「［监督员提示］」是平台监督员看到你卡住后给的提示；「［采用方案］」是主人从诊断报告里选的处理方案；「［主人的选择］」是主人对你之前问题的回答。照做并继续推进。
 - 默认用简体中文回复，结论先行，简洁直接。完成后给出结果和必要的证据，不要编造。`,
+      extras.uiNote ?? "",
       memory.user.trim() ? `# 关于用户\n${memory.user.trim()}` : "",
       memory.agent.trim() ? `# 你的记忆\n${memory.agent.trim()}` : "",
     ]

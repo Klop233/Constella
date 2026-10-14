@@ -5,7 +5,7 @@ import cookie from "@fastify/cookie";
 import rateLimit from "@fastify/rate-limit";
 import fastifyStatic from "@fastify/static";
 import websocket from "@fastify/websocket";
-import { IdleAction, RunnerToHubSchema, type HubToRunner, type RunnerEvent } from "@constella/protocol";
+import { IdleAction, INTELLIGENT_UI_LEVELS, RunnerToHubSchema, type HubToRunner, type IntelligentUiLevel, type RunnerEvent } from "@constella/protocol";
 import Fastify, { type FastifyInstance } from "fastify";
 import type { WebSocket } from "ws";
 import { Agents } from "./agents.ts";
@@ -28,6 +28,7 @@ import { registerRoutes } from "./routes.ts";
 import { Recovery } from "./recovery.ts";
 import { RunManager, type NotifyKind, type RunLimits } from "./runs.ts";
 import { Scheduler } from "./scheduler.ts";
+import { intelligentUiNote } from "./widgets.ts";
 import { Reflect } from "./reflect.ts";
 import type { ApprovalMode } from "./safety.ts";
 import { SecretBox, SecretStore } from "./secrets.ts";
@@ -194,6 +195,12 @@ export class Settings {
     return this.#bool("browserHtml", true);
   }
 
+  /** Interactive UI in replies (智能界面): off, balanced (default) or rich. */
+  intelligentUi(): IntelligentUiLevel {
+    const v = kvGet(this.#db, "settings.intelligentUi");
+    return INTELLIGENT_UI_LEVELS.find((l) => l === v) ?? "balanced";
+  }
+
   /** How approvals are decided; "smart" (ask only for destructive actions) unless chosen otherwise. */
   approvalMode(): ApprovalMode {
     const v = kvGet(this.#db, "settings.approvalMode");
@@ -286,6 +293,7 @@ export class Settings {
       autoResume: this.autoResume(),
       ...this.limits(),
       browserHtml: this.browserHtml(),
+      intelligentUi: this.intelligentUi(),
       approvalMode: this.approvalMode(),
       agentIdleMinutes: this.agentIdleMinutes(),
       desktopIdleMinutes: this.desktopIdleMinutes(),
@@ -370,7 +378,7 @@ export async function createHub(opts: { dbPath?: string; webDist?: string; logge
       return {
         model: a.model,
         effort: a.effort ?? undefined,
-        instructions: agents.instructions(a, { desktopNote }),
+        instructions: agents.instructions(a, { desktopNote, uiNote: intelligentUiNote(settings.intelligentUi()) }),
         approvalPolicy: a.approval_policy,
         skillRoots: ["/home/agent/knowledge/skills", "/shared/skills"],
       };

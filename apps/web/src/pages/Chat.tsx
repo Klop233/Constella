@@ -1,12 +1,13 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowUp, Archive, ArchiveRestore, ImagePlus, Loader2, Paperclip, Plus, Square, X } from "lucide-react";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router";
 import { AgentDot } from "../components/AgentBits";
 import { ConversationArtifacts } from "../components/ArtifactList";
 import { ContextMeter, EffortPicker, ModelPicker, RunTimeoutPicker } from "../components/ChatControls";
 import { CONTINUE_TEXT, latestStats, RunView } from "../components/RunView";
 import { Button, Empty, Header, IconButton, Loading, cx, toast } from "../components/ui";
+import { WidgetHostProvider, type WidgetHost } from "../components/Widget";
 import { api, ApiError, fileToBase64 } from "../lib/api";
 import { useAppearance } from "../lib/appearance";
 import { useAgentEvents, useHubEvents } from "../lib/live";
@@ -159,6 +160,39 @@ export default function Chat() {
       setSending(false);
     }
   };
+
+  // Interactive blocks in replies: what the owner entered in them, and messages sent from them.
+  const widgetStates = useQuery({
+    queryKey: ["widget-state", conversationId],
+    queryFn: () => api.get<Record<string, Record<string, unknown>>>(`/api/widget-state?conversation=${conversationId}`),
+    enabled: !!conversationId,
+    staleTime: Infinity,
+  });
+  const widgetHost = useMemo<WidgetHost | null>(
+    () =>
+      conversationId
+        ? {
+            conversationId,
+            states: widgetStates.isError ? {} : widgetStates.data,
+            saveState: (key, value) => {
+              qc.setQueryData<Record<string, Record<string, unknown>>>(["widget-state", conversationId], (cur) => ({ ...cur, [key]: value }));
+              api.put(`/api/widget-state/${encodeURIComponent(key)}`, { conversationId, data: value }).catch((e) => toast(e instanceof Error ? e.message : String(e), "danger"));
+            },
+            send: async (body) => {
+              try {
+                const res = await api.post<{ steered: boolean }>(`/api/conversations/${conversationId}/messages`, { text: body });
+                stick.current = true;
+                void load();
+                if (res.steered) toast("已作为追加指示发送给正在进行的任务");
+                void qc.invalidateQueries({ queryKey: ["overview"] });
+              } catch (err) {
+                toast(err instanceof Error ? err.message : String(err), "danger");
+              }
+            },
+          }
+        : null,
+    [conversationId, widgetStates.data, widgetStates.isError, qc, load],
+  );
 
   const stop = async () => {
     if (!active) return;
@@ -314,11 +348,13 @@ export default function Chat() {
             {composer}
           </div>
         ) : !data ? null : (
-          <div className="space-y-8 pt-4 pb-6 max-w-3xl mx-auto">
-            {data.runs.map((r) => (
-              <RunView key={r.id} run={r} approvals={data.approvals} incidents={data.incidents} onChanged={load} />
-            ))}
-          </div>
+          <WidgetHostProvider value={widgetHost}>
+            <div className="space-y-8 pt-4 pb-6 max-w-3xl mx-auto">
+              {data.runs.map((r) => (
+                <RunView key={r.id} run={r} approvals={data.approvals} incidents={data.incidents} onChanged={load} />
+              ))}
+            </div>
+          </WidgetHostProvider>
         )}
         <div ref={bottom} className="h-2" />
       </div>
