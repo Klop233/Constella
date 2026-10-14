@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowUp, Brain, Lightbulb, Loader2, Trash2, Undo2 } from "lucide-react";
+import { ArrowUp, Bot, Brain, History, Lightbulb, Loader2, Trash2, Undo2, UserRound } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router";
 import { Button, Empty, Header, Loading, Sheet, cx, toast } from "../components/ui";
@@ -88,7 +88,7 @@ export default function Learning() {
   return (
     <div className="min-h-[calc(100dvh-5rem)] lg:min-h-dvh flex flex-col">
       <Header title="学习" sub="agent 记下的记忆和技能，每一次改动都可以撤销" />
-      <div className="flex-1 px-4 pb-4 space-y-6 lg:max-w-3xl">
+      <div className="flex-1 px-4 pb-4 space-y-8 lg:max-w-3xl">
         <div className="flex gap-1 overflow-x-auto no-scrollbar -mx-4 px-4">
           {agents.data?.map((a) => (
             <Chip key={a.id} active={agentId === a.id} onClick={() => setPicked(a.id)}>
@@ -101,16 +101,15 @@ export default function Learning() {
           <Loading />
         ) : (
           <>
-            <MemoryGroup title="关于你" hint="所有 agent 共享" list={user} onDelete={(i) => void remove("user", i)} />
-            <MemoryGroup title={`${agent!.name} 的记忆`} hint="这个 agent 自己的工作经验" list={mine} onDelete={(i) => void remove("agent", i)} />
-            <section>
-              <h2 className="text-base font-semibold mb-1">技能</h2>
+            <MemoryGroup icon={<UserRound />} title="关于你" hint="所有 agent 共享" list={user} onDelete={(i) => void remove("user", i)} />
+            <MemoryGroup icon={<Bot />} title={`${agent!.name} 的记忆`} hint="这个 agent 自己的工作经验" list={mine} onDelete={(i) => void remove("agent", i)} />
+            <Block icon={<Lightbulb />} title="技能" count={k.skills.length}>
               {k.skills.length === 0 ? (
-                <div className="py-3 text-[13px] text-muted">还没有技能。完成有一定难度的多步任务后，agent 会把做法整理成技能。</div>
+                <div className="rounded-lg border border-dashed border-line px-3.5 py-3 text-[13px] text-muted">还没有技能。完成有一定难度的多步任务后，agent 会把做法整理成技能。</div>
               ) : (
-                <div className="divide-y divide-[var(--border)]">
+                <div className="space-y-2">
                   {k.skills.map((s) => (
-                    <div key={`${s.scope}:${s.name}`} className="py-2.5 flex items-baseline gap-4">
+                    <div key={`${s.scope}:${s.name}`} className="rounded-lg border border-line bg-surface px-3.5 py-2.5 flex items-baseline gap-4">
                       <span className="w-44 shrink-0 font-mono text-[12.5px] truncate">{s.name}</span>
                       <span className="flex-1 min-w-0 text-[13px] text-muted truncate">{s.description}</span>
                       <span className="shrink-0 text-xs text-muted whitespace-nowrap">
@@ -120,20 +119,19 @@ export default function Learning() {
                   ))}
                 </div>
               )}
-            </section>
+            </Block>
           </>
         )}
 
-        <section>
-          <h2 className="text-base font-semibold mb-1">最近的改动</h2>
+        <Block icon={<History />} title="最近的改动" hint="点开可以查看和撤销">
           {list.isLoading ? (
             <Loading />
           ) : !list.data?.length ? (
             <Empty icon={<Brain className="size-6" />} title="还没有学到东西" hint="agent 完成多步任务、或你点了 👍 / 👎 之后，会自动复盘并记录经验" />
           ) : (
-            <div className="divide-y divide-[var(--border)]">
+            <div className="space-y-2">
               {list.data.map((e) => (
-                <button key={e.id} onClick={() => setOpen(e)} className={cx("w-full flex items-start gap-2.5 py-2.5 text-left hover:bg-surface-2 -mx-2 px-2 rounded-md", !!e.reverted && "opacity-55")}>
+                <button key={e.id} onClick={() => setOpen(e)} className={cx("w-full flex items-start gap-2.5 rounded-lg border border-line bg-surface px-3.5 py-2.5 text-left transition-colors hover:border-[color-mix(in_oklab,var(--text)_25%,transparent)] hover:bg-surface-2", !!e.reverted && "opacity-55")}>
                   {e.kind === "skill" ? <Lightbulb className="size-4 mt-0.5 text-muted shrink-0" /> : <Brain className="size-4 mt-0.5 text-muted shrink-0" />}
                   <span className="flex-1 min-w-0 text-[13.5px] leading-snug line-clamp-2">{e.summary}</span>
                   <span className="shrink-0 text-xs text-muted whitespace-nowrap">
@@ -144,11 +142,11 @@ export default function Learning() {
               ))}
             </div>
           )}
-        </section>
+        </Block>
       </div>
 
       {agent && (
-        <div className="sticky bottom-16 lg:bottom-0 px-4 pb-3 pt-2 bg-app lg:max-w-3xl">
+        <div className="sticky bottom-[calc(2.75rem+env(safe-area-inset-bottom))] lg:bottom-0 px-4 pb-3 pt-2 bg-app lg:max-w-3xl">
           <div className="flex items-end gap-1 rounded-2xl border border-line bg-surface p-1.5 pl-3 focus-within:border-[color-mix(in_oklab,var(--text)_30%,transparent)]">
             <textarea
               value={text}
@@ -205,20 +203,31 @@ export default function Learning() {
   );
 }
 
-/** Claude-style memory list: one row per item, delete on hover. */
-function MemoryGroup({ title, hint, list, onDelete }: { title: string; hint: string; list: string[]; onDelete: (item: string) => void }) {
+/** Page section: icon + title + count above its items, so groups read apart at a glance. */
+function Block({ icon, title, hint, count, children }: { icon: React.ReactNode; title: string; hint?: string; count?: number; children: React.ReactNode }) {
   return (
-    <section>
-      <div className="flex items-baseline gap-2 mb-1">
-        <h2 className="text-base font-semibold">{title}</h2>
-        <span className="text-xs text-muted">{hint}</span>
+    <section className="space-y-2">
+      <div className="flex items-center gap-2 min-w-0">
+        <span className="size-6 grid place-items-center rounded-md bg-surface-2 text-muted shrink-0 [&>svg]:size-3.5">{icon}</span>
+        <h2 className="font-display text-base font-semibold truncate">{title}</h2>
+        {count !== undefined && <span className="text-xs text-muted tabular-nums">{count}</span>}
+        {hint && <span className="ml-auto text-xs text-muted truncate">{hint}</span>}
       </div>
+      {children}
+    </section>
+  );
+}
+
+/** Claude-style memory list: one row per item, delete on hover. */
+function MemoryGroup({ icon, title, hint, list, onDelete }: { icon: React.ReactNode; title: string; hint: string; list: string[]; onDelete: (item: string) => void }) {
+  return (
+    <Block icon={icon} title={title} hint={hint} count={list.length}>
       {list.length === 0 ? (
-        <div className="py-3 text-[13px] text-muted">还没有记忆。可以在下面直接告诉它要记住什么。</div>
+        <div className="rounded-lg border border-dashed border-line px-3.5 py-3 text-[13px] text-muted">还没有记忆。可以在下面直接告诉它要记住什么。</div>
       ) : (
-        <div className="divide-y divide-[var(--border)]">
+        <div className="space-y-2">
           {list.map((i) => (
-            <div key={i} className="group flex items-start gap-3 py-2.5 -mx-2 px-2 rounded-md hover:bg-surface-2">
+            <div key={i} className="group flex items-start gap-3 rounded-lg border border-line bg-surface px-3.5 py-2.5 transition-colors hover:bg-surface-2">
               <span className="flex-1 min-w-0 text-[13.5px] leading-relaxed">{i}</span>
               <button aria-label="删除这条记忆" title="删除" onClick={() => onDelete(i)} className="shrink-0 p-1 -m-0.5 rounded text-muted opacity-0 group-hover:opacity-100 focus:opacity-100 hover:text-danger [@media(pointer:coarse)]:opacity-100">
                 <Trash2 className="size-3.5" />
@@ -227,7 +236,7 @@ function MemoryGroup({ title, hint, list, onDelete }: { title: string; hint: str
           ))}
         </div>
       )}
-    </section>
+    </Block>
   );
 }
 
