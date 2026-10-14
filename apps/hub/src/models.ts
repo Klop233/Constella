@@ -307,14 +307,15 @@ function authHeader(key: string): Record<string, string> {
 
 /** Reads a Responses API event stream until it completes or fails. */
 async function readResponseStream(body: ReadableStream<Uint8Array>): Promise<{ ok: boolean; error: string | null; text: string }> {
-  const reader = body.pipeThrough(new TextDecoderStream()).getReader();
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
   let buf = "";
   let text = "";
   try {
     for (;;) {
       const { value, done } = await reader.read();
       if (done) break;
-      buf += value;
+      buf += decoder.decode(value, { stream: true });
       let idx: number;
       while ((idx = buf.indexOf("\n")) >= 0) {
         const line = buf.slice(0, idx).trim();

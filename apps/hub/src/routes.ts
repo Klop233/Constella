@@ -676,6 +676,7 @@ export function registerRoutes(hub: Hub): void {
     telegramBotToken: z.string().optional(),
     telegramChatId: z.string().optional(),
     autoResume: z.boolean().optional(),
+    browserHtml: z.boolean().optional(),
     maxAutoResumes: z.number().int().min(1).max(10).optional(),
     runTimeoutMinutes: minutes([30, 60, 120, 240, 480]).optional(),
     runWatchdogMinutes: minutes([0, 5, 10, 20, 30, 60]).optional(),
@@ -694,7 +695,7 @@ export function registerRoutes(hub: Hub): void {
     checkModel(b.defaultModel);
     checkModel(b.reflectModel);
     const set = (key: string, v: unknown) => v !== undefined && kvSet(db, `settings.${key}`, String(v));
-    for (const key of ["approvalMode", "autoResume", "maxAutoResumes", "runTimeoutMinutes", "runWatchdogMinutes", "agentIdleMinutes", "desktopIdleMinutes", "autoReflect", "reflectMinToolCalls", "backupKeep", "modelNameFormat"] as const)
+    for (const key of ["approvalMode", "autoResume", "browserHtml", "maxAutoResumes", "runTimeoutMinutes", "runWatchdogMinutes", "agentIdleMinutes", "desktopIdleMinutes", "autoReflect", "reflectMinToolCalls", "backupKeep", "modelNameFormat"] as const)
       set(key, b[key]);
     if (b.defaultModel) kvSet(db, "settings.defaultModel", b.defaultModel);
     if (b.reflectModel) kvSet(db, "settings.reflectModel", b.reflectModel);

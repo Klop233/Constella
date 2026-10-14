@@ -23,6 +23,7 @@ interface SettingsView {
   maxAutoResumes: number;
   runTimeoutMinutes: number;
   runWatchdogMinutes: number;
+  browserHtml: boolean;
   approvalMode: "ask" | "smart" | "auto";
   agentIdleMinutes: number;
   desktopIdleMinutes: number;
@@ -218,6 +219,11 @@ function GeneralSection({ s, save }: { s: SettingsView; save: Save }) {
         </SettingRow>
         <SettingRow title="卡住处理" desc="任务这么久没有任何动静（没有输出、没有工具调用、引擎也没在思考）时，监督员介入：判断后继续等、结束卡住的命令、提醒 agent、重启这一轮或重建容器；处理不了才请你决定。">
           <Choice label="卡住处理" value={s.runWatchdogMinutes} options={minuteOptions([5, 10, 20, 30, 60, 0], "不处理")} onChange={(v) => void save({ runWatchdogMinutes: v })} />
+        </SettingRow>
+      </SettingGroup>
+      <SettingGroup title="浏览器">
+        <SettingRow title="直接读取网页 HTML" desc="agent 用浏览器查信息时优先直接读页面 HTML，正文、表格、价格、链接比看截图更快更准；要看布局、图片或验证码时照样截图。对新对话生效。">
+          <Toggle checked={s.browserHtml} onChange={(v) => void save({ browserHtml: v }, v ? "已开启读取网页 HTML" : "已关闭读取网页 HTML")} label="直接读取网页 HTML" />
         </SettingRow>
       </SettingGroup>
       <SettingGroup title="审批">
