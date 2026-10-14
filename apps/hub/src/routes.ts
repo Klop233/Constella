@@ -526,10 +526,10 @@ export function registerRoutes(hub: Hub): void {
 
   // Managing the optional editor service (Settings → System).
   app.get("/api/office/status", async () => office.status());
-  const OfficePatch = z.object({ memoryMb: z.number().int().optional(), idleMinutes: z.number().int().optional() });
+  const OfficePatch = z.object({ memoryMb: z.number().int().optional(), idleMinutes: z.number().int().optional(), image: z.string().max(200).optional() });
   app.patch("/api/office", async (req) => {
     const b = OfficePatch.parse(req.body);
-    const before = { memoryMb: office.memoryMb(), idleMinutes: office.idleMinutes() };
+    const before = { memoryMb: office.memoryMb(), idleMinutes: office.idleMinutes(), image: office.image() };
     try {
       office.configure(b);
     } catch (err) {
@@ -537,7 +537,7 @@ export function registerRoutes(hub: Hub): void {
     }
     // New limits apply at the next start.
     if (b.memoryMb !== undefined && b.memoryMb !== before.memoryMb) await office.stop().catch(() => {});
-    audit(db, actor(req), "settings.update", { fields: Object.keys(b), changes: changesOf(before, { memoryMb: office.memoryMb(), idleMinutes: office.idleMinutes() }, Object.keys(b)) });
+    audit(db, actor(req), "settings.update", { fields: Object.keys(b), changes: changesOf(before, { memoryMb: office.memoryMb(), idleMinutes: office.idleMinutes(), image: office.image() }, Object.keys(b)) });
     return office.status();
   });
   app.post("/api/office/enable", async (req) => {

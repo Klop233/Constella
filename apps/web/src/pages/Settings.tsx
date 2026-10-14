@@ -1419,6 +1419,9 @@ function OfficeGroup() {
           </SettingRow>
         </>
       )}
+      <SettingRow title="镜像地址" desc="从哪里下载编辑器镜像。Docker Hub 很慢时，可以换成能访问的镜像源地址；改动后需要重新下载。">
+        <ImageInput value={o.image} disabled={busy || o.pulling.active} onSave={(v) => void act(() => api.patch("/api/office", { image: v }), "已保存镜像地址")} />
+      </SettingRow>
       {(o.imagePresent || o.pulling.error) && (
         <SettingRow title="卸载" desc={`删除编辑器容器和镜像${o.imageSizeMb ? `，释放约 ${(o.imageSizeMb / 1024).toFixed(1)} GB 磁盘` : ""}。文档本身不受影响。`}>
           <Button
@@ -1442,6 +1445,19 @@ function OfficeGroup() {
         </SettingRow>
       )}
     </SettingGroup>
+  );
+}
+
+function ImageInput({ value, disabled, onSave }: { value: string; disabled: boolean; onSave: (v: string) => void }) {
+  const [v, setV] = useState(value);
+  useEffect(() => setV(value), [value]);
+  return (
+    <div className="flex items-center gap-2">
+      <input value={v} onChange={(e) => setV(e.target.value)} aria-label="镜像地址" spellCheck={false} className={cx(inputClass, "h-8 w-56 sm:w-72 font-mono text-[12.5px]")} />
+      <Button size="sm" variant="soft" disabled={disabled || !v.trim() || v.trim() === value} onClick={() => onSave(v.trim())}>
+        保存
+      </Button>
+    </div>
   );
 }
 
