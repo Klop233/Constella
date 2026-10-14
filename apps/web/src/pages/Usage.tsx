@@ -11,7 +11,7 @@ import type { RunStatus } from "../lib/types";
 
 interface Stats {
   totals: { requests: number; runs: number; input: number; cached: number; output: number; reasoning: number; hitRate: number | null };
-  trend: { label: string; tokens: number; requests: number }[];
+  trend: { day: string | null; label: string; tokens: number; requests: number }[];
   models: { model: string; label: string; providerName: string; requests: number; runs: number; input: number; cached: number; output: number; successRate: number | null; tps: number | null; avgMs: number | null }[];
   providers: { provider: string; name: string; requests: number; input: number; cached: number; output: number; models: number }[];
   agents: { agentId: string; name: string; emoji: string; requests: number; input: number; cached: number; output: number; spendUsd: number | null }[];
@@ -22,8 +22,8 @@ interface Stats {
 
 const RANGES = [
   { value: "today", label: "今天" },
-  { value: "7d", label: "近 7 天" },
   { value: "30d", label: "近 30 天" },
+  { value: "365d", label: "全年" },
 ] as const;
 
 const pct = (v: number | null) => (v == null ? "—" : `${(v * 100).toFixed(1)}%`);
@@ -38,7 +38,7 @@ function Td({ children, right, className }: { children: React.ReactNode; right?:
 }
 
 export default function Usage() {
-  const [range, setRange] = useState<"today" | "7d" | "30d">("today");
+  const [range, setRange] = useState<"today" | "30d" | "365d">("today");
   const [agent, setAgent] = useState("");
   const [model, setModel] = useState("");
   const [provider, setProvider] = useState("");
@@ -47,13 +47,8 @@ export default function Usage() {
   const qs = new URLSearchParams({ range, ...(agent && { agent }), ...(model && { model }), ...(provider && { provider }) });
   const q = useQuery({ queryKey: ["usage-stats", range, agent, model, provider], queryFn: () => api.get<Stats>(`/api/usage/stats?${qs}`), refetchInterval: 30_000 });
   const d = q.data;
-  const hm = useQuery({
-    queryKey: ["usage-heatmap", agent, model, provider],
-    queryFn: () => api.get<{ days: { day: string; tokens: number; requests: number }[] }>(`/api/usage/heatmap?${new URLSearchParams({ ...(agent && { agent }), ...(model && { model }), ...(provider && { provider }) })}`),
-    refetchInterval: 60_000,
-  });
   const agentName = (id: string) => d?.filters.agents.find((a) => a.id === id);
-  const step = d ? Math.ceil(d.trend.length / (range === "30d" ? 8 : 7)) : 1;
+  const step = d ? Math.ceil(d.trend.length / (range === "today" ? 7 : 8)) : 1;
 
   return (
     <div>
@@ -94,13 +89,6 @@ export default function Usage() {
               </option>
             ))}
           </select>
-          <select aria-label="时间范围" className={selectClass} value={range} onChange={(e) => setRange(e.target.value as typeof range)}>
-            {RANGES.map((r) => (
-              <option key={r.value} value={r.value}>
-                {r.label}
-              </option>
-            ))}
-          </select>
         </div>
 
         {!d ? (
@@ -120,7 +108,10 @@ export default function Usage() {
 
             <Card className="p-3.5 space-y-3">
               <div className="flex items-center gap-2">
-                <div className="flex-1 text-xs font-medium text-muted">使用趋势 · {RANGES.find((r) => r.value === range)!.label}</div>
+                <div className="w-52">
+                  <Segmented value={range} onChange={setRange} options={RANGES.map((r) => ({ value: r.value, label: r.label }))} />
+                </div>
+                <div className="flex-1" />
                 <div className="w-36">
                   <Segmented
                     value={metric}
@@ -132,19 +123,16 @@ export default function Usage() {
                   />
                 </div>
               </div>
+              {range === "365d" ? (
+                <ActivityHeatmap days={d.trend.map((t) => ({ day: t.day ?? "", tokens: t.tokens, requests: t.requests }))} metric={metric} format={metric === "tokens" ? tokens : (v) => String(Math.round(v))} />
+              ) : (
               <BarChart
                 title={metric === "tokens" ? "每段时间的 token 数" : "每段时间的请求数"}
                 format={metric === "tokens" ? tokens : (v) => String(Math.round(v))}
                 data={d.trend.map((t, i) => ({ label: t.label, tick: (d.trend.length - 1 - i) % step === 0 ? t.label : "", value: t[metric] }))}
               />
+              )}
             </Card>
-
-            {hm.data && (
-              <Card className="p-3.5 space-y-3">
-                <div className="text-xs font-medium text-muted">活跃度 · 过去一年</div>
-                <ActivityHeatmap days={hm.data.days} metric={metric} format={metric === "tokens" ? tokens : (v) => String(Math.round(v))} />
-              </Card>
-            )}
 
             <Tabs
               value={tab}

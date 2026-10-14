@@ -577,7 +577,7 @@ describe("usage stats", () => {
     expect(s.totals).toMatchObject({ requests: 3, runs: 2, input: 2700, cached: 1800, output: 170 });
     expect(s.totals.hitRate).toBeCloseTo(1800 / 2700);
     expect(s.trend).toHaveLength(21);
-    expect(s.trend[9]).toEqual({ label: "09:00", tokens: 2350, requests: 2 });
+    expect(s.trend[9]).toEqual({ day: null, label: "09:00", tokens: 2350, requests: 2 });
     expect(s.models[0]).toMatchObject({ model: "m1", requests: 2, successRate: 1, tps: 50 });
     expect(s.models[1]).toMatchObject({ model: "m2", successRate: 0, tps: null });
     expect(s.log[0]!.model).toBe("m2");

@@ -3,7 +3,7 @@ import type { Db } from "./db.ts";
 
 /** Token usage statistics, built from per-request `usage` events (one per model request). */
 
-export type UsageRange = "today" | "7d" | "30d";
+export type UsageRange = "today" | "7d" | "30d" | "365d";
 
 interface UsageEvent {
   ts: string;
@@ -34,9 +34,11 @@ function localParts(iso: string, tz: string): { day: string; hour: number } {
   return { day: `${p.year}-${p.month}-${p.day}`, hour: Number(p.hour) };
 }
 
+const RANGE_DAYS = { "7d": 7, "30d": 30, "365d": 365 } as const;
+
 /** Start of the range as an ISO timestamp; "today" starts at local midnight in `tz`. */
 export function rangeStart(range: UsageRange, now = new Date(), tz = config.timezone): string {
-  if (range !== "today") return new Date(now.getTime() - (range === "7d" ? 7 : 30) * 86_400_000).toISOString();
+  if (range !== "today") return new Date(now.getTime() - RANGE_DAYS[range as Exclude<UsageRange, "today">] * 86_400_000).toISOString();
   const { hour } = localParts(now.toISOString(), tz);
   const start = new Date(now.getTime() - hour * 3_600_000);
   start.setUTCMinutes(0, 0, 0);
@@ -55,15 +57,15 @@ export function usageStats(
   tz = config.timezone,
 ) {
   // Buckets: hours of today, or days of the range.
-  const buckets = new Map<string, { label: string; tokens: number; requests: number }>();
+  const buckets = new Map<string, { day: string | null; label: string; tokens: number; requests: number }>();
   if (range === "today") {
     const { hour } = localParts(now.toISOString(), tz);
-    for (let h = 0; h <= hour; h++) buckets.set(String(h), { label: `${String(h).padStart(2, "0")}:00`, tokens: 0, requests: 0 });
+    for (let h = 0; h <= hour; h++) buckets.set(String(h), { day: null, label: `${String(h).padStart(2, "0")}:00`, tokens: 0, requests: 0 });
   } else {
-    const days = range === "7d" ? 7 : 30;
+    const days = RANGE_DAYS[range];
     for (let i = days - 1; i >= 0; i--) {
       const day = localParts(new Date(now.getTime() - i * 86_400_000).toISOString(), tz).day;
-      buckets.set(day, { label: day.slice(5).replace("-", "/"), tokens: 0, requests: 0 });
+      buckets.set(day, { day, label: day.slice(5).replace("-", "/"), tokens: 0, requests: 0 });
     }
   }
 
@@ -138,22 +140,6 @@ export function usageStats(
         status: runs.get(e.runId)?.status ?? null,
       })),
   };
-}
-
-/** Per-day totals for the last `days` local days (oldest first), for the activity heatmap. */
-export function dailyActivity(events: UsageEvent[], days = 365, now = new Date(), tz = config.timezone) {
-  const buckets = new Map<string, { day: string; tokens: number; requests: number }>();
-  for (let i = days - 1; i >= 0; i--) {
-    const day = localParts(new Date(now.getTime() - i * 86_400_000).toISOString(), tz).day;
-    buckets.set(day, { day, tokens: 0, requests: 0 });
-  }
-  for (const e of events) {
-    const b = buckets.get(localParts(e.ts, tz).day);
-    if (!b) continue;
-    b.tokens += e.input + e.output;
-    b.requests++;
-  }
-  return [...buckets.values()];
 }
 
 /**

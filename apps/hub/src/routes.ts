@@ -14,7 +14,7 @@ import { audit, kvSet } from "./db.ts";
 import { DesktopError, type DesktopAction } from "./desktops.ts";
 import { requestSource } from "./request-source.ts";
 import { isTrusted } from "./trusted.ts";
-import { dailyActivity, loadUsage, rangeStart, usageStats } from "./usage.ts";
+import { loadUsage, rangeStart, usageStats } from "./usage.ts";
 import { contextBreakdown } from "./context.ts";
 import { ScheduleInput } from "./scheduler.ts";
 import { IMPORT_TEXT_MAX } from "./learning.ts";
@@ -781,7 +781,7 @@ export function registerRoutes(hub: Hub): void {
   });
   app.get("/api/usage/stats", async (req) => {
     const q = z
-      .object({ range: z.enum(["today", "7d", "30d"]).default("today"), agent: z.string().optional(), model: z.string().optional(), provider: z.string().optional() })
+      .object({ range: z.enum(["today", "7d", "30d", "365d"]).default("today"), agent: z.string().optional(), model: z.string().optional(), provider: z.string().optional() })
       .parse(req.query);
     const since = rangeStart(q.range);
     const { events: all, runs: runInfo } = loadUsage(db, since, { agentId: q.agent }, (ref) => models.normalize(ref));
@@ -827,13 +827,6 @@ export function registerRoutes(hub: Hub): void {
         agents: list.map((a) => ({ id: a.id, name: a.name, emoji: a.emoji })),
       },
     };
-  });
-  app.get("/api/usage/heatmap", async (req) => {
-    const q = z.object({ agent: z.string().optional(), model: z.string().optional(), provider: z.string().optional() }).parse(req.query);
-    const since = new Date(Date.now() - 372 * 86_400_000).toISOString();
-    const { events } = loadUsage(db, since, { agentId: q.agent }, (ref) => models.normalize(ref));
-    const picked = events.filter((e) => (!q.model || e.model === q.model) && (!q.provider || models.parse(e.model).provider === q.provider));
-    return { days: dailyActivity(picked) };
   });
   app.get("/api/settings", async () => settings.view());
   const minutes = (allowed: number[]) => z.number().int().refine((v) => allowed.includes(v), `只能是 ${allowed.join(" / ")}`);
