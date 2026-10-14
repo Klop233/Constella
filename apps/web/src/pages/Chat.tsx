@@ -1,12 +1,12 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowUp, ImagePlus, Loader2, Paperclip, Plus, Square, X } from "lucide-react";
+import { ArrowUp, Archive, ArchiveRestore, ImagePlus, Loader2, Paperclip, Plus, Square, X } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router";
 import { AgentDot } from "../components/AgentBits";
 import { ConversationArtifacts } from "../components/ArtifactList";
 import { ContextMeter, EffortPicker, ModelPicker, RunTimeoutPicker } from "../components/ChatControls";
 import { CONTINUE_TEXT, latestStats, RunView } from "../components/RunView";
-import { Button, Empty, Header, Loading, cx, toast } from "../components/ui";
+import { Button, Empty, Header, IconButton, Loading, cx, toast } from "../components/ui";
 import { api, ApiError, fileToBase64 } from "../lib/api";
 import { useAppearance } from "../lib/appearance";
 import { useAgentEvents, useHubEvents } from "../lib/live";
@@ -184,6 +184,20 @@ export default function Chat() {
 
   const a = agent.data;
   const isNew = !conversationId && !loading;
+  const toggleArchive = async () => {
+    if (!data) return;
+    const archived = !data.conversation.archived_at;
+    try {
+      await api.patch(`/api/conversations/${data.conversation.id}`, { archived });
+      void qc.invalidateQueries({ queryKey: ["overview"] });
+      void qc.invalidateQueries({ queryKey: ["conversations"] });
+      toast(archived ? "已归档，可在助手详情页找到" : "已取消归档");
+      if (archived) nav(`/agents/${data.conversation.agent_id}`);
+      else void load();
+    } catch (err) {
+      toast(err instanceof Error ? err.message : String(err), "danger");
+    }
+  };
   const composer = (
     <div className="w-full max-w-3xl mx-auto">
       <div className="rounded-2xl border border-line bg-surface focus-within:border-[color-mix(in_oklab,var(--text)_30%,transparent)] transition-colors">
@@ -252,7 +266,18 @@ export default function Chat() {
       <Header
         back
         backMobileOnly
-        right={conversationId && <ConversationArtifacts conversationId={conversationId} />}
+        right={
+          conversationId && (
+            <div className="flex items-center gap-1">
+              <ConversationArtifacts conversationId={conversationId} />
+              {data && (
+                <IconButton label={data.conversation.archived_at ? "取消归档" : "归档"} onClick={() => void toggleArchive()}>
+                  {data.conversation.archived_at ? <ArchiveRestore className="size-4" /> : <Archive className="size-4" />}
+                </IconButton>
+              )}
+            </div>
+          )
+        }
         title={
           <span className="flex items-center gap-2 min-w-0">
             <span className="truncate">{data?.conversation.title ?? "新对话"}</span>

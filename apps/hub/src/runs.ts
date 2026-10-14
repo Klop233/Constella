@@ -40,6 +40,8 @@ export interface ConversationRow {
   effort: Effort | null;
   /** This conversation's single-turn time limit in minutes (0 = none); null follows the setting. */
   run_timeout_minutes: number | null;
+  /** Set while the conversation is archived (hidden from the sidebar and default list). */
+  archived_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -187,7 +189,7 @@ export class RunManager {
 
   createConversation(agentId: string, title: string, source = "user"): ConversationRow {
     const now = nowIso();
-    const conv: ConversationRow = { id: newId("cv"), agent_id: agentId, title, thread_id: null, source, model: null, effort: null, run_timeout_minutes: null, created_at: now, updated_at: now };
+    const conv: ConversationRow = { id: newId("cv"), agent_id: agentId, title, thread_id: null, source, model: null, effort: null, run_timeout_minutes: null, archived_at: null, created_at: now, updated_at: now };
     this.#d.db
       .prepare("INSERT INTO conversations (id, agent_id, title, thread_id, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
       .run(conv.id, conv.agent_id, conv.title, null, conv.source, now, now);
@@ -263,7 +265,7 @@ export class RunManager {
       `INSERT INTO runs (id, conversation_id, agent_id, prompt, status, model, last_event_at, created_at)
        VALUES (?, ?, ?, ?, 'queued', ?, ?, ?)`,
     ).run(run.id, run.conversation_id, run.agent_id, run.prompt, run.model, run.last_event_at, run.created_at);
-    db.prepare("UPDATE conversations SET updated_at = ? WHERE id = ?").run(nowIso(), conv.id);
+    db.prepare("UPDATE conversations SET updated_at = ?, archived_at = NULL WHERE id = ?").run(nowIso(), conv.id);
     this.#append(run, { type: "run.status", runId: run.id, status: "queued" });
 
     const convId = conv.id;
