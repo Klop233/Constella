@@ -91,7 +91,7 @@ export default function Desktops() {
                       </div>
                       {p?.running && p.now && (
                         <div className="text-[11.5px] text-muted tabular-nums truncate">
-                          CPU {cores(p.now.cpu)} · 内存 {p.memLimit ? `${bytes(p.now.mem).replace(" GB", "")}/${bytes(p.memLimit)}` : bytes(p.now.mem)}
+                          CPU {cores(p.now.cpu)} · {p.memLimit ? `${bytes(p.now.mem).replace(" GB", "")}/${bytes(p.memLimit)}` : bytes(p.now.mem)}
                         </div>
                       )}
                     </div>
