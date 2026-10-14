@@ -1,5 +1,6 @@
 import { Cron } from "croner";
 import { z } from "zod";
+import { changesOf } from "./audit.ts";
 import { config, newId, nowIso } from "./config.ts";
 import { audit, type Db } from "./db.ts";
 import type { EventStore } from "./events.ts";
@@ -95,7 +96,11 @@ export class Scheduler {
     this.#db
       .prepare("UPDATE schedules SET name = ?, cron = ?, tz = ?, enabled = ?, payload = ? WHERE id = ?")
       .run(merged.name, merged.cron, merged.tz, merged.enabled ? 1 : 0, JSON.stringify(merged.payload), id);
-    audit(this.#db, actor, "schedule.update", { id });
+    audit(this.#db, actor, "schedule.update", {
+      id,
+      name: merged.name,
+      changes: changesOf({ name: cur.name, cron: cur.cron, tz: cur.tz, enabled: !!cur.enabled, payload: JSON.parse(cur.payload) }, merged, ["name", "cron", "tz", "enabled", "payload"]),
+    });
     this.#arm(this.get(id));
     this.#events.publish("schedule", { id });
     return this.get(id);
@@ -107,7 +112,7 @@ export class Scheduler {
     this.#jobs.get(id)?.stop();
     this.#jobs.delete(id);
     this.#db.prepare("DELETE FROM schedules WHERE id = ?").run(id);
-    audit(this.#db, actor, "schedule.delete", { id });
+    audit(this.#db, actor, "schedule.delete", { id, name: cur.name, cron: cur.cron });
     this.#events.publish("schedule", { id, removed: true });
   }
 

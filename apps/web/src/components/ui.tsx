@@ -315,10 +315,30 @@ export function SettingGroup({ title, children }: { title: string; children: Rea
 /**
  * One setting: title + description on the left, its control on the right (stacks on narrow screens when `wide`).
  * `dense` is for rows in a long list (models, providers, devices) where each row is just a name and a few buttons.
+ * With `onClick` the whole row opens something (an entry's details): hover tint, keyboard-activatable.
  */
-export function SettingRow({ title, desc, children, wide, dense }: { title: ReactNode; desc?: ReactNode; children?: ReactNode; wide?: boolean; dense?: boolean }) {
+export function SettingRow({ title, desc, children, wide, dense, onClick }: { title: ReactNode; desc?: ReactNode; children?: ReactNode; wide?: boolean; dense?: boolean; onClick?: () => void }) {
+  const press = onClick && {
+    role: "button" as const,
+    tabIndex: 0,
+    onClick,
+    onKeyDown: (e: React.KeyboardEvent) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        onClick();
+      }
+    },
+  };
   return (
-    <div className={cx("flex gap-x-4 gap-y-1.5", dense ? "py-1.5" : "py-2.5", wide ? "flex-col sm:flex-row sm:items-center" : "items-center")}>
+    <div
+      {...press}
+      className={cx(
+        "flex gap-x-4 gap-y-1.5",
+        dense ? "py-1.5" : "py-2.5",
+        wide ? "flex-col sm:flex-row sm:items-center" : "items-center",
+        onClick && "-mx-2 px-2 rounded-md cursor-pointer hover:bg-[color-mix(in_oklab,var(--text)_5%,transparent)]",
+      )}
+    >
       <div className="flex-1 min-w-0">
         <div className="text-[13.5px] font-medium">{title}</div>
         {desc && <div className="text-xs text-muted mt-px leading-snug">{desc}</div>}

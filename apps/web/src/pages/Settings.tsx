@@ -5,13 +5,15 @@ import QRCode from "qrcode";
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
 import { ModelSelect } from "./AgentEdit";
+import { AuditDetailSheet } from "../components/AuditDetail";
 import { Badge, Button, Field, Header, Loading, navItemClass, Segmented, SettingGroup, SettingRow, Sheet, StatTile, Tabs, Toggle, cx, inputClass, selectClass, toast } from "../components/ui";
 import { api, logout } from "../lib/api";
 import { setAppearance, useAppearance, type Appearance } from "../lib/appearance";
+import { auditAction, auditActor, auditSummary } from "../lib/audit";
 import { fmtMinutes, RUN_TIMEOUTS, runTimeoutLabel, timeAgo, tokens } from "../lib/format";
 import { useModels, useProviders, type ModelEntry, type Provider } from "../lib/models";
 import { currentSubscription, disablePush, enablePush, pushSupported } from "../lib/push";
-import type { Agent, Effort, Schedule } from "../lib/types";
+import type { Agent, AuditEntry, Effort, Schedule } from "../lib/types";
 
 type NotifyKind = "done" | "failed" | "approval" | "stuck";
 
@@ -1042,97 +1044,19 @@ function NotifySection({ s, save }: { s: SettingsView; save: Save }) {
   );
 }
 
-interface AuditRow {
-  id: number;
-  ts: string;
-  actor: string;
-  action: string;
-  detail: string | null;
-}
-
-const AUDIT_TEXT: Record<string, string> = {
-  "auth.setup": "创建账号",
-  "auth.login": "登录",
-  "auth.password.change": "修改密码",
-  "auth.totp.enable": "开启两步验证",
-  "auth.totp.disable": "关闭两步验证",
-  "auth.passkey.add": "添加通行密钥",
-  "auth.passkey.delete": "删除通行密钥",
-  "auth.session.revoke": "下线设备",
-  "agent.create": "新建 agent",
-  "agent.update": "修改 agent",
-  "agent.archive": "删除 agent",
-  "agent.secret.set": "设置 agent 密钥",
-  "agent.secret.delete": "删除 agent 密钥",
-  "agent.newapi_token": "生成 agent 专属令牌",
-  "approval.approve": "批准操作",
-  "approval.deny": "拒绝操作",
-  "run.interrupt": "停止任务",
-  "desktop.create": "新建桌面",
-  "desktop.delete": "删除桌面",
-  "desktop.takeover": "接管桌面",
-  "desktop.handback": "交还桌面",
-  "schedule.create": "新建定时任务",
-  "schedule.update": "修改定时任务",
-  "schedule.delete": "删除定时任务",
-  "settings.update": "修改设置",
-  "provider.create": "添加 provider",
-  "provider.update": "修改 provider",
-  "provider.delete": "删除 provider",
-  "models.add": "添加模型",
-  "models.remove": "移除模型",
-};
-
-/** Field names in settings.update / agent.update details. */
-const FIELD_TEXT: Record<string, string> = {
-  defaultModel: "默认模型",
-  reflectModel: "复盘模型",
-  defaultEffort: "默认推理强度",
-  autoResume: "自动继续",
-  maxAutoResumes: "连续无进展上限",
-  runTimeoutMinutes: "单轮最长运行",
-  runWatchdogMinutes: "卡住处理",
-  approvalMode: "审批方式",
-  agentIdleMinutes: "agent 闲置休眠",
-  desktopIdleMinutes: "桌面闲置关闭",
-  autoReflect: "自动复盘",
-  reflectMinToolCalls: "复盘门槛",
-  notifyOn: "推送事项",
-  quietHours: "免打扰",
-  backupKeep: "备份保留",
-  modelNameFormat: "显示名格式",
-  newapiAdminToken: "new-api 管理令牌",
-  newapiAdminUserId: "new-api 用户 ID",
-  telegramBotToken: "Telegram",
-  telegramChatId: "Telegram",
-  name: "名字",
-  emoji: "图标",
-  template: "模板",
-  persona: "人设",
-  model: "模型",
-  effort: "推理强度",
-  approvalPolicy: "命令审批",
-  desktopPolicy: "桌面",
-  hostAccess: "宿主机权限",
-  budgetDailyUsd: "每日预算",
-};
-
-function AuditList({ rows, agents }: { rows: AuditRow[]; agents: Agent[] }) {
-  const who = (actor: string) =>
-    actor === "policy" ? "自动审批" : actor === "watchdog" ? "超时保护" : actor.startsWith("us_") ? "你" : (agents.find((a) => a.id === actor)?.name ?? actor);
-  const extra = (r: AuditRow) => {
-    try {
-      const d = r.detail ? JSON.parse(r.detail) : null;
-      if (Array.isArray(d?.fields)) return [...new Set(d.fields.map((f: string) => FIELD_TEXT[f] ?? f))].join("、");
-      return d?.name ?? d?.ip ?? d?.ref ?? (r.action.startsWith("provider.") ? d?.id : null);
-    } catch {
-      return null;
-    }
-  };
+function AuditList({ rows, agents, onOpen }: { rows: AuditEntry[]; agents: Agent[]; onOpen: (e: AuditEntry) => void }) {
   return (
     <>
       {rows.map((r) => (
-        <SettingRow dense key={r.id} title={<span className="font-normal">{AUDIT_TEXT[r.action] ?? r.action}</span>} desc={[timeAgo(r.ts), who(r.actor), extra(r)].filter(Boolean).join(" · ")} />
+        <SettingRow
+          dense
+          key={r.id}
+          onClick={() => onOpen(r)}
+          title={<span className="font-normal">{auditAction(r.action)}</span>}
+          desc={[timeAgo(r.ts), auditActor(r.actor, agents), auditSummary(r)].filter(Boolean).join(" · ")}
+        >
+          <ChevronRight className="size-4 text-muted" />
+        </SettingRow>
       ))}
     </>
   );
@@ -1144,7 +1068,8 @@ function SecuritySection({ me }: { me: Me }) {
   const [code, setCode] = useState("");
   const [pw, setPw] = useState<{ current: string; next: string } | null>(null);
   const [auditOpen, setAuditOpen] = useState(false);
-  const audit = useQuery({ queryKey: ["audit"], queryFn: () => api.get<AuditRow[]>("/api/audit") });
+  const [auditEntry, setAuditEntry] = useState<AuditEntry | null>(null);
+  const audit = useQuery({ queryKey: ["audit"], queryFn: () => api.get<AuditEntry[]>("/api/audit") });
   const agents = useQuery({ queryKey: ["agents"], queryFn: () => api.get<Agent[]>("/api/agents") });
   const refresh = () => qc.invalidateQueries({ queryKey: ["me"] });
   const wrap = (fn: () => Promise<unknown>, ok: string) => async () => {
@@ -1230,18 +1155,19 @@ function SecuritySection({ me }: { me: Me }) {
         ))}
       </SettingGroup>
       <SettingGroup title="操作记录">
-        <AuditList rows={(audit.data ?? []).slice(0, 6)} agents={agents.data ?? []} />
+        <AuditList rows={(audit.data ?? []).slice(0, 6)} agents={agents.data ?? []} onOpen={setAuditEntry} />
         <SettingRow title={`最近 ${audit.data?.length ?? 0} 条`} desc="登录、审批、改设置、管理 agent 等操作都会记下来。">
           <Button size="sm" variant="soft" onClick={() => setAuditOpen(true)}>
             查看全部
           </Button>
         </SettingRow>
       </SettingGroup>
-      <Sheet open={auditOpen} onClose={() => setAuditOpen(false)} title="操作记录">
+      <Sheet open={auditOpen} onClose={() => !auditEntry && setAuditOpen(false)} title="操作记录">
         <div className="divide-y divide-[var(--border)]">
-          <AuditList rows={audit.data ?? []} agents={agents.data ?? []} />
+          <AuditList rows={audit.data ?? []} agents={agents.data ?? []} onOpen={setAuditEntry} />
         </div>
       </Sheet>
+      <AuditDetailSheet entry={auditEntry} agents={agents.data ?? []} onClose={() => setAuditEntry(null)} />
       <Sheet open={!!totp} onClose={() => setTotp(null)} title="开启两步验证">
         {totp && (
           <div className="space-y-3">

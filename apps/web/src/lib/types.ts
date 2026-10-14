@@ -131,6 +131,22 @@ export interface AuditEntry {
   detail: string | null;
 }
 
+/** What an entry's ids point at today; a missing key means the object no longer exists. */
+export interface AuditRefs {
+  agent?: { id: string; name: string; emoji: string; archived: boolean };
+  approval?: { id: string; kind: string; summary: string; detail: string | null; status: string; source: string; created_at: string; resolved_at: string | null; answer: string | null };
+  run?: { id: string; status: RunStatus; model: string; prompt: string; error: string | null; created_at: string; finished_at: string | null };
+  conversation?: { id: string; title: string };
+  desktop?: { id: string; name: string };
+  schedule?: { id: string; name: string; cron: string; enabled: boolean };
+  incident?: { id: string; title: string; kind: string; status: string };
+  artifact?: { id: string; title: string; filename: string; version: number };
+}
+
+export interface AuditEntryDetail extends AuditEntry {
+  refs: AuditRefs;
+}
+
 export interface Desktop {
   id: string;
   name: string;

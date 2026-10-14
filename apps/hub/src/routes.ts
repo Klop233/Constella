@@ -7,8 +7,11 @@ import { MAX_ARTIFACT_TEXT, type ArtifactVersionRow } from "./artifacts.ts";
 import type { Hub } from "./app.ts";
 import { EffortSchema } from "./catalog.ts";
 import { config, nowIso } from "./config.ts";
+import { auditRefs, changesOf } from "./audit.ts";
+import { describeDevice } from "./auth.ts";
 import { audit, kvSet } from "./db.ts";
 import type { DesktopAction } from "./desktops.ts";
+import { requestSource } from "./request-source.ts";
 import { isTrusted } from "./trusted.ts";
 import { loadUsage, rangeStart, usageStats } from "./usage.ts";
 import { contextBreakdown } from "./context.ts";
@@ -40,6 +43,12 @@ export function registerRoutes(hub: Hub): void {
     const message = err instanceof z.ZodError ? err.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("；") : (err?.message ?? "error");
     if (status >= 500) console.error(err);
     reply.code(status).send({ error: message, code: err?.code });
+  });
+
+  // Audit entries written while handling a request record where it came from (not for the runner's own connection).
+  app.addHook("onRequest", (req, _reply, done) => {
+    if (!req.url.startsWith("/api/") || req.url.startsWith("/api/runner")) return done();
+    requestSource.run({ ip: req.ip, device: describeDevice(String(req.headers["user-agent"] ?? "")) }, done);
   });
 
   // Auth + CSRF guard for the JSON API.
@@ -110,8 +119,9 @@ export function registerRoutes(hub: Hub): void {
     return { ok: true };
   });
   app.delete("/api/auth/passkeys/:id", async (req) => {
+    const key = (auth.passkeys() as { id: string; name: string; rp_id: string }[]).find((p) => p.id === (req.params as { id: string }).id);
     auth.deletePasskey((req.params as { id: string }).id);
-    audit(db, actor(req), "auth.passkey.delete");
+    audit(db, actor(req), "auth.passkey.delete", key ? { name: key.name, rpID: key.rp_id } : undefined);
     return { ok: true };
   });
   app.post("/api/auth/password", async (req) => {
@@ -130,8 +140,10 @@ export function registerRoutes(hub: Hub): void {
     return { ok: true };
   });
   app.delete("/api/auth/sessions/:id", async (req) => {
-    auth.revokeSession((req.params as { id: string }).id);
-    audit(db, actor(req), "auth.session.revoke");
+    const prefix = (req.params as { id: string }).id;
+    const target = (auth.sessions(req.sessionId!) as { id: string; device: string; ip: string | null }[]).find((s) => s.id === prefix);
+    auth.revokeSession(prefix);
+    audit(db, actor(req), "auth.session.revoke", target ? { device: target.device, deviceIp: target.ip } : undefined);
     return { ok: true };
   });
 
@@ -419,8 +431,9 @@ export function registerRoutes(hub: Hub): void {
   });
   app.patch("/api/artifacts/:id", async (req) => {
     const b = z.object({ title: z.string().trim().min(1).max(120) }).parse(req.body);
-    const a = artifacts.rename(artifactOr404(id(req)).id, b.title);
-    audit(db, actor(req), "artifact.rename", { id: a.id, title: a.title });
+    const cur = artifactOr404(id(req));
+    const a = artifacts.rename(cur.id, b.title);
+    audit(db, actor(req), "artifact.rename", { id: a.id, title: a.title, changes: changesOf({ title: cur.title }, { title: a.title }, ["title"]) });
     return a;
   });
   // The owner edits a text artifact in place, or brings back an older version; either way a new version.
@@ -498,7 +511,7 @@ export function registerRoutes(hub: Hub): void {
   app.post("/api/desktops", async (req) => {
     const b = z.object({ name: z.string().min(1).max(40), pinnedAgentId: z.string().nullable().optional() }).parse(req.body);
     const d = desktops.create(b.name, b.pinnedAgentId ?? null);
-    audit(db, actor(req), "desktop.create", { id: d.id });
+    audit(db, actor(req), "desktop.create", { id: d.id, name: b.name, pinnedAgentId: b.pinnedAgentId ?? undefined });
     return d;
   });
   app.patch("/api/desktops/:id", async (req) => {
@@ -511,8 +524,9 @@ export function registerRoutes(hub: Hub): void {
       return p.mode === "fixed" && p.desktopId === id(req);
     });
     if (pinned.length) throw new HttpError(409, `先修改这些 agent 的桌面设置：${pinned.map((a) => a.name).join("、")}`);
+    const name = (db.prepare("SELECT name FROM desktops WHERE id = ?").get(id(req)) as { name: string } | undefined)?.name;
     await desktops.remove(id(req));
-    audit(db, actor(req), "desktop.delete", { id: id(req) });
+    audit(db, actor(req), "desktop.delete", { id: id(req), name });
     return { ok: true };
   });
   app.post("/api/desktops/:id/start", async (req) => {
@@ -794,6 +808,7 @@ export function registerRoutes(hub: Hub): void {
   });
   app.patch("/api/settings", async (req) => {
     const b = SettingsPatch.parse(req.body);
+    const before = settings.view();
     checkModel(b.defaultModel);
     checkModel(b.reflectModel);
     const set = (key: string, v: unknown) => v !== undefined && kvSet(db, `settings.${key}`, String(v));
@@ -808,8 +823,13 @@ export function registerRoutes(hub: Hub): void {
     if (b.newapiAdminUserId) kvSet(db, "settings.newapiAdminUserId", b.newapiAdminUserId);
     if (b.telegramBotToken !== undefined) b.telegramBotToken ? hub.secrets.set("settings", "telegramBotToken", b.telegramBotToken) : hub.secrets.delete("settings", "telegramBotToken");
     if (b.telegramChatId !== undefined) kvSet(db, "settings.telegramChatId", b.telegramChatId);
-    audit(db, actor(req), "settings.update", { fields: Object.keys(b) });
-    return settings.view();
+    const after = settings.view();
+    // Secrets are never written to the log; only whether this save set a value or cleared it.
+    const secrets = ["newapiAdminToken", "telegramBotToken"] as const;
+    const changes: Record<string, unknown> = changesOf(before, after, Object.keys(b).filter((k) => !(secrets as readonly string[]).includes(k)));
+    for (const k of secrets) if (b[k] !== undefined) changes[k] = { secret: true, to: !!b[k] };
+    audit(db, actor(req), "settings.update", { fields: Object.keys(b), changes });
+    return after;
   });
 
   // ── notifications ────────────────────────────────────────
@@ -856,6 +876,11 @@ export function registerRoutes(hub: Hub): void {
     };
   });
   app.post("/api/system/backup", async () => ({ file: path.basename(await hub.backup()) }));
+  app.get("/api/audit/:id", async (req) => {
+    const row = db.prepare("SELECT * FROM audit WHERE id = ?").get(Number(id(req))) as { action: string; detail: string | null } | undefined;
+    if (!row) throw new HttpError(404, "记录不存在");
+    return { ...row, refs: auditRefs(db, row) };
+  });
   app.get("/api/audit", async (req) => {
     const q = z.object({ limit: z.coerce.number().int().min(1).max(1000).default(300), before: z.coerce.number().int().optional() }).parse(req.query);
     return q.before

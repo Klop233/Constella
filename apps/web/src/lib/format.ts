@@ -17,6 +17,12 @@ export function clock(iso: string | null | undefined): string {
   return d.toLocaleString("zh-CN", today ? { hour: "2-digit", minute: "2-digit" } : { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 
+/** Date and time down to the second, for where "3 hours ago" isn't enough (audit entries). */
+export function fullTime(iso: string | null | undefined): string {
+  if (!iso) return "";
+  return new Date(iso).toLocaleString("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
+}
+
 export const STATUS_TEXT: Record<RunStatus, string> = {
   queued: "排队中",
   running: "进行中",

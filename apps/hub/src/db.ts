@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { requestSource } from "./request-source.ts";
 
 const MIGRATIONS: string[] = [
   `
@@ -178,11 +179,18 @@ export function kvSet(db: Db, key: string, value: string): void {
   db.prepare("INSERT INTO kv (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(key, value);
 }
 
+/**
+ * Records who did what. Entries written while an HTTP request is being handled also get `via` (the request's
+ * device and IP) in their detail, so the owner can tell which device an action came from.
+ */
 export function audit(db: Db, actor: string, action: string, detail?: unknown): void {
+  const via = requestSource.getStore();
+  const plain = detail === undefined || (typeof detail === "object" && detail !== null && !Array.isArray(detail));
+  const body = via && plain ? { ...(detail as object | undefined), via } : detail;
   db.prepare("INSERT INTO audit (ts, actor, action, detail) VALUES (?, ?, ?, ?)").run(
     new Date().toISOString(),
     actor,
     action,
-    detail === undefined ? null : JSON.stringify(detail),
+    body === undefined ? null : JSON.stringify(body),
   );
 }
