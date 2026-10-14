@@ -1,4 +1,4 @@
-import { Brain, Check, ChevronRight, CircleSlash, CircleX, Eye, FileEdit, Globe, Hand, Loader2, MessageCircleQuestion, Monitor, RotateCw, ShieldCheck, ShieldX, Stethoscope, Terminal, ThumbsDown, ThumbsUp, Wrench, X } from "lucide-react";
+import { Brain, Check, ChevronRight, CircleSlash, CircleX, Eye, FileEdit, Globe, Hand, Layers, Loader2, MessageCircleQuestion, Monitor, Paperclip, RotateCw, ShieldCheck, ShieldX, Stethoscope, Terminal, ThumbsDown, ThumbsUp, Wrench, X } from "lucide-react";
 import { memo, useMemo, useState, type ReactNode } from "react";
 import { Link } from "react-router";
 import { api } from "../lib/api";
@@ -7,6 +7,7 @@ import { clock, duration, STATUS_TEXT, tokens } from "../lib/format";
 import { useModelLabel } from "../lib/models";
 import type { AgentEvent, Approval, DecisionOption, Incident, Run } from "../lib/types";
 import { ApprovalCard } from "./ApprovalCard";
+import { ArtifactCard, type DeliveredArtifact } from "./ArtifactCard";
 import { DesktopHelpCard, type DesktopHelp } from "./DesktopHelpCard";
 import { IncidentCard, IncidentStatus } from "./IncidentCard";
 import { Markdown } from "./Markdown";
@@ -19,6 +20,7 @@ type Item =
   | { kind: "approval"; id: string; approvalId: string; summary: string; question: boolean; options?: DecisionOption[]; resolved?: "approve" | "deny"; by?: "user" | "policy"; answer?: string }
   | { kind: "desktop"; id: string; desktopId: string; action: string }
   | ({ kind: "help"; id: string } & DesktopHelp)
+  | { kind: "artifact"; id: string; artifact: DeliveredArtifact }
   | { kind: "notice"; id: string; notice: "recovery" | "supervisor" | "incident"; text: string; incidentId?: string };
 
 const STEER_PREFIX = "［追加指示］";
@@ -108,6 +110,9 @@ export function buildItems(events: AgentEvent[]): { items: Item[]; usage: Usage 
       case "desktop.action":
         items.push({ kind: "desktop", id: ev.id, desktopId: ev.desktopId, action: ev.action });
         break;
+      case "artifact":
+        items.push({ kind: "artifact", id: ev.id, artifact: { artifactId: ev.artifactId, version: ev.version, title: ev.title, kind: ev.kind, filename: ev.filename, size: ev.size, note: ev.note } });
+        break;
       case "desktop.help": {
         const h = byId.get(`help:${ev.helpId}`) as Extract<Item, { kind: "help" }> | undefined;
         if (h) Object.assign(h, { state: ev.state, note: ev.note ?? h.note });
@@ -136,6 +141,8 @@ export function buildItems(events: AgentEvent[]): { items: Item[]; usage: Usage 
 function toolTitle(name: string, input: any): { icon: typeof Terminal; title: string } {
   if (name === "shell") return { icon: Terminal, title: String(input?.command ?? "").replace(/^\/bin\/bash -lc /, "").replace(/^['"]|['"]$/g, "") };
   if (name === "edit") return { icon: FileEdit, title: `修改 ${(input?.files ?? []).map((f: string) => f.split("/").pop()).join("、")}` };
+  if (name === "constella.send_file") return { icon: Paperclip, title: `发送文件 ${input?.title ?? String(input?.path ?? "").split("/").pop()}` };
+  if (name.startsWith("constella.artifact_")) return { icon: Layers, title: `${name.replace("constella.", "")} ${input?.title ?? input?.artifact_id ?? input?.query ?? ""}` };
   if (name.startsWith("constella.browser")) return { icon: Globe, title: `${name.replace("constella.", "")} ${input?.url ?? input?.name ?? input?.text ?? ""}` };
   if (name.startsWith("constella.desktop")) return { icon: Monitor, title: `${name.replace("constella.", "")} ${input?.type ?? input?.reason ?? ""}` };
   if (name.startsWith("constella.")) return { icon: Wrench, title: name.replace("constella.", "") };
@@ -148,11 +155,15 @@ type Block = Exclude<Item, Step> | ApprovalItem | { kind: "steps"; id: string; s
 
 /**
  * Collapses each run of consecutive tool calls / reasoning / desktop actions / settled approvals into one block.
- * A pending approval stays its own block so its card can interrupt the flow.
+ * A pending approval stays its own block so its card can interrupt the flow; a delivered artifact's card replaces its tool call.
  */
+/** Tools whose successful call shows up as an artifact card; the card stands in for the step. */
+const DELIVERY_TOOLS = new Set(["constella.send_file", "constella.artifact_save", "constella.artifact_edit"]);
+
 function groupSteps(items: Item[], pending: Set<string>): Block[] {
   const out: Block[] = [];
   for (const it of items) {
+    if (it.kind === "tool" && it.done && it.ok && DELIVERY_TOOLS.has(it.name)) continue;
     if (it.kind === "tool" || it.kind === "reasoning" || it.kind === "desktop" || (it.kind === "approval" && !it.question && !pending.has(it.approvalId))) {
       const last = out.at(-1);
       if (last?.kind === "steps") last.steps.push(it);
@@ -467,6 +478,8 @@ export function RunView({ run, approvals, incidents = [], onChanged }: { run: Ru
             if (it.incidentId) seen.add(it.incidentId);
             return <NoticeLine key={it.id} item={it} incident={it.incidentId ? reports.get(it.incidentId) : undefined} first={first} onChanged={onChanged} />;
           }
+          case "artifact":
+            return <ArtifactCard key={it.id} item={it.artifact} />;
           case "help":
             if (!finished && (it.state === "requested" || it.state === "taken")) return <DesktopHelpCard key={it.id} help={it} />;
             return (

@@ -3,6 +3,7 @@ import { ArrowUp, ImagePlus, Loader2, Paperclip, Plus, Square, X } from "lucide-
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router";
 import { AgentDot } from "../components/AgentBits";
+import { ConversationArtifacts } from "../components/ArtifactList";
 import { ContextMeter, EffortPicker, ModelPicker } from "../components/ChatControls";
 import { CONTINUE_TEXT, latestStats, RunView } from "../components/RunView";
 import { Button, Empty, Header, Loading, cx, toast } from "../components/ui";
@@ -246,6 +247,7 @@ export default function Chat() {
       <Header
         back
         backMobileOnly
+        right={conversationId && <ConversationArtifacts conversationId={conversationId} />}
         title={
           <span className="flex items-center gap-2 min-w-0">
             <span className="truncate">{data?.conversation.title ?? "新对话"}</span>

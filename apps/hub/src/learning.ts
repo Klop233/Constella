@@ -168,6 +168,9 @@ export function transcriptFor(run: Pick<RunRow, "prompt" | "status" | "error">, 
       case "approval.resolved":
         lines.push(`审批：${ev.decision === "approve" ? "批准" : "拒绝"}`);
         break;
+      case "artifact":
+        lines.push(`交付成果：「${ev.title}」${ev.version > 1 ? `第 ${ev.version} 版` : ""}（${ev.filename}）`);
+        break;
     }
   }
   if (run.error) lines.push(`错误：${run.error.slice(0, 500)}`);

@@ -7,6 +7,21 @@ export function cx(...c: (string | false | null | undefined)[]): string {
 }
 
 type Variant = "primary" | "secondary" | "soft" | "ghost" | "danger";
+type Size = "sm" | "md" | "lg";
+
+const BUTTON_STYLES: Record<Variant, string> = {
+  primary: "bg-accent-grad text-white hover:brightness-95 active:brightness-90 disabled:opacity-50",
+  secondary: "bg-surface border border-line hover:bg-surface-2 active:bg-surface-2 disabled:opacity-50",
+  soft: "bg-surface-2 hover:bg-[color-mix(in_oklab,var(--text)_12%,transparent)] disabled:opacity-50",
+  ghost: "hover:bg-surface-2 active:bg-surface-2 disabled:opacity-50",
+  danger: "bg-[var(--danger)] text-white active:opacity-85 disabled:opacity-50",
+};
+const BUTTON_SIZES: Record<Size, string> = { sm: "h-7 px-2.5 text-[13px] rounded-md", md: "h-8 px-3 text-[13.5px] rounded-md", lg: "h-10 px-4 text-sm rounded-lg" };
+
+/** Button looks for something that isn't a <button>, e.g. a download link. */
+export function buttonClass(variant: Variant = "secondary", size: Size = "md"): string {
+  return cx("inline-flex items-center justify-center gap-1.5 font-medium transition select-none", BUTTON_STYLES[variant], BUTTON_SIZES[size]);
+}
 
 export function Button({
   variant = "secondary",
@@ -15,20 +30,12 @@ export function Button({
   className,
   children,
   ...rest
-}: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: Variant; size?: "sm" | "md" | "lg"; loading?: boolean }) {
-  const styles: Record<Variant, string> = {
-    primary: "bg-accent-grad text-white hover:brightness-95 active:brightness-90 disabled:opacity-50",
-    secondary: "bg-surface border border-line hover:bg-surface-2 active:bg-surface-2 disabled:opacity-50",
-    soft: "bg-surface-2 hover:bg-[color-mix(in_oklab,var(--text)_12%,transparent)] disabled:opacity-50",
-    ghost: "hover:bg-surface-2 active:bg-surface-2 disabled:opacity-50",
-    danger: "bg-[var(--danger)] text-white active:opacity-85 disabled:opacity-50",
-  };
-  const sizes = { sm: "h-7 px-2.5 text-[13px] rounded-md", md: "h-8 px-3 text-[13.5px] rounded-md", lg: "h-10 px-4 text-sm rounded-lg" };
+}: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: Variant; size?: Size; loading?: boolean }) {
   return (
     <button
       {...rest}
       disabled={rest.disabled || loading}
-      className={cx("inline-flex items-center justify-center gap-1.5 font-medium transition select-none", styles[variant], sizes[size], className)}
+      className={cx(buttonClass(variant, size), className)}
     >
       {loading && <Loader2 className="size-4 animate-spin" />}
       {children}

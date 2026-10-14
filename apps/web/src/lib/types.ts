@@ -1,6 +1,6 @@
-import type { AgentEvent, DesktopLease, DesktopPolicy, RunStatus } from "@constella/protocol";
+import type { AgentEvent, ArtifactKind, DesktopLease, DesktopPolicy, RunStatus } from "@constella/protocol";
 
-export type { AgentEvent, DesktopLease, DesktopPolicy, RunStatus };
+export type { AgentEvent, ArtifactKind, DesktopLease, DesktopPolicy, RunStatus };
 
 /** Codex reasoning level ("low", "medium", "high", "xhigh", "max", …); which ones apply depends on the model. */
 export type Effort = string;
@@ -183,3 +183,39 @@ export interface Overview {
   /** Incidents waiting for the owner (open or being diagnosed). */
   incidents: Incident[];
 }
+
+/** A file or document an agent delivered; the fields describe its latest version. */
+export interface Artifact {
+  id: string;
+  agent_id: string;
+  conversation_id: string | null;
+  run_id: string | null;
+  title: string;
+  kind: ArtifactKind;
+  language: string | null;
+  filename: string;
+  mime: string;
+  size: number;
+  version: number;
+  created_at: string;
+  updated_at: string;
+  agent_name?: string | null;
+  agent_emoji?: string | null;
+  /** Null when the conversation it came from was deleted. */
+  conversation_title?: string | null;
+}
+
+export interface ArtifactVersion {
+  version: number;
+  run_id: string | null;
+  kind: ArtifactKind;
+  language: string | null;
+  filename: string;
+  mime: string;
+  size: number;
+  note: string | null;
+  author: "agent" | "user";
+  created_at: string;
+}
+
+export type ArtifactDetail = Artifact & { versions: ArtifactVersion[] };
