@@ -27,6 +27,8 @@ interface SettingsView {
   runTimeoutMinutes: number;
   runWatchdogMinutes: number;
   browserHtml: boolean;
+  emojiUse: "none" | "rare" | "some" | "free";
+  plainHeadings: boolean;
   approvalMode: "ask" | "smart" | "auto";
   agentIdleMinutes: number;
   desktopIdleMinutes: number;
@@ -125,7 +127,7 @@ export default function Settings() {
       {current.id === "models" && <ModelsSection s={s} save={save} />}
       {current.id === "instances" && <InstancesSection s={s} save={save} />}
       {current.id === "learning" && <LearningSection s={s} save={save} />}
-      {current.id === "appearance" && <AppearanceSection />}
+      {current.id === "appearance" && <AppearanceSection s={s} save={save} />}
       {current.id === "notify" && <NotifySection s={s} save={save} />}
       {current.id === "security" && <SecuritySection me={me.data} />}
       {current.id === "system" && <SystemSection s={s} save={save} />}
@@ -901,7 +903,7 @@ const SIDEBAR_ITEMS = [
   { to: "/reflect", label: "回顾" },
 ];
 
-function AppearanceSection() {
+function AppearanceSection({ s, save }: { s: SettingsView; save: Save }) {
   const a = useAppearance();
   return (
     <>
@@ -949,6 +951,38 @@ function AppearanceSection() {
               onChange={(font) => setAppearance({ font })}
             />
           </div>
+        </SettingRow>
+        <SettingRow wide title="表情符号" desc="扁平为 Twemoji，单色跟随文字颜色，系统用设备自带的。只对这台设备生效。">
+          <div className="w-60">
+            <Segmented
+              value={a.emoji}
+              options={[
+                { value: "flat", label: "扁平" },
+                { value: "mono", label: "单色" },
+                { value: "system", label: "系统" },
+              ]}
+              onChange={(emoji) => setAppearance({ emoji })}
+            />
+          </div>
+        </SettingRow>
+      </SettingGroup>
+      <SettingGroup title="agent 回复">
+        <SettingRow wide title="表情符号用量" desc="agent 在回复和成果里用 emoji 的多少。对所有设备生效，从下一轮回复开始。">
+          <div className="w-60">
+            <Segmented
+              value={s.emojiUse}
+              options={[
+                { value: "none", label: "不用" },
+                { value: "rare", label: "少用" },
+                { value: "some", label: "适度" },
+                { value: "free", label: "不限制" },
+              ]}
+              onChange={(v) => void save({ emojiUse: v })}
+            />
+          </div>
+        </SettingRow>
+        <SettingRow title="标题不用表情" desc="回复里的标题和成果、文档的标题不加 emoji；已有回复里标题上的 emoji 也不再显示。">
+          <Toggle checked={s.plainHeadings} onChange={(v) => void save({ plainHeadings: v }, v ? "标题不再使用表情" : "标题可以使用表情")} label="标题不用表情" />
         </SettingRow>
       </SettingGroup>
       <SettingGroup title="侧栏">
@@ -1419,6 +1453,9 @@ function OfficeGroup() {
           </SettingRow>
         </>
       )}
+      <SettingRow title="镜像地址" desc="从哪里下载编辑器镜像。Docker Hub 很慢时，可以换成能访问的镜像源地址；改动后需要重新下载。">
+        <ImageInput value={o.image} disabled={busy || o.pulling.active} onSave={(v) => void act(() => api.patch("/api/office", { image: v }), "已保存镜像地址")} />
+      </SettingRow>
       {(o.imagePresent || o.pulling.error) && (
         <SettingRow title="卸载" desc={`删除编辑器容器和镜像${o.imageSizeMb ? `，释放约 ${(o.imageSizeMb / 1024).toFixed(1)} GB 磁盘` : ""}。文档本身不受影响。`}>
           <Button
@@ -1442,6 +1479,19 @@ function OfficeGroup() {
         </SettingRow>
       )}
     </SettingGroup>
+  );
+}
+
+function ImageInput({ value, disabled, onSave }: { value: string; disabled: boolean; onSave: (v: string) => void }) {
+  const [v, setV] = useState(value);
+  useEffect(() => setV(value), [value]);
+  return (
+    <div className="flex items-center gap-2">
+      <input value={v} onChange={(e) => setV(e.target.value)} aria-label="镜像地址" spellCheck={false} className={cx(inputClass, "h-8 w-56 sm:w-72 font-mono text-[12.5px]")} />
+      <Button size="sm" variant="soft" disabled={disabled || !v.trim() || v.trim() === value} onClick={() => onSave(v.trim())}>
+        保存
+      </Button>
+    </div>
   );
 }
 

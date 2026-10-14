@@ -63,8 +63,9 @@ export class OfficeService {
   enabled(): boolean {
     return kvGet(this.#db, "settings.office.enabled") === "true";
   }
+  /** The image reference to install from: a Settings override, else the env default (a registry mirror works too). */
   image(): string {
-    return config.officeImage;
+    return kvGet(this.#db, "settings.office.image") || config.officeImage;
   }
   memoryMb(): number {
     const v = Number(kvGet(this.#db, "settings.office.memoryMb"));
@@ -75,7 +76,12 @@ export class OfficeService {
     const v = Number(raw);
     return raw !== undefined && IDLE_CHOICES.includes(v) ? v : 30;
   }
-  configure(p: { enabled?: boolean; memoryMb?: number; idleMinutes?: number }): void {
+  configure(p: { enabled?: boolean; memoryMb?: number; idleMinutes?: number; image?: string }): void {
+    if (p.image !== undefined) {
+      const img = p.image.trim();
+      if (img && !/^[a-zA-Z0-9][a-zA-Z0-9._\-/:@]{0,200}$/.test(img)) throw new Error("镜像地址格式不对");
+      kvSet(this.#db, "settings.office.image", img);
+    }
     if (p.memoryMb !== undefined) {
       if (!MEMORY_CHOICES.includes(p.memoryMb)) throw new Error("内存上限只能是 2 / 3 / 4 / 6 / 8 GB");
       kvSet(this.#db, "settings.office.memoryMb", String(p.memoryMb));
@@ -227,7 +233,7 @@ export class OfficeService {
       info = null;
     }
     // Limits or secret changed: recreate (nothing in the container needs keeping).
-    if (info && (info.HostConfig.Memory !== memory || !info.Config.Env?.includes(`JWT_SECRET=${this.secret()}`))) {
+    if (info && (info.Config.Image !== this.image() || info.HostConfig.Memory !== memory || !info.Config.Env?.includes(`JWT_SECRET=${this.secret()}`))) {
       await this.#docker.getContainer(OFFICE_CONTAINER).remove({ force: true });
       info = null;
     }

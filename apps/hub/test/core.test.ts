@@ -716,3 +716,22 @@ describe("settings", () => {
     expect(n.inbox()).toHaveLength(1);
   });
 });
+
+describe("emoji settings", () => {
+  it("turn into one instruction line, quiet by default", async () => {
+    const { Settings } = await import("../src/app.ts");
+    const db = openDb(":memory:");
+    const s = new Settings(db, null as never, null as never);
+    expect(s.emojiUse()).toBe("rare");
+    expect(s.emojiNote()).toContain("少用 emoji");
+    expect(s.emojiNote()).toContain("标题");
+    kvSet(db, "settings.plainHeadings", "false");
+    expect(s.emojiNote()).not.toContain("标题");
+    kvSet(db, "settings.emojiUse", "none");
+    kvSet(db, "settings.plainHeadings", "true");
+    expect(s.emojiNote()).toBe("不要使用 emoji。");
+    kvSet(db, "settings.emojiUse", "free");
+    kvSet(db, "settings.plainHeadings", "false");
+    expect(s.emojiNote()).toBe("");
+  });
+});

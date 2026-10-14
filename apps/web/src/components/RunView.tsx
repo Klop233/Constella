@@ -1,4 +1,5 @@
 import { Brain, Check, ChevronRight, CircleSlash, CircleX, Eye, FileEdit, Globe, Hand, Layers, Loader2, MessageCircleQuestion, Monitor, Paperclip, RotateCw, ShieldCheck, ShieldX, Stethoscope, Terminal, ThumbsDown, ThumbsUp, Wrench, X } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
 import { memo, useMemo, useState, type ReactNode } from "react";
 import { Link } from "react-router";
 import { api } from "../lib/api";
@@ -446,6 +447,8 @@ function TurnStart({ run }: { run: Run }) {
  * then a footer with how it ended, the model and usage, and feedback (revealed on hover where there is one).
  */
 export function RunView({ run, approvals, incidents = [], onChanged }: { run: Run; approvals: Approval[]; incidents?: Incident[]; onChanged: () => void }) {
+  // "标题不用表情" (on unless the owner turned it off) also hides emoji in headings of earlier replies.
+  const plainHeadings = useQuery({ queryKey: ["settings"], queryFn: () => api.get<{ plainHeadings: boolean }>("/api/settings") }).data?.plainHeadings !== false;
   const modelLabel = useModelLabel();
   const { items, usage } = useMemo(() => buildItems(run.events), [run.events]);
   const pending = useMemo(() => new Map(approvals.map((a) => [a.id, a])), [approvals]);
@@ -471,7 +474,7 @@ export function RunView({ run, approvals, incidents = [], onChanged }: { run: Ru
       {blocks.map((it, i) => {
         switch (it.kind) {
           case "message":
-            return it.user ? <UserBubble key={it.id} text={it.text} meta="追加指示" /> : <Markdown key={it.id} text={it.text} className="font-display text-sm" />;
+            return it.user ? <UserBubble key={it.id} text={it.text} meta="追加指示" /> : <Markdown key={it.id} text={it.text} className="font-display text-sm" noHeadingEmoji={plainHeadings} />;
           case "steps":
             return <StepGroup key={it.id} steps={it.steps} live={!finished && i === blocks.length - 1} ended={finished} />;
           case "notice": {

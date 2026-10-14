@@ -23,6 +23,7 @@
 | `data-mode` | `light` / `dark` | 已解析的明暗（「跟随系统」在 JS 里处理） |
 | `data-palette` | `nebula`（默认，紫粉）/ `clay`（陶土）/ `ocean`（海洋） | 配色 |
 | `data-font` | `sans`（默认）/ `serif` | 标题和回复正文的字体 |
+| `data-emoji` | `flat`（默认，Twemoji）/ `mono`（Noto Emoji 单色）/ `system` | 表情符号字形；字体只覆盖表情码位，排在每个字体栈最前（`--font-emoji`），数字、©、箭头、✓ 仍用正文字体 |
 
 | 变量 / 工具类 | 用途 |
 |---|---|
