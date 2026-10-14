@@ -166,7 +166,7 @@ export function registerRoutes(hub: Hub): void {
       .prepare(
         `SELECT c.*, a.name AS agent_name, a.emoji AS agent_emoji,
            (SELECT status FROM runs r WHERE r.conversation_id = c.id ORDER BY created_at DESC LIMIT 1) AS last_status
-         FROM conversations c JOIN agents a ON a.id = c.agent_id WHERE a.archived = 0 ORDER BY c.updated_at DESC LIMIT 30`,
+         FROM conversations c JOIN agents a ON a.id = c.agent_id WHERE a.archived = 0 AND c.archived_at IS NULL ORDER BY c.updated_at DESC LIMIT 30`,
       )
       .all();
     const unread = (db.prepare("SELECT COUNT(*) AS n FROM notifications WHERE read = 0").get() as { n: number }).n;
@@ -281,14 +281,15 @@ export function registerRoutes(hub: Hub): void {
   });
 
   // ── conversations & runs ─────────────────────────────────
-  app.get("/api/agents/:id/conversations", async (req) =>
-    db
+  app.get("/api/agents/:id/conversations", async (req) => {
+    const archived = (req.query as { archived?: string }).archived === "1";
+    return db
       .prepare(
         `SELECT c.*, (SELECT status FROM runs r WHERE r.conversation_id = c.id ORDER BY created_at DESC LIMIT 1) AS last_status
-         FROM conversations c WHERE agent_id = ? ORDER BY updated_at DESC LIMIT 100`,
+         FROM conversations c WHERE agent_id = ? AND archived_at IS ${archived ? "NOT NULL" : "NULL"} ORDER BY updated_at DESC LIMIT 100`,
       )
-      .all(id(req)),
-  );
+      .all(id(req));
+  });
   const RUN_TIMEOUTS = [0, 30, 60, 120, 240, 480];
   const ModelPatch = {
     model: z.string().min(1).max(200).nullable().optional(),
@@ -347,8 +348,9 @@ export function registerRoutes(hub: Hub): void {
     );
   });
   app.patch("/api/conversations/:id", async (req) => {
-    const b = z.object({ title: z.string().min(1).max(60).optional(), ...ModelPatch }).parse(req.body);
+    const b = z.object({ title: z.string().min(1).max(60).optional(), archived: z.boolean().optional(), ...ModelPatch }).parse(req.body);
     checkModel(b.model);
+    if (b.archived !== undefined) db.prepare("UPDATE conversations SET archived_at = ? WHERE id = ?").run(b.archived ? new Date().toISOString() : null, id(req));
     if (b.title) db.prepare("UPDATE conversations SET title = ? WHERE id = ?").run(b.title, id(req));
     if (b.model !== undefined || b.effort !== undefined) runs.setConversationModel(id(req), b);
     if (b.runTimeoutMinutes !== undefined) runs.setConversationTimeout(id(req), b.runTimeoutMinutes);
