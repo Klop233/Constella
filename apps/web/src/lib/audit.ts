@@ -176,8 +176,6 @@ const VALUE_TEXT: Record<string, Record<string, string>> = {
   "options.idleAction": { pause: "暂停", stop: "停止", none: "一直运行" },
   androidBackend: { auto: "自动", redroid: "Redroid", emulator: "模拟器", off: "关闭" },
   "options.backend": { redroid: "Redroid", emulator: "模拟器" },
-  effort: { low: "低", medium: "中", high: "高", xhigh: "极高" },
-  defaultEffort: { low: "低", medium: "中", high: "高", xhigh: "极高" },
 };
 
 export const APPROVAL_KIND: Record<string, string> = {

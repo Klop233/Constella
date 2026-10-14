@@ -1,11 +1,11 @@
 import type { ModelEntry } from "./models";
 import type { Effort } from "./types";
 
-const LABELS: Record<string, string> = { none: "关闭", minimal: "最低", low: "低", medium: "中", high: "高", xhigh: "极高", max: "最高", ultra: "超强" };
 /** Reasoning levels from weakest to strongest (the hub's EFFORT_ORDER). */
-const ORDER = Object.keys(LABELS);
+const ORDER = ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"];
 
-export const effortLabel = (e: Effort) => LABELS[e] ?? e;
+/** Levels are shown under their English source names, as the models define them. */
+export const effortLabel = (e: Effort): string => e;
 
 /** The levels a model supports; the hub answers for every model it lists, so this only fills in while loading. */
 export function modelEfforts(models: ModelEntry[] | undefined, ref: string): Pick<ModelEntry, "efforts" | "defaultEffort"> {
