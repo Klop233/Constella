@@ -23,7 +23,8 @@ export const KIND_LABEL: Record<ArtifactKind, string> = {
   file: "文件",
 };
 
-const ARCHIVE = /\.(zip|tar|gz|tgz|7z|rar)$/i;
+/** Same set as the hub's isArchiveName: files whose contents the viewer can list. */
+export const ARCHIVE = /\.(zip|jar|war|apk|tar|tgz|tbz2?|txz|tzst|7z|rar|r\d\d|cab|iso|wim|arj|lzh|lha|cpio|deb|rpm|gz|bz2|xz|zst|lzma|z)$/i;
 
 export function kindIcon(kind: ArtifactKind, filename = ""): LucideIcon {
   if (kind === "file" && ARCHIVE.test(filename)) return FileArchive;

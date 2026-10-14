@@ -117,6 +117,13 @@ const TYPES: Record<string, TypeInfo> = {
   "7z": { kind: "file", mime: "application/x-7z-compressed" },
   rar: { kind: "file", mime: "application/vnd.rar" },
   epub: { kind: "file", mime: "application/epub+zip" },
+  bz2: { kind: "file", mime: "application/x-bzip2" },
+  xz: { kind: "file", mime: "application/x-xz" },
+  zst: { kind: "file", mime: "application/zstd" },
+  tbz2: { kind: "file", mime: "application/x-bzip2" },
+  txz: { kind: "file", mime: "application/x-xz" },
+  cab: { kind: "file", mime: "application/vnd.ms-cab-compressed" },
+  iso: { kind: "file", mime: "application/x-iso9660-image" },
 };
 
 /** Types the browser renders by content: only stored as such when the bytes agree with the extension. */
@@ -439,6 +446,35 @@ export class Artifacts {
         filename,
         size: bytes.length,
         sha256: createHash("sha256").update(bytes).digest("hex"),
+        note: input.note,
+        author: input.author,
+        sourcePath: null,
+        tmp,
+      });
+    } catch (err) {
+      fs.rmSync(tmp, { force: true });
+      throw err;
+    }
+  }
+
+  /** Replace the bytes of an existing file artifact (an edited Word / Excel / PowerPoint file) as its next version. */
+  saveFile(input: { artifactId: string; bytes: Buffer; note?: string | null; author: "agent" | "user" }): ArtifactRow {
+    const existing = this.get(input.artifactId);
+    if (!existing) throw new Error("成果不存在");
+    if (input.bytes.length > MAX_ARTIFACT_FILE) throw new Error(`文件太大（${mb(input.bytes.length)}），最大 ${mb(MAX_ARTIFACT_FILE)}`);
+    const tmp = this.#tmp(existing.id);
+    fs.writeFileSync(tmp, input.bytes, { flag: "wx" });
+    try {
+      return this.#commit({
+        existing,
+        agentId: existing.agent_id,
+        runId: null,
+        conversationId: null,
+        title: existing.title,
+        type: { kind: existing.kind, mime: existing.mime, language: existing.language ?? undefined },
+        filename: existing.filename,
+        size: input.bytes.length,
+        sha256: createHash("sha256").update(input.bytes).digest("hex"),
         note: input.note,
         author: input.author,
         sourcePath: null,

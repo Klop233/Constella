@@ -278,10 +278,10 @@ const APPROVAL_DESC: Record<SettingsView["approvalMode"], string> = {
 
 const EFFORTS: { value: Effort | "default"; label: string }[] = [
   { value: "default", label: "默认" },
-  { value: "low", label: "low" },
-  { value: "medium", label: "medium" },
-  { value: "high", label: "high" },
-  { value: "xhigh", label: "xhigh" },
+  { value: "low", label: "Low" },
+  { value: "medium", label: "Medium" },
+  { value: "high", label: "High" },
+  { value: "xhigh", label: "xHigh" },
 ];
 
 function ModelsSection({ s, save }: { s: SettingsView; save: Save }) {

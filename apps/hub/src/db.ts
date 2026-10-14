@@ -156,6 +156,8 @@ export function openDb(file: string): Db {
   // Per-conversation single-turn time limit (NULL = follow the setting, 0 = no limit); added like ENSURE for the same reason.
   const cols = db.prepare("PRAGMA table_info(conversations)").all() as { name: string }[];
   if (!cols.some((c) => c.name === "run_timeout_minutes")) db.exec("ALTER TABLE conversations ADD COLUMN run_timeout_minutes INTEGER");
+  // Archived conversations leave the sidebar and the default list but stay reachable from the agent page.
+  if (!cols.some((c) => c.name === "archived_at")) db.exec("ALTER TABLE conversations ADD COLUMN archived_at TEXT");
   ensureInstanceKinds(db);
   return db;
 }

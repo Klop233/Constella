@@ -171,6 +171,8 @@ const VALUE_TEXT: Record<string, Record<string, string>> = {
   approvalPolicy: { auto: "自动执行（容器内）", ask: "每条都问我" },
   modelNameFormat: { paren: "model (provider)", dash: "model - provider" },
   "desktopPolicy.mode": { none: "不用", on_demand: "按需借用", fixed: "固定一台" },
+  effort: { low: "Low", medium: "Medium", high: "High", xhigh: "xHigh" },
+  defaultEffort: { low: "Low", medium: "Medium", high: "High", xhigh: "xHigh" },
   kind: { browser: "浏览器", desktop: "Linux 桌面", android: "安卓" },
   desktopIdleAction: { pause: "暂停", stop: "停止", none: "一直运行" },
   "options.idleAction": { pause: "暂停", stop: "停止", none: "一直运行" },

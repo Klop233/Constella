@@ -84,21 +84,65 @@ function AgentArtifacts({ agentId }: { agentId: string }) {
 
 function Chats({ agentId }: { agentId: string }) {
   const nav = useNavigate();
-  const q = useQuery({ queryKey: ["conversations", agentId], queryFn: () => api.get<Conversation[]>(`/api/agents/${agentId}/conversations`) });
-  if (q.isLoading) return <Loading />;
-  if (!q.data?.length) return <Empty title="还没有对话" />;
+  const qc = useQueryClient();
+  const [view, setView] = useState<"active" | "archived">("active");
+  const archived = view === "archived";
+  const q = useQuery({
+    queryKey: ["conversations", agentId, view],
+    queryFn: () => api.get<Conversation[]>(`/api/agents/${agentId}/conversations${archived ? "?archived=1" : ""}`),
+  });
+  const restore = async (c: Conversation) => {
+    try {
+      await api.patch(`/api/conversations/${c.id}`, { archived: false });
+      toast("已取消归档");
+      void qc.invalidateQueries({ queryKey: ["conversations"] });
+      void qc.invalidateQueries({ queryKey: ["overview"] });
+    } catch (err) {
+      toast(err instanceof Error ? err.message : String(err), "danger");
+    }
+  };
   return (
-    <Card className="divide-y divide-[var(--border)] overflow-hidden mb-6">
-      {q.data.map((c) => (
-        <Row
-          key={c.id}
-          title={c.title}
-          sub={`${timeAgo(c.updated_at)}${c.source === "schedule" ? " · 定时任务" : ""}`}
-          right={c.last_status && c.last_status !== "done" ? <Badge tone={statusTone(c.last_status)}>{STATUS_TEXT[c.last_status]}</Badge> : undefined}
-          onClick={() => nav(`/c/${c.id}`)}
-        />
-      ))}
-    </Card>
+    <div className="space-y-3 mb-6">
+      <Segmented
+        value={view}
+        onChange={setView}
+        options={[
+          { value: "active", label: "进行中" },
+          { value: "archived", label: "已归档" },
+        ]}
+      />
+      {q.isLoading ? (
+        <Loading />
+      ) : !q.data?.length ? (
+        <Empty title={archived ? "没有归档的对话" : "还没有对话"} hint={archived ? "在对话里点归档图标，它就会收到这里" : undefined} />
+      ) : (
+        <Card className="divide-y divide-[var(--border)] overflow-hidden">
+          {q.data.map((c) => (
+            <Row
+              key={c.id}
+              title={c.title}
+              sub={`${timeAgo(c.updated_at)}${c.source === "schedule" ? " · 定时任务" : ""}`}
+              right={
+                archived ? (
+                  <button
+                    className="text-xs text-muted hover:text-[var(--text)]"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void restore(c);
+                    }}
+                  >
+                    取消归档
+                  </button>
+                ) : c.last_status && c.last_status !== "done" ? (
+                  <Badge tone={statusTone(c.last_status)}>{STATUS_TEXT[c.last_status]}</Badge>
+                ) : undefined
+              }
+              onClick={() => nav(`/c/${c.id}`)}
+            />
+          ))}
+        </Card>
+      )}
+    </div>
   );
 }
 

@@ -4,6 +4,8 @@ import type { FastifyReply, FastifyRequest } from "fastify";
 import { DesktopKind, DesktopOptions, IdleAction } from "@constella/protocol";
 import { z } from "zod";
 import { AgentInput, TEMPLATES } from "./agents.ts";
+import { isArchiveName, listArchive } from "./archive.ts";
+import { editOffice, officeKind, readOffice } from "./office.ts";
 import { MAX_ARTIFACT_TEXT, type ArtifactVersionRow } from "./artifacts.ts";
 import type { Hub } from "./app.ts";
 import { EffortSchema } from "./catalog.ts";
@@ -166,7 +168,7 @@ export function registerRoutes(hub: Hub): void {
       .prepare(
         `SELECT c.*, a.name AS agent_name, a.emoji AS agent_emoji,
            (SELECT status FROM runs r WHERE r.conversation_id = c.id ORDER BY created_at DESC LIMIT 1) AS last_status
-         FROM conversations c JOIN agents a ON a.id = c.agent_id WHERE a.archived = 0 ORDER BY c.updated_at DESC LIMIT 30`,
+         FROM conversations c JOIN agents a ON a.id = c.agent_id WHERE a.archived = 0 AND c.archived_at IS NULL ORDER BY c.updated_at DESC LIMIT 30`,
       )
       .all();
     const unread = (db.prepare("SELECT COUNT(*) AS n FROM notifications WHERE read = 0").get() as { n: number }).n;
@@ -281,14 +283,15 @@ export function registerRoutes(hub: Hub): void {
   });
 
   // ── conversations & runs ─────────────────────────────────
-  app.get("/api/agents/:id/conversations", async (req) =>
-    db
+  app.get("/api/agents/:id/conversations", async (req) => {
+    const archived = (req.query as { archived?: string }).archived === "1";
+    return db
       .prepare(
         `SELECT c.*, (SELECT status FROM runs r WHERE r.conversation_id = c.id ORDER BY created_at DESC LIMIT 1) AS last_status
-         FROM conversations c WHERE agent_id = ? ORDER BY updated_at DESC LIMIT 100`,
+         FROM conversations c WHERE agent_id = ? AND archived_at IS ${archived ? "NOT NULL" : "NULL"} ORDER BY updated_at DESC LIMIT 100`,
       )
-      .all(id(req)),
-  );
+      .all(id(req));
+  });
   const RUN_TIMEOUTS = [0, 30, 60, 120, 240, 480];
   const ModelPatch = {
     model: z.string().min(1).max(200).nullable().optional(),
@@ -347,8 +350,9 @@ export function registerRoutes(hub: Hub): void {
     );
   });
   app.patch("/api/conversations/:id", async (req) => {
-    const b = z.object({ title: z.string().min(1).max(60).optional(), ...ModelPatch }).parse(req.body);
+    const b = z.object({ title: z.string().min(1).max(60).optional(), archived: z.boolean().optional(), ...ModelPatch }).parse(req.body);
     checkModel(b.model);
+    if (b.archived !== undefined) db.prepare("UPDATE conversations SET archived_at = ? WHERE id = ?").run(b.archived ? new Date().toISOString() : null, id(req));
     if (b.title) db.prepare("UPDATE conversations SET title = ? WHERE id = ?").run(b.title, id(req));
     if (b.model !== undefined || b.effort !== undefined) runs.setConversationModel(id(req), b);
     if (b.runTimeoutMinutes !== undefined) runs.setConversationTimeout(id(req), b.runTimeoutMinutes);
@@ -410,6 +414,63 @@ export function registerRoutes(hub: Hub): void {
   app.get("/api/artifacts/:id/content", async (req) => {
     const a = artifactOr404(id(req));
     return artifacts.text(a.id, VersionQuery.parse(req.query).v);
+  });
+  // What is inside a compressed file (zip, rar, 7z, tar.* …), listed without extracting.
+  app.get("/api/artifacts/:id/archive", async (req, reply) => {
+    const q = VersionQuery.parse(req.query);
+    const a = artifactOr404(id(req));
+    const v = artifacts.version(a.id, q.v);
+    if (v.kind !== "file" || !isArchiveName(v.filename)) throw new HttpError(400, "这不是压缩包");
+    const listing = await listArchive(artifacts.filePath(a.id, v.version), v.filename).catch((err) => {
+      throw new HttpError(422, err instanceof Error ? err.message : String(err));
+    });
+    reply.header("Cache-Control", q.v ? "private, max-age=31536000, immutable" : "private, no-cache");
+    return listing;
+  });
+  // Word / Excel / PowerPoint: read the text, and save text changes back as a new version.
+  const officeOf = (artifactId: string, version?: number) => {
+    const a = artifactOr404(artifactId);
+    const v = artifacts.version(a.id, version);
+    const kind = v.kind === "file" ? officeKind(v.filename) : null;
+    if (!kind) throw new HttpError(400, "这不是 Word / Excel / PowerPoint 文件");
+    return { a, v, kind, bytes: fs.readFileSync(artifacts.filePath(a.id, v.version)) };
+  };
+  app.get("/api/artifacts/:id/office", async (req) => {
+    const q = VersionQuery.parse(req.query);
+    const { kind, bytes } = officeOf(id(req), q.v);
+    try {
+      return readOffice(kind, bytes);
+    } catch (err) {
+      throw new HttpError(422, err instanceof Error ? err.message : String(err));
+    }
+  });
+  app.post("/api/artifacts/:id/office", { bodyLimit: 3 * 1024 * 1024 }, async (req) => {
+    const b = z
+      .object({
+        base: z.number().int().min(1),
+        note: z.string().trim().max(300).optional(),
+        edits: z
+          .array(
+            z.union([
+              z.object({ type: z.literal("text"), group: z.number().int().min(0), index: z.number().int().min(0), text: z.string().max(20000) }),
+              z.object({ type: z.literal("cell"), sheet: z.number().int().min(0), row: z.number().int().min(1), col: z.number().int().min(1), value: z.string().max(20000) }),
+            ]),
+          )
+          .min(1)
+          .max(5000),
+      })
+      .parse(req.body);
+    const { a, kind, bytes } = officeOf(id(req));
+    if (b.base !== a.version) throw new HttpError(409, "这个文件已经有了新版本，刷新后再改");
+    let out: Uint8Array;
+    try {
+      out = editOffice(kind, bytes, b.edits);
+    } catch (err) {
+      throw new HttpError(422, err instanceof Error ? err.message : String(err));
+    }
+    const saved = artifacts.saveFile({ artifactId: a.id, bytes: Buffer.from(out), note: b.note ?? `修改了 ${b.edits.length} 处`, author: "user" });
+    audit(db, actor(req), "artifact.edit", { id: saved.id, version: saved.version });
+    return saved;
   });
   // The file itself. Only types the browser can't run as a page are served inline; text (HTML included) is
   // served as plain text and everything else as a download, all sandboxed, so a delivered file can never act

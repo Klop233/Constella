@@ -16,7 +16,7 @@ COPY apps/web apps/web
 RUN pnpm --filter @constella/web build && pnpm prune --prod 2>/dev/null || true
 
 FROM node:22-bookworm-slim
-RUN apt-get update && apt-get install -y --no-install-recommends git tar ca-certificates curl \
+RUN apt-get update && apt-get install -y --no-install-recommends git tar ca-certificates curl p7zip-full xz-utils bzip2 zstd \
  && rm -rf /var/lib/apt/lists/*
 COPY --from=build /app /app
 WORKDIR /app/apps/hub

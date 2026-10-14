@@ -1,9 +1,9 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, ChevronDown, ChevronLeft, Copy, Download, ExternalLink, MessageSquare, MoreHorizontal, Pencil, RotateCcw, Trash2, X } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, Folder, File as FileIcon, Lock, ChevronLeft, Copy, Download, ExternalLink, MessageSquare, MoreHorizontal, Pencil, RotateCcw, Trash2, X } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router";
 import { api, ApiError } from "../lib/api";
-import { bytes, fileUrl, isTextKind, KIND_LABEL, kindIcon, RENDERED_KINDS, useArtifactPanel } from "../lib/artifacts";
+import { ARCHIVE, bytes, fileUrl, isTextKind, KIND_LABEL, kindIcon, RENDERED_KINDS, useArtifactPanel } from "../lib/artifacts";
 import { timeAgo } from "../lib/format";
 import type { ArtifactDetail, ArtifactVersion } from "../lib/types";
 import { Markdown } from "./Markdown";
@@ -13,6 +13,7 @@ import { Badge, Button, buttonClass, Empty, IconButton, inputClass, Loading, Men
 const PANEL_W = "min(50vw, 760px)";
 const coarsePointer = window.matchMedia("(pointer: coarse)").matches;
 const CSV_ROWS = 1000;
+const OFFICE = /\.(docx|xlsx|pptx)$/i;
 
 /** The artifact named in the URL, in a side panel (full screen on phones). */
 export default function ArtifactViewer() {
@@ -280,7 +281,7 @@ function Panel({ id, version, onVersion, onClose }: { id: string; version?: numb
               className="block w-full h-full resize-none bg-transparent p-4 font-mono text-[12.5px] leading-5 outline-none"
             />
           ) : (
-            <Body id={id} ver={ver} mode={rendered ? mode : "source"} text={content.data} loading={content.isLoading} error={content.error} />
+            <Body id={id} ver={ver} latest={latest} baseVersion={a.version} onSaved={onVersion} mode={rendered ? mode : "source"} text={content.data} loading={content.isLoading} error={content.error} />
           )
         ) : null}
       </div>
@@ -326,7 +327,7 @@ function VersionPicker({ versions, current, onPick }: { versions: ArtifactVersio
   );
 }
 
-function Body({ id, ver, mode, text, loading, error }: { id: string; ver: ArtifactVersion; mode: "preview" | "source"; text?: { text: string; truncated: boolean }; loading: boolean; error: Error | null }) {
+function Body({ id, ver, latest, baseVersion, onSaved, mode, text, loading, error }: { id: string; ver: ArtifactVersion; latest: boolean; baseVersion: number; onSaved: (v: number) => void; mode: "preview" | "source"; text?: { text: string; truncated: boolean }; loading: boolean; error: Error | null }) {
   const url = fileUrl(id, ver.version);
   const download = (
     <a href={fileUrl(id, ver.version, true)} download={ver.filename} className={buttonClass("secondary", "sm")}>
@@ -368,6 +369,8 @@ function Body({ id, ver, mode, text, loading, error }: { id: string; ver: Artifa
         <iframe title={ver.filename} src={url} className="block w-full h-full border-0" />
       );
     case "file":
+      if (OFFICE.test(ver.filename)) return <OfficeView id={id} ver={ver} latest={latest} baseVersion={baseVersion} onSaved={onSaved} download={download} />;
+      if (ARCHIVE.test(ver.filename)) return <ArchiveView id={id} ver={ver} download={download} />;
       return <Empty title={ver.filename} hint={`${bytes(ver.size)} · 这类文件不能在线预览，下载后用对应的软件打开`} action={download} />;
   }
   if (loading) return <Loading />;
@@ -402,6 +405,279 @@ function Body({ id, ver, mode, text, loading, error }: { id: string; ver: Artifa
       return <CsvTable text={text.text} tsv={/\.tsv$/i.test(ver.filename)} />;
   }
   return null;
+}
+
+interface OfficeCell {
+  v: string;
+  f?: boolean;
+}
+interface OfficeData {
+  kind: "docx" | "xlsx" | "pptx";
+  groups: { title: string; paragraphs: string[] }[];
+  sheets: { name: string; rows: (OfficeCell | null)[][]; truncated: boolean }[];
+}
+
+/** Word / PowerPoint text and Excel cells, editable in place; saved as a new version with the file's formatting kept. */
+function OfficeView({ id, ver, latest, baseVersion, onSaved, download }: { id: string; ver: ArtifactVersion; latest: boolean; baseVersion: number; onSaved: (v: number) => void; download: ReactNode }) {
+  const qc = useQueryClient();
+  const q = useQuery({ queryKey: ["artifact-office", id, ver.version], queryFn: () => api.get<OfficeData>(`/api/artifacts/${id}/office?v=${ver.version}`), retry: false, staleTime: Infinity });
+  // Pending edits keyed by position; only values that differ from the file are kept.
+  const [edits, setEdits] = useState<Map<string, string>>(new Map());
+  const [sheet, setSheet] = useState(0);
+  const [busy, setBusy] = useState(false);
+  const d = q.data;
+  if (q.isLoading) return <Loading />;
+  if (q.error || !d) return <Empty title={ver.filename} hint={q.error?.message ?? "读不出这个文件"} action={download} />;
+  const canEdit = latest;
+  const set = (key: string, orig: string, value: string) =>
+    setEdits((m) => {
+      const n = new Map(m);
+      if (value === orig) n.delete(key);
+      else n.set(key, value);
+      return n;
+    });
+  const save = async () => {
+    setBusy(true);
+    try {
+      const list = [...edits].map(([k, value]) => {
+        const p = k.split(":").map(Number) as [number, number, number?];
+        return d.kind === "xlsx" ? { type: "cell", sheet: p[0], row: p[1], col: p[2]!, value } : { type: "text", group: p[0], index: p[1], text: value };
+      });
+      const next = await api.post<{ version: number }>(`/api/artifacts/${id}/office`, { base: baseVersion, edits: list });
+      setEdits(new Map());
+      void qc.invalidateQueries({ queryKey: ["artifact", id] });
+      void qc.invalidateQueries({ queryKey: ["artifacts"] });
+      onSaved(next.version);
+      toast(`已保存为第 ${next.version} 版`);
+    } catch (err) {
+      toast(err instanceof Error ? err.message : String(err), "danger");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const bar = (
+    <div className="sticky top-0 z-10 bg-surface flex items-center gap-2 px-3 py-2 border-b border-line">
+      <span className="flex-1 min-w-0 truncate text-xs text-muted">
+        {!canEdit ? "旧版本只能看，要改请先回到最新版" : edits.size ? `${edits.size} 处未保存的修改` : "直接修改文字或单元格，保存后生成新版本，原有格式保持不变"}
+      </span>
+      {edits.size > 0 && (
+        <Button size="sm" variant="ghost" onClick={() => setEdits(new Map())}>
+          放弃
+        </Button>
+      )}
+      <Button size="sm" variant="primary" loading={busy} disabled={!edits.size} onClick={save}>
+        <Check className="size-3.5" /> 保存
+      </Button>
+      {download}
+    </div>
+  );
+  if (d.kind === "xlsx") {
+    const s = d.sheets[sheet] ?? d.sheets[0];
+    if (!s) return <Empty title="没有工作表" action={download} />;
+    const si = d.sheets.indexOf(s);
+    const cols = Math.max(4, ...s.rows.map((r) => r.length)) + 2;
+    const rows = Math.max(10, s.rows.length + 3);
+    return (
+      <div className="min-w-0">
+        {bar}
+        <div className="min-w-max">
+          <table className="text-[12.5px] border-collapse">
+            <thead className="sticky top-[49px] bg-surface z-[1]">
+              <tr>
+                <th className="w-10 border-b border-r border-line" />
+                {Array.from({ length: cols }, (_, c) => (
+                  <th key={c} className="font-medium text-muted px-2 py-1 border-b border-r border-line min-w-28">
+                    {colLabel(c + 1)}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {Array.from({ length: rows }, (_, r) => (
+                <tr key={r}>
+                  <th className="text-xs font-normal text-muted px-1 border-b border-r border-line bg-surface">{r + 1}</th>
+                  {Array.from({ length: cols }, (_, c) => {
+                    const cell = s.rows[r]?.[c] ?? null;
+                    const key = `${si}:${r + 1}:${c + 1}`;
+                    const orig = cell?.v ?? "";
+                    const val = edits.get(key) ?? orig;
+                    return (
+                      <td key={c} className={cx("border-b border-r border-line p-0", edits.has(key) && "bg-[color-mix(in_oklab,var(--accent)_12%,transparent)]")}>
+                        <input
+                          value={val}
+                          readOnly={!canEdit || !!cell?.f}
+                          title={cell?.f ? "公式单元格，不能在这里修改" : undefined}
+                          aria-label={`${colLabel(c + 1)}${r + 1}`}
+                          onChange={(e) => set(key, orig, e.target.value)}
+                          className={cx("block w-full min-w-28 h-7 px-2 bg-transparent outline-none focus:bg-surface-2 tabular-nums", cell?.f && "italic text-muted")}
+                        />
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {s.truncated && <div className="px-3 py-2 text-xs text-muted">表格较大，只显示了前 500 行、60 列，完整内容请下载。</div>}
+        </div>
+        {d.sheets.length > 1 && (
+          <div className="sticky bottom-0 bg-surface border-t border-line flex gap-1 px-2 py-1.5 overflow-x-auto">
+            {d.sheets.map((x, i) => (
+              <button key={i} onClick={() => setSheet(i)} className={cx("px-2.5 py-1 rounded-md text-[13px] whitespace-nowrap", i === si ? "bg-surface-2 font-medium" : "text-muted hover:bg-surface-2")}>
+                {x.name}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
+  return (
+    <div className="min-w-0">
+      {bar}
+      <div className="px-4 py-3 space-y-5 max-w-3xl">
+        {d.groups.map((g, gi) => (
+          <section key={gi} className={cx(d.kind === "pptx" && "rounded-lg border border-line p-3")}>
+            {d.kind === "pptx" && <h3 className="text-xs text-muted mb-2">{g.title}</h3>}
+            <div className="space-y-1">
+              {g.paragraphs.map((p, pi) => {
+                const key = `${gi}:${pi}`;
+                const val = edits.get(key) ?? p;
+                // Empty paragraphs are layout; keep them as thin spacers unless being edited.
+                return (
+                  <textarea
+                    key={pi}
+                    value={val}
+                    rows={Math.max(1, Math.ceil(val.length / 60) + (val.match(/\n/g)?.length ?? 0))}
+                    readOnly={!canEdit}
+                    aria-label={`第 ${pi + 1} 段`}
+                    onChange={(e) => set(key, p, e.target.value)}
+                    className={cx("block w-full resize-none rounded-md px-2 py-1 bg-transparent text-sm leading-6 outline-none hover:bg-surface-2 focus:bg-surface-2", !val && "min-h-4 opacity-60", edits.has(key) && "bg-[color-mix(in_oklab,var(--accent)_12%,transparent)]")}
+                  />
+                );
+              })}
+            </div>
+          </section>
+        ))}
+        {!d.groups.length && <Empty title="没有可编辑的文字" action={download} />}
+      </div>
+    </div>
+  );
+}
+
+function colLabel(n: number): string {
+  let s = "";
+  for (let c = n; c > 0; c = Math.floor((c - 1) / 26)) s = String.fromCharCode(65 + ((c - 1) % 26)) + s;
+  return s;
+}
+
+interface ArchiveEntry {
+  path: string;
+  size: number | null;
+  dir: boolean;
+  modified: string | null;
+  encrypted: boolean;
+}
+interface TreeNode {
+  name: string;
+  path: string;
+  dir: boolean;
+  size: number | null;
+  modified: string | null;
+  encrypted: boolean;
+  children: TreeNode[];
+}
+
+function buildTree(entries: ArchiveEntry[]): TreeNode[] {
+  const root: TreeNode = { name: "", path: "", dir: true, size: null, modified: null, encrypted: false, children: [] };
+  const index = new Map<string, TreeNode>([["", root]]);
+  const ensureDir = (path: string): TreeNode => {
+    const hit = index.get(path);
+    if (hit) return hit;
+    const cut = path.lastIndexOf("/");
+    const parent = ensureDir(cut < 0 ? "" : path.slice(0, cut));
+    const node: TreeNode = { name: path.slice(cut + 1), path, dir: true, size: null, modified: null, encrypted: false, children: [] };
+    parent.children.push(node);
+    index.set(path, node);
+    return node;
+  };
+  for (const e of entries) {
+    if (e.dir) {
+      const n = ensureDir(e.path);
+      n.modified = e.modified;
+      continue;
+    }
+    const cut = e.path.lastIndexOf("/");
+    const parent = ensureDir(cut < 0 ? "" : e.path.slice(0, cut));
+    parent.children.push({ name: e.path.slice(cut + 1), path: e.path, dir: false, size: e.size, modified: e.modified, encrypted: e.encrypted, children: [] });
+  }
+  const sort = (n: TreeNode) => {
+    n.children.sort((a, b) => Number(b.dir) - Number(a.dir) || a.name.localeCompare(b.name, "zh"));
+    n.children.forEach(sort);
+  };
+  sort(root);
+  return root.children;
+}
+
+/** The contents of a compressed file, listed on the hub without extracting anything. */
+function ArchiveView({ id, ver, download }: { id: string; ver: ArtifactVersion; download: ReactNode }) {
+  const q = useQuery({
+    queryKey: ["artifact-archive", id, ver.version],
+    queryFn: () => api.get<{ entries: ArchiveEntry[]; total: number; truncated: boolean; totalSize: number | null }>(`/api/artifacts/${id}/archive?v=${ver.version}`),
+    retry: false,
+    staleTime: Infinity,
+  });
+  const tree = useMemo(() => (q.data ? buildTree(q.data.entries) : []), [q.data]);
+  const [open, setOpen] = useState<Set<string>>(new Set());
+  const [filter, setFilter] = useState("");
+  if (q.isLoading) return <Loading />;
+  if (q.error || !q.data) return <Empty title={ver.filename} hint={q.error?.message ?? "读不出压缩包"} action={download} />;
+  const d = q.data;
+  const files = d.entries.filter((e) => !e.dir).length;
+  const needle = filter.trim().toLowerCase();
+  const hits = needle ? d.entries.filter((e) => !e.dir && e.path.toLowerCase().includes(needle)) : [];
+  const toggle = (p: string) =>
+    setOpen((s) => {
+      const n = new Set(s);
+      if (!n.delete(p)) n.add(p);
+      return n;
+    });
+  const row = (n: { name: string; dir: boolean; size: number | null; modified: string | null; encrypted: boolean }, depth: number, onClick?: () => void, expanded = false, key?: string) => (
+    <div
+      key={key}
+      role={onClick ? "button" : undefined}
+      onClick={onClick}
+      className={cx("flex items-center gap-2 py-1.5 pr-3 text-[13px] border-b border-line/60", onClick && "cursor-pointer hover:bg-surface-2")}
+      style={{ paddingLeft: 12 + depth * 16 }}
+    >
+      {n.dir ? <ChevronRight className={cx("size-3.5 shrink-0 text-muted transition-transform", expanded && "rotate-90")} /> : <span className="size-3.5 shrink-0" />}
+      {n.dir ? <Folder className="size-4 shrink-0 text-muted" strokeWidth={1.8} /> : <FileIcon className="size-4 shrink-0 text-muted" strokeWidth={1.8} />}
+      <span className="flex-1 min-w-0 truncate" title={n.name}>
+        {n.name}
+      </span>
+      {n.encrypted && <Lock className="size-3 shrink-0 text-muted" aria-label="已加密" />}
+      <span className="shrink-0 text-xs text-muted tabular-nums w-16 text-right">{n.size !== null && !n.dir ? bytes(n.size) : ""}</span>
+      <span className="shrink-0 text-xs text-muted tabular-nums w-28 text-right hidden sm:block">{n.modified?.slice(0, 16) ?? ""}</span>
+    </div>
+  );
+  const render = (nodes: TreeNode[], depth: number): ReactNode[] =>
+    nodes.flatMap((n) => {
+      const isOpen = open.has(n.path);
+      return [row(n, depth, n.dir ? () => toggle(n.path) : undefined, isOpen, n.path), ...(n.dir && isOpen ? render(n.children, depth + 1) : [])];
+    });
+  return (
+    <div className="min-w-0">
+      <div className="sticky top-0 z-10 bg-surface flex items-center gap-2 px-3 py-2 border-b border-line">
+        <input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="在压缩包里找文件" aria-label="筛选文件" className={cx(inputClass, "h-8 flex-1 min-w-0")} />
+        <span className="shrink-0 text-xs text-muted tabular-nums">
+          {files} 个文件{d.totalSize !== null ? ` · 解压后 ${bytes(d.totalSize)}` : ""}
+        </span>
+        {download}
+      </div>
+      {d.truncated && <div className="px-4 py-2 text-xs text-muted border-b border-line">共 {d.total} 项，只列出了前 {d.entries.length} 项。</div>}
+      {needle ? (hits.length ? hits.slice(0, 500).map((e) => row({ ...e, name: e.path }, 0, undefined, false, e.path)) : <Empty title="没有匹配的文件" />) : d.entries.length ? render(tree, 0) : <Empty title="空的压缩包" />}
+    </div>
+  );
 }
 
 function Centered({ children }: { children: ReactNode }) {

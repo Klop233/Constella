@@ -1,10 +1,10 @@
-import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
-import { Brain, CalendarClock, ChevronDown, ChevronsUpDown, ClipboardCheck, Gauge, House, Layers, LogOut, Monitor, Palette, Plus, Search, Settings as SettingsIcon, Shield, SlidersHorizontal, Sparkles, ExternalLink, X } from "lucide-react";
+import { QueryClient, QueryClientProvider, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Archive, Brain, CalendarClock, ChevronDown, ChevronsUpDown, ClipboardCheck, Gauge, House, Layers, LogOut, Monitor, Palette, Plus, Search, Settings as SettingsIcon, Shield, SlidersHorizontal, Sparkles, ExternalLink, X } from "lucide-react";
 import { lazy, StrictMode, Suspense, useEffect, useState, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter, Navigate, NavLink, Route, Routes, useLocation, useNavigate, useParams, useSearchParams } from "react-router";
 import { registerSW } from "virtual:pwa-register";
-import { cx, Loading, MenuDivider, MenuItem, navItemClass, Popover } from "./components/ui";
+import { cx, Loading, toast, MenuDivider, MenuItem, navItemClass, Popover } from "./components/ui";
 import "./index.css";
 import { useAppearance } from "./lib/appearance";
 import { api, ApiError, logout } from "./lib/api";
@@ -142,6 +142,8 @@ function Sidebar() {
   const overview = useQuery({ queryKey: ["overview"], queryFn: () => api.get<Overview>("/api/overview"), refetchInterval: 30_000 });
   const me = useQuery({ queryKey: ["me"], queryFn: () => api.get<{ name: string }>("/api/me"), staleTime: 300_000 });
   const [q, setQ] = useState("");
+  const qc = useQueryClient();
+  const nav = useNavigate();
   const item = ({ isActive }: { isActive: boolean }) => cx(navItemClass(isActive), "h-7 text-[13px]");
   const needle = q.trim().toLowerCase();
   const groups = (overview.data?.agents ?? []).map((a) => ({
@@ -206,10 +208,30 @@ function Sidebar() {
               </div>
               <div className="space-y-px">
                 {convs.slice(0, 8).map((c) => (
-                  <NavLink key={c.id} to={`/c/${c.id}`} className={item}>
-                    <StatusDot status={c.last_status} />
-                    <span className="truncate">{c.title}</span>
-                  </NavLink>
+                  <div key={c.id} className="group/conv relative">
+                    <NavLink to={`/c/${c.id}`} className={item}>
+                      <StatusDot status={c.last_status} />
+                      <span className="truncate pr-5">{c.title}</span>
+                    </NavLink>
+                    <button
+                      type="button"
+                      aria-label="归档对话"
+                      title="归档"
+                      onClick={async () => {
+                        try {
+                          await api.patch(`/api/conversations/${c.id}`, { archived: true });
+                          void qc.invalidateQueries({ queryKey: ["overview"] });
+                          void qc.invalidateQueries({ queryKey: ["conversations"] });
+                          if (loc.pathname === `/c/${c.id}`) nav(`/agents/${a.id}`);
+                        } catch (err) {
+                          toast(err instanceof Error ? err.message : String(err), "danger");
+                        }
+                      }}
+                      className="absolute right-1 top-1/2 -translate-y-1/2 p-1 rounded text-muted opacity-0 group-hover/conv:opacity-100 focus-visible:opacity-100 hover:text-[var(--text)] hover:bg-[color-mix(in_oklab,var(--text)_8%,transparent)]"
+                    >
+                      <Archive className="size-3.5" />
+                    </button>
+                  </div>
                 ))}
                 {!needle && convs.length > 8 && (
                   <NavLink to={`/agents/${a.id}`} className="block px-2.5 py-1 text-xs text-muted hover:text-[var(--text)]">

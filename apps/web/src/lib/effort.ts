@@ -5,7 +5,9 @@ import type { Effort } from "./types";
 const ORDER = ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"];
 
 /** Levels are shown under their English source names, as the models define them. */
-export const effortLabel = (e: Effort): string => e;
+const LABELS: Record<string, string> = { none: "None", minimal: "Minimal", low: "Low", medium: "Medium", high: "High", xhigh: "xHigh", max: "Max", ultra: "Ultra" };
+
+export const effortLabel = (e: Effort): string => LABELS[e] ?? e;
 
 /** The levels a model supports; the hub answers for every model it lists, so this only fills in while loading. */
 export function modelEfforts(models: ModelEntry[] | undefined, ref: string): Pick<ModelEntry, "efforts" | "defaultEffort"> {
