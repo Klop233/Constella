@@ -200,7 +200,7 @@ function GeneralSection({ s, save }: { s: SettingsView; save: Save }) {
       <SettingGroup title="任务">
         <SettingRow
           title="中断后自动继续"
-          desc={`任务被重启、崩溃、网络或限流等临时故障打断，或单轮跑满 ${fmtMinutes(s.runTimeoutMinutes)}时，等一会儿在原对话里自动接着做，hub 重启也不丢；连续 ${s.maxAutoResumes} 轮都没有进展才停下，并生成诊断报告。`}
+          desc={`任务被重启、Codex 崩溃、网络或限流等临时故障打断，或单轮跑满 ${fmtMinutes(s.runTimeoutMinutes)}时，等一会儿自动在原对话里接着做；hub 重启也不会丢。每一轮有进展就一直接着做，连续 ${s.maxAutoResumes} 轮都没有进展才停下，并生成诊断报告。`}
         >
           <Toggle checked={s.autoResume} onChange={(v) => void save({ autoResume: v }, v ? "已开启自动继续" : "已关闭自动继续")} label="中断后自动继续" />
         </SettingRow>
@@ -217,7 +217,7 @@ function GeneralSection({ s, save }: { s: SettingsView; save: Save }) {
         <SettingRow title="单轮最长运行" desc={s.autoResume ? "一轮跑满这么久就先停下，再开新的一轮接着做，避免单轮上下文无限变长。" : "一轮跑满这么久就停止（开启自动继续后会接着做）。"}>
           <Choice label="单轮最长运行" value={s.runTimeoutMinutes} options={minuteOptions([30, 60, 120, 240, 480])} onChange={(v) => void save({ runTimeoutMinutes: v })} />
         </SettingRow>
-        <SettingRow title="卡住处理" desc="任务这么久没有任何动静时，监督员介入：判断后继续等、结束卡住的命令、提醒 agent、重启这一轮或重建容器；处理不了才请你决定。">
+        <SettingRow title="卡住处理" desc="任务这么久没有任何动静（没有输出、没有工具调用、引擎也没在思考）时，监督员介入：判断后继续等、结束卡住的命令、提醒 agent、重启这一轮或重建容器；处理不了才请你决定。">
           <Choice label="卡住处理" value={s.runWatchdogMinutes} options={minuteOptions([5, 10, 20, 30, 60, 0], "不处理")} onChange={(v) => void save({ runWatchdogMinutes: v })} />
         </SettingRow>
       </SettingGroup>
