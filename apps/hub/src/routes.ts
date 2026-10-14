@@ -18,6 +18,7 @@ import { DesktopError, type DesktopAction } from "./desktops.ts";
 import { requestSource } from "./request-source.ts";
 import { isTrusted } from "./trusted.ts";
 import { loadUsage, rangeStart, usageStats } from "./usage.ts";
+import { groupOf, PERF_INTERVAL_S, type PerfGroup, type PerfRange } from "./perf.ts";
 import { contextBreakdown } from "./context.ts";
 import { ScheduleInput } from "./scheduler.ts";
 import { IMPORT_TEXT_MAX } from "./learning.ts";
@@ -905,6 +906,33 @@ export function registerRoutes(hub: Hub): void {
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err), ms: Date.now() - started };
     }
+  });
+
+  // ── performance ──────────────────────────────────────────
+  const PerfQuery = z.object({ range: z.enum(["1h", "24h"]).default("1h"), history: z.enum(["0", "1"]).default("1") });
+  /** Containers folded into what the owner knows: each instance, each agent, and the hub's own services. */
+  const perfGroups = (range: PerfRange | null): PerfGroup[] => {
+    const all = hub.perf.containers(range);
+    const SYSTEM: Record<string, string> = { hub: "Constella 服务", office: "在线 Office" };
+    return [
+      ...desktops.rows().map((d) => groupOf({ type: "instance", id: d.id, name: d.name, kind: d.kind }, all.filter((c) => c.desktopId === d.id))),
+      ...agents.list().map((a) => groupOf({ type: "agent", id: a.id, name: a.name, emoji: a.emoji }, all.filter((c) => c.role === "agent" && c.agentId === a.id))),
+      ...Object.entries(SYSTEM)
+        .map(([role, name]) => groupOf({ type: "system", id: role, name }, all.filter((c) => c.role === role)))
+        .filter((g) => g.containers.length),
+    ];
+  };
+  app.get("/api/perf", async (req) => {
+    const q = PerfQuery.parse(req.query);
+    const range = q.range as PerfRange;
+    const host = hub.perf.host(range);
+    return { interval: PERF_INTERVAL_S, range, host: { ...host, history: q.history === "1" ? host.history : [] }, groups: perfGroups(q.history === "1" ? range : null) };
+  });
+  app.get("/api/desktops/:id/perf", async (req) => {
+    const q = PerfQuery.parse(req.query);
+    desktops.row(id(req));
+    const g = perfGroups(q.range as PerfRange).find((x) => x.type === "instance" && x.id === id(req));
+    return { interval: PERF_INTERVAL_S, range: q.range, cores: hub.perf.host("1h").info?.cores ?? null, group: g ?? null };
   });
 
   // ── usage & settings ─────────────────────────────────────

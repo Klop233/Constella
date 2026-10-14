@@ -12,7 +12,7 @@ export interface Appearance {
 }
 
 const KEY = "constella:appearance";
-const DEFAULTS: Appearance = { theme: "system", palette: "nebula", font: "sans", usage: true, navFolded: ["/artifacts", "/audit", "/usage", "/reflect"] };
+const DEFAULTS: Appearance = { theme: "system", palette: "nebula", font: "sans", usage: true, navFolded: ["/artifacts", "/audit", "/usage", "/perf", "/reflect"] };
 const dark = window.matchMedia("(prefers-color-scheme: dark)");
 const listeners = new Set<() => void>();
 
