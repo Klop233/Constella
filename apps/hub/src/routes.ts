@@ -13,6 +13,7 @@ import { isTrusted } from "./trusted.ts";
 import { loadUsage, rangeStart, usageStats } from "./usage.ts";
 import { contextBreakdown } from "./context.ts";
 import { ScheduleInput } from "./scheduler.ts";
+import { IMPORT_TEXT_MAX } from "./learning.ts";
 
 declare module "fastify" {
   interface FastifyRequest {
@@ -600,6 +601,20 @@ export function registerRoutes(hub: Hub): void {
     const b = z.object({ text: z.string().min(1).max(1000) }).parse(req.body);
     agents.get(id(req));
     return learning.instruct(id(req), b.text);
+  });
+  // Import memory exported from another assistant: preview first (writes nothing), then add what the user kept.
+  app.post("/api/agents/:id/memory/import/preview", async (req) => {
+    const b = z.object({ text: z.string().min(1).max(IMPORT_TEXT_MAX) }).parse(req.body);
+    agents.get(id(req));
+    return learning.previewImport(id(req), b.text);
+  });
+  app.post("/api/agents/:id/memory/import", async (req) => {
+    const b = z
+      .object({ items: z.array(z.object({ scope: z.enum(["agent", "user"]), text: z.string().min(1).max(400) })).min(1).max(200) })
+      .parse(req.body);
+    agents.get(id(req));
+    const r = knowledge.importMemory(id(req), b.items, "用户");
+    return { events: r.events, added: r.plan.filter((p) => p.status === "new").length, skipped: r.plan.filter((p) => p.status !== "new").length };
   });
   app.post("/api/agents/:id/memory/delete", async (req) => {
     const b = z.object({ scope: z.enum(["agent", "user"]), item: z.string().min(1).max(400) }).parse(req.body);
