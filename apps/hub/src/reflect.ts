@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { config, nowIso } from "./config.ts";
 import { kvGet, kvSet, type Db } from "./db.ts";
-import type { NewApi } from "./newapi.ts";
+import type { ModelRegistry } from "./models.ts";
 
 /** "Reflect": activity stats over a period plus a model-written look back at what the conversations were about. */
 
@@ -81,9 +81,9 @@ const SYSTEM = `你在帮用户回顾他们最近和自己的 agent 们的对话
 - 只输出 JSON：{"headline": "...", "body": "..."}`;
 
 export class Reflect {
-  private d: { db: Db; newapi: NewApi; model: () => string };
+  private d: { db: Db; llm: Pick<ModelRegistry, "chatJson" | "label">; model: () => string };
 
-  constructor(d: { db: Db; newapi: NewApi; model: () => string }) {
+  constructor(d: { db: Db; llm: Pick<ModelRegistry, "chatJson" | "label">; model: () => string }) {
     this.d = d;
   }
 
@@ -118,10 +118,10 @@ export class Reflect {
     }
     const list = [...seen.values()].slice(-120).join("\n");
     const model = this.d.model();
-    const raw = await this.d.newapi.chatJson(model, SYSTEM, `时间范围：最近 ${days} 天，共 ${seen.size} 个对话、${runs.length} 次任务。\n\n${list}`);
+    const raw = await this.d.llm.chatJson(model, SYSTEM, `时间范围：最近 ${days} 天，共 ${seen.size} 个对话、${runs.length} 次任务。\n\n${list}`);
     const parsed = Summary.safeParse(raw);
     if (!parsed.success) throw new Error("模型返回的回顾格式不对，请重试");
-    const out: ReflectSummary = { ...parsed.data, generatedAt: nowIso(), model };
+    const out: ReflectSummary = { ...parsed.data, generatedAt: nowIso(), model: this.d.llm.label(model) };
     kvSet(this.d.db, `reflect.${days}`, JSON.stringify(out));
     return out;
   }

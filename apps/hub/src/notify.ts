@@ -13,12 +13,20 @@ export class Notifier {
   #db: Db;
   #events: EventStore;
   #telegram: () => TelegramConfig | null;
+  #quiet: () => boolean;
   readonly publicKey: string;
 
-  constructor(db: Db, events: EventStore, vapid: { publicKey: string; privateKey: string; subject: string }, telegram: () => TelegramConfig | null) {
+  constructor(
+    db: Db,
+    events: EventStore,
+    vapid: { publicKey: string; privateKey: string; subject: string },
+    telegram: () => TelegramConfig | null,
+    quiet: () => boolean = () => false,
+  ) {
     this.#db = db;
     this.#events = events;
     this.#telegram = telegram;
+    this.#quiet = quiet;
     let keys = vapid.publicKey && vapid.privateKey ? { publicKey: vapid.publicKey, privateKey: vapid.privateKey } : null;
     if (!keys) {
       const stored = kvGet(db, "vapid");
@@ -45,12 +53,18 @@ export class Notifier {
     return this.#db.prepare("SELECT endpoint, device, created_at FROM push_subscriptions ORDER BY created_at").all() as any[];
   }
 
-  /** Fire-and-forget; returns per-channel delivery counts for callers that care (schedules, tests). */
-  async send(title: string, body: string, url = "/", opts: { urgent?: boolean } = {}): Promise<{ push: number; telegram: boolean }> {
+  /**
+   * Fire-and-forget; returns per-channel delivery counts for callers that care (schedules, tests).
+   * `push: false` only records it in the in-app inbox. In quiet hours pushes arrive silently and Telegram
+   * stays out of it, unless the notification is urgent (reminders the user scheduled).
+   */
+  async send(title: string, body: string, url = "/", opts: { urgent?: boolean; push?: boolean } = {}): Promise<{ push: number; telegram: boolean }> {
     const id = newId("nt");
     this.#db.prepare("INSERT INTO notifications (id, title, body, url, created_at) VALUES (?, ?, ?, ?, ?)").run(id, title, body, url, nowIso());
     this.#events.publish("notification", { id, title, body, url });
-    const payload = JSON.stringify({ id, title, body, url });
+    if (opts.push === false) return { push: 0, telegram: false };
+    const quiet = !opts.urgent && this.#quiet();
+    const payload = JSON.stringify({ id, title, body, url, ...(quiet ? { silent: true } : {}) });
     const subs = this.#db.prepare("SELECT endpoint, keys FROM push_subscriptions").all() as { endpoint: string; keys: string }[];
     let push = 0;
     await Promise.all(
@@ -69,7 +83,7 @@ export class Notifier {
     );
     let telegram = false;
     const tg = this.#telegram();
-    if (tg && (opts.urgent || push === 0)) {
+    if (tg && (opts.urgent || (push === 0 && !quiet))) {
       try {
         const res = await fetch(`https://api.telegram.org/bot${tg.botToken}/sendMessage`, {
           method: "POST",

@@ -4,6 +4,7 @@ import { Link } from "react-router";
 import { api } from "../lib/api";
 import { useAppearance } from "../lib/appearance";
 import { clock, duration, STATUS_TEXT, tokens } from "../lib/format";
+import { useModelLabel } from "../lib/models";
 import type { AgentEvent, Approval, Run } from "../lib/types";
 import { ApprovalCard } from "./ApprovalCard";
 import { Markdown } from "./Markdown";
@@ -285,6 +286,7 @@ function UsageLine({ run, usage }: { run: Run; usage: Usage }) {
 }
 
 export function RunView({ run, approvals, onChanged }: { run: Run; approvals: Approval[]; onChanged: () => void }) {
+  const modelLabel = useModelLabel();
   const { blocks, usage } = useMemo(() => {
     const { items, usage } = buildItems(run.events);
     return { blocks: groupSteps(items), usage };
@@ -346,7 +348,7 @@ export function RunView({ run, approvals, onChanged }: { run: Run; approvals: Ap
       {finished && (
         <div className="flex items-center gap-1 text-[11px] text-muted">
           <span className="flex-1">
-            {run.model}
+            {modelLabel(run.model)}
             {showUsage && (
               <>
                 {" · "}

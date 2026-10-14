@@ -18,10 +18,11 @@ import { EventStore } from "./events.ts";
 import { Knowledge } from "./knowledge.ts";
 import { Learning, defaultReflectModel } from "./learning.ts";
 import { registerMcp } from "./mcp.ts";
+import { ModelRegistry } from "./models.ts";
 import { NewApi } from "./newapi.ts";
 import { Notifier } from "./notify.ts";
 import { registerRoutes } from "./routes.ts";
-import { RunManager } from "./runs.ts";
+import { RunManager, type Effort, type NotifyKind, type RunLimits } from "./runs.ts";
 import { Scheduler } from "./scheduler.ts";
 import { Reflect } from "./reflect.ts";
 import type { ApprovalMode } from "./safety.ts";
@@ -43,6 +44,7 @@ export interface Hub {
   scheduler: Scheduler;
   notifier: Notifier;
   newapi: NewApi;
+  models: ModelRegistry;
   runners: RunnerGateway;
   settings: Settings;
   backup(): Promise<string>;
@@ -106,23 +108,50 @@ export class RunnerGateway {
 export class Settings {
   #db: Db;
   #secrets: SecretStore;
+  #models: ModelRegistry;
 
-  constructor(db: Db, secrets: SecretStore) {
+  constructor(db: Db, secrets: SecretStore, models: ModelRegistry) {
     this.#db = db;
     this.#secrets = secrets;
+    this.#models = models;
   }
 
+  #num(key: string, fallback: number): number {
+    const v = Number(kvGet(this.#db, `settings.${key}`));
+    return kvGet(this.#db, `settings.${key}`) !== undefined && Number.isFinite(v) ? v : fallback;
+  }
+
+  #bool(key: string, fallback: boolean): boolean {
+    const v = kvGet(this.#db, `settings.${key}`);
+    return v === undefined ? fallback : v === "true";
+  }
+
+  /** Model refs: "model@provider", or a bare name for the built-in new-api (like the env defaults). */
   defaultModel(): string {
-    return kvGet(this.#db, "settings.defaultModel") || config.defaultModel;
+    return this.#models.normalize(kvGet(this.#db, "settings.defaultModel") || config.defaultModel);
   }
 
   reflectModel(): string {
-    return defaultReflectModel(this.#db);
+    return this.#models.normalize(defaultReflectModel(this.#db));
+  }
+
+  /** Reasoning effort preselected for new agents (null = the model's default). */
+  defaultEffort(): Effort | null {
+    const v = kvGet(this.#db, "settings.defaultEffort");
+    return v === "low" || v === "medium" || v === "high" || v === "xhigh" ? v : null;
   }
 
   /** Continue runs a restart cut off (on unless turned off). */
   autoResume(): boolean {
-    return kvGet(this.#db, "settings.autoResume") !== "false";
+    return this.#bool("autoResume", true);
+  }
+
+  limits(): RunLimits {
+    return {
+      runTimeoutMinutes: this.#num("runTimeoutMinutes", config.runTimeoutMinutes),
+      runWatchdogMinutes: this.#num("runWatchdogMinutes", config.runWatchdogMinutes),
+      maxAutoResumes: this.#num("maxAutoResumes", 3),
+    };
   }
 
   /** How approvals are decided; "smart" (ask only for destructive actions) unless chosen otherwise. */
@@ -130,6 +159,49 @@ export class Settings {
     const v = kvGet(this.#db, "settings.approvalMode");
     if (v === "ask" || v === "smart" || v === "auto") return v;
     return kvGet(this.#db, "settings.autoApprove") === "true" ? "auto" : "smart";
+  }
+
+  /** Idle minutes before an agent container / desktop is stopped (0 = keep running). */
+  agentIdleMinutes(): number {
+    return this.#num("agentIdleMinutes", config.agentIdleMinutes);
+  }
+
+  desktopIdleMinutes(): number {
+    return this.#num("desktopIdleMinutes", config.desktopIdleMinutes);
+  }
+
+  reflection(): { enabled: boolean; minToolCalls: number } {
+    return { enabled: this.#bool("autoReflect", true), minToolCalls: this.#num("reflectMinToolCalls", 3) };
+  }
+
+  /** Which run events push to devices (they always land in the in-app inbox). */
+  notifyOn(): Record<NotifyKind, boolean> {
+    return {
+      done: this.#bool("notify.done", true),
+      failed: this.#bool("notify.failed", true),
+      approval: this.#bool("notify.approval", true),
+      stuck: this.#bool("notify.stuck", true),
+    };
+  }
+
+  /** Quiet hours (local time, may wrap past midnight): pushes arrive without sound and Telegram stays silent. */
+  quietHours(): { enabled: boolean; start: string; end: string } {
+    return {
+      enabled: this.#bool("quiet.enabled", false),
+      start: kvGet(this.#db, "settings.quiet.start") || "23:00",
+      end: kvGet(this.#db, "settings.quiet.end") || "08:00",
+    };
+  }
+
+  isQuiet(now = new Date()): boolean {
+    const q = this.quietHours();
+    if (!q.enabled || q.start === q.end) return false;
+    const hm = new Intl.DateTimeFormat("en-GB", { timeZone: config.timezone, hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(now);
+    return q.start < q.end ? hm >= q.start && hm < q.end : hm >= q.start || hm < q.end;
+  }
+
+  backupKeep(): number {
+    return Math.max(1, this.#num("backupKeep", 7));
   }
 
   newapiAdmin(): { token: string; userId: string } | null {
@@ -149,8 +221,18 @@ export class Settings {
     return {
       defaultModel: this.defaultModel(),
       reflectModel: this.reflectModel(),
+      defaultEffort: this.defaultEffort(),
       autoResume: this.autoResume(),
+      ...this.limits(),
       approvalMode: this.approvalMode(),
+      agentIdleMinutes: this.agentIdleMinutes(),
+      desktopIdleMinutes: this.desktopIdleMinutes(),
+      autoReflect: this.reflection().enabled,
+      reflectMinToolCalls: this.reflection().minToolCalls,
+      notifyOn: this.notifyOn(),
+      quietHours: this.quietHours(),
+      backupKeep: this.backupKeep(),
+      modelNameFormat: this.#models.nameFormat(),
       newapiBaseUrl: config.newapi.baseUrl,
       newapiAdminConfigured: !!admin,
       newapiAdminUserId: admin?.userId ?? config.newapi.adminUserId,
@@ -158,6 +240,7 @@ export class Settings {
       telegramChatId: kvGet(this.#db, "settings.telegramChatId") || config.telegram.chatId,
       timezone: config.timezone,
       origins: config.origins,
+      dataDir: config.dataDir,
     };
   }
 }
@@ -166,25 +249,22 @@ export async function createHub(opts: { dbPath?: string; webDist?: string; logge
   if (!config.masterKey) throw new Error("CONSTELLA_MASTER_KEY is required");
   const db = openDb(opts.dbPath ?? config.dbPath);
   const secrets = new SecretStore(db, new SecretBox(config.masterKey));
-  const settings = new Settings(db, secrets);
+  const models = new ModelRegistry({ db, secrets, newapiBaseUrl: config.newapi.baseUrl, newapiKey: () => config.newapi.apiKey });
+  const settings = new Settings(db, secrets, models);
   const events = new EventStore(db);
   const containers = new Containers();
   const runners = new RunnerGateway();
-  const newapi = new NewApi({
-    baseUrl: config.newapi.baseUrl,
-    apiKey: () => config.newapi.apiKey,
-    admin: () => settings.newapiAdmin(),
-  });
-  const notifier = new Notifier(db, events, config.vapid, () => settings.telegram());
+  const newapi = new NewApi({ baseUrl: config.newapi.baseUrl, admin: () => settings.newapiAdmin() });
+  const notifier = new Notifier(db, events, config.vapid, () => settings.telegram(), () => settings.isQuiet());
   let agents!: Agents;
-  const allSecretValues = () => [config.newapi.apiKey, ...(agents ? agents.list(true).flatMap((a) => agents.secretValues(a.id)) : [])];
+  const allSecretValues = () => [config.newapi.apiKey, ...models.keys(), ...(agents ? agents.list(true).flatMap((a) => agents.secretValues(a.id)) : [])];
   const knowledge = new Knowledge(db, events, allSecretValues);
   knowledge.ensureShared();
-  agents = new Agents({ db, secrets, knowledge, defaultModel: () => settings.defaultModel() });
+  agents = new Agents({ db, secrets, knowledge, defaultModel: () => settings.defaultModel(), defaultEffort: () => settings.defaultEffort() });
 
   const ensureRunner = async (agentId: string) => {
     const agent = agents.get(agentId);
-    agents.writeEngineConfig(agent, newapi.baseUrl);
+    agents.writeEngineConfig(agent, newapi.baseUrl, models.parse(agent.model).model);
     await containers.ensureAgent({ agentId, env: agents.containerEnv(agentId, config.newapi.apiKey), hostAccess: !!agent.host_access });
     runners.lastSeen.set(agentId, Date.now());
     await runners.waitFor(agentId, 90_000);
@@ -220,13 +300,15 @@ export async function createHub(opts: { dbPath?: string; webDist?: string; logge
         skillRoots: ["/home/agent/knowledge/skills", "/shared/skills"],
       };
     },
-    notify: (title, body, url) => void notifier.send(title, body, url),
+    notify: (title, body, url, kind) => void notifier.send(title, body, url, { push: settings.notifyOn()[kind] }),
+    resolveModel: (ref) => models.resolve(ref),
     autoResume: () => settings.autoResume(),
+    limits: () => settings.limits(),
     approvalMode: () => settings.approvalMode(),
   });
-  const desktops = new Desktops({ db, events, containers, runs });
-  const learning = new Learning({ db, events, knowledge, newapi, model: () => settings.reflectModel() });
-  const reflect = new Reflect({ db, newapi, model: () => settings.reflectModel() });
+  const desktops = new Desktops({ db, events, containers, runs, idleMinutes: () => settings.desktopIdleMinutes() });
+  const learning = new Learning({ db, events, knowledge, llm: models, model: () => settings.reflectModel(), auto: () => settings.reflection() });
+  const reflect = new Reflect({ db, llm: models, model: () => settings.reflectModel() });
   const scheduler = new Scheduler(db, events);
 
   runs.onFinished((run) => desktops.releaseRun(run.id));
@@ -271,7 +353,7 @@ export async function createHub(opts: { dbPath?: string; webDist?: string; logge
     execFileSync("tar", ["-czf", out, "-C", config.dataDir, rel(tmpDb), "shared", ...knowledgeDirs]);
     fs.rmSync(tmpDb);
     const all = fs.readdirSync(config.backupsDir).filter((f) => f.startsWith("constella-")).sort();
-    for (const f of all.slice(0, Math.max(0, all.length - 7))) fs.rmSync(path.join(config.backupsDir, f));
+    for (const f of all.slice(0, Math.max(0, all.length - settings.backupKeep()))) fs.rmSync(path.join(config.backupsDir, f));
     return out;
   };
   scheduler.on("sys-backup", async () => ({ ok: true, detail: path.basename(await backup()) }));
@@ -298,6 +380,7 @@ export async function createHub(opts: { dbPath?: string; webDist?: string; logge
     scheduler,
     notifier,
     newapi,
+    models,
     runners,
     settings,
     backup,
@@ -377,7 +460,9 @@ export async function createHub(opts: { dbPath?: string; webDist?: string; logge
 
   // Idle agent containers are stopped; they restart on the next message.
   const idleTimer = setInterval(async () => {
-    const cutoff = Date.now() - config.agentIdleMinutes * 60_000;
+    const idle = settings.agentIdleMinutes();
+    if (idle <= 0) return;
+    const cutoff = Date.now() - idle * 60_000;
     for (const a of agents.list()) {
       const active = db.prepare("SELECT 1 FROM runs WHERE agent_id = ? AND status NOT IN ('done','failed','cancelled') LIMIT 1").get(a.id);
       if (active || (runners.lastSeen.get(a.id) ?? 0) > cutoff) continue;
@@ -400,6 +485,7 @@ export async function bootHub(hub: Hub): Promise<void> {
   hub.runs.startWatchdog();
   hub.desktops.startReaper();
   hub.scheduler.start();
+  void hub.models.seed();
   // Runners that don't reconnect by themselves after a hub restart (container gone) get brought back.
   const pending = hub.db.prepare("SELECT DISTINCT agent_id FROM runs WHERE status IN ('running','waiting_approval','paused_by_user')").all() as { agent_id: string }[];
   for (const { agent_id } of pending) hub.reviveIfStranded(agent_id, 20_000);

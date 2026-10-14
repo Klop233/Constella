@@ -15,7 +15,7 @@ self.addEventListener("activate", (e) => e.waitUntil(self.clients.claim()));
 self.addEventListener("push", (event) => {
   const data = (() => {
     try {
-      return event.data?.json() as { id?: string; title: string; body: string; url?: string };
+      return event.data?.json() as { id?: string; title: string; body: string; url?: string; silent?: boolean };
     } catch {
       return { title: "Constella", body: event.data?.text() ?? "" };
     }
@@ -26,6 +26,7 @@ self.addEventListener("push", (event) => {
       icon: "/icon-192.png",
       badge: "/icon-192.png",
       tag: data.id,
+      silent: !!data.silent,
       data: { url: data.url ?? "/" },
     }),
   );

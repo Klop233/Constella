@@ -3,21 +3,19 @@ import { Check, ChevronDown, Search } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { api } from "../lib/api";
 import { tokens } from "../lib/format";
+import { useModelLabel, useModels } from "../lib/models";
 import type { Effort, Run } from "../lib/types";
 import { conversationUsage, type LatestStats } from "./RunView";
 import { cx, Popover } from "./ui";
 
-interface Model {
-  id: string;
-  compat?: "ok" | "upstream_error";
-}
-
 /** Per-conversation model; `null` follows the agent's model. */
 export function ModelPicker({ value, agentModel, onChange }: { value: string | null; agentModel: string; onChange: (v: string | null) => void }) {
-  const models = useQuery({ queryKey: ["models"], queryFn: () => api.get<Model[]>("/api/models"), staleTime: 300_000 });
+  const models = useModels();
+  const label = useModelLabel();
   const [q, setQ] = useState("");
-  const list = (models.data ?? []).filter((m) => m.id.toLowerCase().includes(q.toLowerCase()));
-  const current = value ?? agentModel;
+  const needle = q.toLowerCase();
+  const list = (models.data ?? []).filter((m) => `${m.label} ${m.model} ${m.providerName}`.toLowerCase().includes(needle));
+  const current = label(value ?? agentModel);
   return (
     <Popover
       label="选择模型"
@@ -51,10 +49,10 @@ export function ModelPicker({ value, agentModel, onChange }: { value: string | n
                 <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="搜索模型" className="flex-1 bg-transparent outline-none text-[13px]" />
               </label>
             )}
-            {!q && item(null, "跟随 agent", agentModel)}
+            {!q && item(null, "跟随 agent", label(agentModel))}
             <div className="max-h-72 overflow-y-auto">
               {models.isLoading && <div className="px-3 py-2 text-sm text-muted">加载中…</div>}
-              {list.map((m) => item(m.id, m.id, m.compat === "ok" ? "已验证可用" : m.compat === "upstream_error" ? "上游报错过" : undefined))}
+              {list.map((m) => item(m.ref, m.label, [m.bare && m.providerName, m.test && (m.test.ok ? "测试通过" : "测试失败")].filter(Boolean).join(" · ") || undefined))}
             </div>
           </div>
         );

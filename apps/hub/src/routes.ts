@@ -30,7 +30,7 @@ class HttpError extends Error {
 }
 
 export function registerRoutes(hub: Hub): void {
-  const { app, auth, agents, runs, events, desktops, knowledge, learning, reflect, scheduler, notifier, newapi, settings, containers, db } = hub;
+  const { app, auth, agents, runs, events, desktops, knowledge, learning, reflect, scheduler, notifier, newapi, models, settings, containers, db } = hub;
 
   app.setErrorHandler((err: any, _req, reply) => {
     const status = err instanceof HttpError ? err.status : err?.validation || err instanceof z.ZodError ? 400 : (err?.statusCode ?? 400);
@@ -181,13 +181,20 @@ export function registerRoutes(hub: Hub): void {
   // ── agents ───────────────────────────────────────────────
   app.get("/api/templates", async () => TEMPLATES);
   app.get("/api/agents", async () => Promise.all(agents.list().map((a) => agentView(hub, a.id))));
+  /** A model ref must point at an existing provider before anything is saved with it. */
+  const checkModel = (ref: string | null | undefined) => {
+    if (ref) models.resolve(ref);
+  };
   app.post("/api/agents", async (req) => {
-    const a = agents.create(AgentInput.parse(req.body), actor(req));
+    const input = AgentInput.parse(req.body);
+    checkModel(input.model);
+    const a = agents.create(input, actor(req));
     events.publish("agent", { id: a.id });
     return agentView(hub, a.id);
   });
   app.get("/api/agents/:id", async (req) => agentView(hub, id(req)));
   app.patch("/api/agents/:id", async (req) => {
+    checkModel((req.body as { model?: string })?.model);
     agents.update(id(req), req.body as any, actor(req));
     events.publish("agent", { id: id(req) });
     return agentView(hub, id(req));
@@ -212,6 +219,8 @@ export function registerRoutes(hub: Hub): void {
   });
   app.post("/api/agents/import", { bodyLimit: 8 * 1024 * 1024 }, async (req) => {
     const a = agents.importAgent(req.body, actor(req));
+    // Exported from another instance: its provider may not exist here.
+    if (!models.provider(models.parse(a.model).provider)) agents.update(a.id, { model: settings.defaultModel() }, actor(req));
     events.publish("agent", { id: a.id });
     return agentView(hub, a.id);
   });
@@ -315,6 +324,7 @@ export function registerRoutes(hub: Hub): void {
   });
   app.patch("/api/conversations/:id", async (req) => {
     const b = z.object({ title: z.string().min(1).max(60).optional(), ...ModelPatch }).parse(req.body);
+    checkModel(b.model);
     if (b.title) db.prepare("UPDATE conversations SET title = ? WHERE id = ?").run(b.title, id(req));
     if (b.model !== undefined || b.effort !== undefined) runs.setConversationModel(id(req), b);
     return { ok: true };
@@ -505,8 +515,66 @@ export function registerRoutes(hub: Hub): void {
   app.post("/api/schedules/:id/run", async (req) => scheduler.fire(id(req)));
   app.get("/api/schedules/:id/history", async (req) => scheduler.history(id(req)));
 
-  // ── models, usage, settings ──────────────────────────────
-  app.get("/api/models", async (req) => newapi.models((req.query as { refresh?: string }).refresh === "1"));
+  // ── models & providers ───────────────────────────────────
+  app.get("/api/models", async () => {
+    await models.seed();
+    return models.list();
+  });
+  app.post("/api/models", async (req) => {
+    const b = z.object({ provider: z.string(), models: z.array(z.string().trim().min(1).max(200)).min(1).max(500) }).parse(req.body);
+    const added = models.add(b.provider, b.models);
+    audit(db, actor(req), "models.add", { provider: b.provider, count: added });
+    return { added };
+  });
+  app.patch("/api/models", async (req) => {
+    const b = z.object({ ref: z.string(), bare: z.boolean() }).parse(req.body);
+    models.setBare(b.ref, b.bare);
+    return { ok: true };
+  });
+  app.delete("/api/models", async (req) => {
+    const ref = z.object({ ref: z.string() }).parse(req.query).ref;
+    models.remove(ref);
+    audit(db, actor(req), "models.remove", { ref });
+    return { ok: true };
+  });
+  app.post("/api/models/test", async (req) => models.test(z.object({ ref: z.string() }).parse(req.body).ref));
+
+  const providerView = () =>
+    models.providers().map((p) => {
+      const key = models.apiKey(p.id);
+      return { ...p, keyHint: key ? `…${key.slice(-4)}` : null, models: models.list().filter((m) => m.provider === p.id).length };
+    });
+  const ProviderBody = z.object({ name: z.string().trim().min(1).max(40), baseUrl: z.string().trim().min(1).max(300), apiKey: z.string().trim().max(500).default("") });
+  app.get("/api/providers", async () => providerView());
+  app.post("/api/providers", async (req) => {
+    const p = models.addProvider(ProviderBody.parse(req.body));
+    audit(db, actor(req), "provider.create", { id: p.id, name: p.name });
+    return p;
+  });
+  app.patch("/api/providers/:id", async (req) => {
+    const p = models.updateProvider(id(req), ProviderBody.partial().parse(req.body));
+    audit(db, actor(req), "provider.update", { id: p.id });
+    return p;
+  });
+  app.delete("/api/providers/:id", async (req) => {
+    const users = models.usersOf(id(req), [settings.defaultModel(), settings.reflectModel()]);
+    if (users.length) throw new HttpError(409, `还有 ${users.join("、")} 在用这个 provider 的模型，先换掉再删除`);
+    models.removeProvider(id(req));
+    audit(db, actor(req), "provider.delete", { id: id(req) });
+    return { ok: true };
+  });
+  app.get("/api/providers/:id/models", async (req) => models.remoteModels(id(req)));
+  app.post("/api/providers/:id/test", async (req) => {
+    const started = Date.now();
+    try {
+      const list = await models.remoteModels(id(req));
+      return { ok: true, models: list.length, ms: Date.now() - started };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err), ms: Date.now() - started };
+    }
+  });
+
+  // ── usage & settings ─────────────────────────────────────
   app.get("/api/usage", async (req) => {
     const days = Math.min(Number((req.query as { days?: string }).days ?? 7), 90);
     const since = new Date(Date.now() - days * 86_400_000).toISOString();
@@ -527,43 +595,90 @@ export function registerRoutes(hub: Hub): void {
   });
   app.get("/api/usage/stats", async (req) => {
     const q = z
-      .object({ range: z.enum(["today", "7d", "30d"]).default("today"), agent: z.string().optional(), model: z.string().optional() })
+      .object({ range: z.enum(["today", "7d", "30d"]).default("today"), agent: z.string().optional(), model: z.string().optional(), provider: z.string().optional() })
       .parse(req.query);
     const since = rangeStart(q.range);
-    const { events: all, runs: runInfo } = loadUsage(db, since, { agentId: q.agent });
-    const events = q.model ? all.filter((e) => e.model === q.model) : all;
+    const { events: all, runs: runInfo } = loadUsage(db, since, { agentId: q.agent }, (ref) => models.normalize(ref));
+    const events = all.filter((e) => (!q.model || e.model === q.model) && (!q.provider || models.parse(e.model).provider === q.provider));
     const stats = usageStats(events, runInfo, q.range);
     let spend: Record<string, number> | null = null;
     if (newapi.adminEnabled()) spend = await newapi.spendByToken(Math.floor(Date.parse(since) / 1000)).catch(() => null);
     const list = agents.list(true);
+    const providers = models.providers();
+    const providerName = (id: string) => providers.find((p) => p.id === id)?.name ?? `${id}（已删除）`;
+    const byProvider = new Map<string, { provider: string; name: string; requests: number; input: number; cached: number; output: number; models: number }>();
+    for (const m of stats.models) {
+      const pid = models.parse(m.model).provider;
+      const t = byProvider.get(pid) ?? { provider: pid, name: providerName(pid), requests: 0, input: 0, cached: 0, output: 0, models: 0 };
+      t.requests += m.requests;
+      t.input += m.input;
+      t.cached += m.cached;
+      t.output += m.output;
+      t.models++;
+      byProvider.set(pid, t);
+    }
+    const labels = new Map<string, string>();
+    const label = (ref: string) => labels.get(ref) ?? labels.set(ref, models.label(ref)).get(ref)!;
+    const withLabel = <T extends { model: string }>(x: T) => {
+      const pid = models.parse(x.model).provider;
+      return { ...x, label: label(x.model), provider: pid, providerName: providerName(pid) };
+    };
+    // Spend comes from per-agent new-api tokens, so it only adds up when not narrowed to a model or another provider.
+    const spendTotal = spend && !q.model && (!q.provider || q.provider === "newapi");
     return {
       ...stats,
+      models: stats.models.map(withLabel),
+      log: stats.log.map(withLabel),
+      providers: [...byProvider.values()].sort((a, b) => b.requests - a.requests),
       agents: stats.agents.map((a) => {
         const ag = list.find((x) => x.id === a.agentId);
         return { ...a, name: ag?.name ?? "已删除", emoji: ag?.emoji ?? "·", spendUsd: spend ? (spend[`constella-${a.agentId}`] ?? 0) : null };
       }),
-      spendUsd: spend && !q.model ? list.filter((a) => !q.agent || a.id === q.agent).reduce((n, a) => n + (spend![`constella-${a.id}`] ?? 0), 0) : null,
-      filters: { models: [...new Set(all.map((e) => e.model))].sort(), agents: list.map((a) => ({ id: a.id, name: a.name, emoji: a.emoji })) },
+      spendUsd: spendTotal ? list.filter((a) => !q.agent || a.id === q.agent).reduce((n, a) => n + (spend![`constella-${a.id}`] ?? 0), 0) : null,
+      filters: {
+        models: [...new Set(all.map((e) => e.model))].map((ref) => ({ ref, label: label(ref) })).sort((a, b) => a.label.localeCompare(b.label)),
+        providers: [...new Set(all.map((e) => models.parse(e.model).provider))].map((id) => ({ id, name: providerName(id) })),
+        agents: list.map((a) => ({ id: a.id, name: a.name, emoji: a.emoji })),
+      },
     };
   });
   app.get("/api/settings", async () => settings.view());
+  const minutes = (allowed: number[]) => z.number().int().refine((v) => allowed.includes(v), `只能是 ${allowed.join(" / ")}`);
+  const hhmm = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "时间格式是 HH:MM");
+  const SettingsPatch = z.object({
+    defaultModel: z.string().min(1).optional(),
+    reflectModel: z.string().min(1).optional(),
+    defaultEffort: z.enum(["low", "medium", "high", "xhigh"]).nullable().optional(),
+    newapiAdminToken: z.string().optional(),
+    newapiAdminUserId: z.string().optional(),
+    telegramBotToken: z.string().optional(),
+    telegramChatId: z.string().optional(),
+    autoResume: z.boolean().optional(),
+    maxAutoResumes: z.number().int().min(1).max(10).optional(),
+    runTimeoutMinutes: minutes([30, 60, 120, 240, 480]).optional(),
+    runWatchdogMinutes: minutes([0, 5, 10, 20, 30, 60]).optional(),
+    approvalMode: z.enum(["ask", "smart", "auto"]).optional(),
+    agentIdleMinutes: minutes([0, 10, 30, 60, 120, 360]).optional(),
+    desktopIdleMinutes: minutes([0, 10, 30, 60, 120, 360]).optional(),
+    autoReflect: z.boolean().optional(),
+    reflectMinToolCalls: z.number().int().min(1).max(50).optional(),
+    notifyOn: z.object({ done: z.boolean(), failed: z.boolean(), approval: z.boolean(), stuck: z.boolean() }).partial().optional(),
+    quietHours: z.object({ enabled: z.boolean(), start: hhmm, end: hhmm }).partial().optional(),
+    backupKeep: z.number().int().min(1).max(60).optional(),
+    modelNameFormat: z.enum(["paren", "dash"]).optional(),
+  });
   app.patch("/api/settings", async (req) => {
-    const b = z
-      .object({
-        defaultModel: z.string().optional(),
-        reflectModel: z.string().optional(),
-        newapiAdminToken: z.string().optional(),
-        newapiAdminUserId: z.string().optional(),
-        telegramBotToken: z.string().optional(),
-        telegramChatId: z.string().optional(),
-        autoResume: z.boolean().optional(),
-        approvalMode: z.enum(["ask", "smart", "auto"]).optional(),
-      })
-      .parse(req.body);
-    if (b.approvalMode) kvSet(db, "settings.approvalMode", b.approvalMode);
-    if (b.autoResume !== undefined) kvSet(db, "settings.autoResume", String(b.autoResume));
+    const b = SettingsPatch.parse(req.body);
+    checkModel(b.defaultModel);
+    checkModel(b.reflectModel);
+    const set = (key: string, v: unknown) => v !== undefined && kvSet(db, `settings.${key}`, String(v));
+    for (const key of ["approvalMode", "autoResume", "maxAutoResumes", "runTimeoutMinutes", "runWatchdogMinutes", "agentIdleMinutes", "desktopIdleMinutes", "autoReflect", "reflectMinToolCalls", "backupKeep", "modelNameFormat"] as const)
+      set(key, b[key]);
     if (b.defaultModel) kvSet(db, "settings.defaultModel", b.defaultModel);
     if (b.reflectModel) kvSet(db, "settings.reflectModel", b.reflectModel);
+    if (b.defaultEffort !== undefined) kvSet(db, "settings.defaultEffort", b.defaultEffort ?? "");
+    for (const [k, v] of Object.entries(b.notifyOn ?? {})) set(`notify.${k}`, v);
+    for (const [k, v] of Object.entries(b.quietHours ?? {})) set(`quiet.${k}`, v);
     if (b.newapiAdminToken !== undefined) b.newapiAdminToken ? hub.secrets.set("settings", "newapiAdminToken", b.newapiAdminToken) : hub.secrets.delete("settings", "newapiAdminToken");
     if (b.newapiAdminUserId) kvSet(db, "settings.newapiAdminUserId", b.newapiAdminUserId);
     if (b.telegramBotToken !== undefined) b.telegramBotToken ? hub.secrets.set("settings", "telegramBotToken", b.telegramBotToken) : hub.secrets.delete("settings", "telegramBotToken");
@@ -608,8 +723,8 @@ export function registerRoutes(hub: Hub): void {
       dbSizeMb: +(fs.statSync(config.dbPath).size / 1e6).toFixed(1),
       containers: containerList.map((c) => ({ name: c.Names[0]?.slice(1), state: c.State, status: c.Status, role: c.Labels["dev.constella.role"] })),
       backups,
-      newapi: await newapi
-        .models()
+      newapi: await models
+        .remoteModels("newapi")
         .then((m) => ({ ok: true, models: m.length }))
         .catch((e) => ({ ok: false, error: e.message })),
       version: "0.1.0",

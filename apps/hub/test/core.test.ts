@@ -23,6 +23,11 @@ const { SecretBox, redact } = await import("../src/secrets.ts");
 const { hashPassword, verifyPassword } = await import("../src/auth.ts");
 const { transcriptFor } = await import("../src/learning.ts");
 const { parseJsonLoose } = await import("../src/newapi.ts");
+const { ModelRegistry } = await import("../src/models.ts");
+const { SecretStore } = await import("../src/secrets.ts");
+const { kvSet } = await import("../src/db.ts");
+const { Settings } = await import("../src/app.ts");
+const { Notifier } = await import("../src/notify.ts");
 
 describe("run state machine", () => {
   it("allows the normal lifecycle and rejects leaving terminal states", () => {
@@ -97,6 +102,30 @@ describe("RunManager", () => {
     await new Promise((res) => setTimeout(res, 10));
     expect(sent[2].model).toBe("m");
     expect(sent[2].effort).toBeUndefined();
+  });
+
+  it("starts runs on the model's provider and keeps the reference on the run", async () => {
+    const provider = { id: "p-x", name: "X", baseUrl: "https://x/v1", apiKey: "k" };
+    const resolving = new RunManager({
+      db,
+      events: new EventStore(db),
+      ensureRunner: async () => {},
+      sendToRunner: (_a, msg) => {
+        sent.push(msg);
+        return true;
+      },
+      startPayload: () => ({ model: "m@newapi", instructions: "i", approvalPolicy: "auto", skillRoots: [] }),
+      notify: () => {},
+      resolveModel: (ref) => {
+        if (ref.endsWith("@gone")) throw new Error("provider 已被删除");
+        return { model: ref.split("@")[0]!, provider };
+      },
+    });
+    const r = await resolving.send({ agentId: "ag1", text: "a", model: "gpt-x@p-x" });
+    await new Promise((res) => setTimeout(res, 10));
+    expect(sent[0]).toMatchObject({ t: "start", model: "gpt-x", provider });
+    expect(resolving.get(r.runId)!.model).toBe("gpt-x@p-x");
+    await expect(resolving.send({ agentId: "ag1", text: "b", model: "y@gone" })).rejects.toThrow("provider 已被删除");
   });
 
   it("continues runs a restart cut off, but not forever and not when turned off", async () => {
@@ -382,3 +411,100 @@ describe("destructive action classifier", () => {
   });
 });
 
+
+describe("model registry", () => {
+  const box = new SecretBox(Buffer.alloc(32, 7).toString("base64"));
+  const make = () => {
+    const db = openDb(":memory:");
+    return { db, reg: new ModelRegistry({ db, secrets: new SecretStore(db, box), newapiBaseUrl: "http://newapi:3000", newapiKey: () => "sk-builtin" }) };
+  };
+
+  it("parses refs: a known provider after the last @, otherwise a bare new-api model", () => {
+    const { reg } = make();
+    expect(reg.parse("gpt-5@p-cli")).toEqual({ model: "gpt-5", provider: "p-cli" });
+    expect(reg.parse("openai/gpt-4o@newapi")).toEqual({ model: "openai/gpt-4o", provider: "newapi" });
+    expect(reg.parse("claude-3@20240620")).toEqual({ model: "claude-3@20240620", provider: "newapi" });
+    expect(reg.parse("mimo")).toEqual({ model: "mimo", provider: "newapi" });
+    expect(reg.normalize("mimo@newapi")).toBe("mimo");
+    expect(reg.normalize("mimo@p-cli")).toBe("mimo@p-cli");
+  });
+
+  it("names models 'model (provider)', lets one entry per name drop the provider, and honours the format", () => {
+    const { db, reg } = make();
+    const p = reg.addProvider({ name: "CLI Proxy", baseUrl: "http://cli:8317/v1/", apiKey: "sk-cli" });
+    expect(p).toMatchObject({ id: "p-cli-proxy", baseUrl: "http://cli:8317/v1" });
+    expect(reg.addProvider({ name: "中转", baseUrl: "https://a.example/v1", apiKey: "" }).id).toBe("p-provider");
+    expect(() => reg.addProvider({ name: "cli proxy", baseUrl: "http://x", apiKey: "" })).toThrow("已有");
+    reg.add("newapi", ["gpt-5", "mimo"]);
+    reg.add(p.id, ["gpt-5"]);
+    const label = (ref: string) => reg.list().find((m) => m.ref === ref)!.label;
+    expect(reg.list().map((m) => m.ref)).toEqual(["gpt-5", "mimo", "gpt-5@p-cli-proxy"]);
+    expect(label("gpt-5")).toBe("gpt-5 (new-api)");
+    expect(label("gpt-5@p-cli-proxy")).toBe("gpt-5 (CLI Proxy)");
+    reg.setBare("gpt-5", true);
+    expect(label("gpt-5")).toBe("gpt-5");
+    reg.setBare("gpt-5@p-cli-proxy", true);
+    expect(label("gpt-5")).toBe("gpt-5 (new-api)");
+    expect(label("gpt-5@p-cli-proxy")).toBe("gpt-5");
+    kvSet(db, "settings.modelNameFormat", "dash");
+    expect(label("mimo")).toBe("mimo - new-api");
+    expect(reg.resolve("gpt-5@p-cli-proxy")).toEqual({ model: "gpt-5", provider: { id: "p-cli-proxy", name: "CLI Proxy", baseUrl: "http://cli:8317/v1", apiKey: "sk-cli" } });
+    expect(reg.resolve("mimo").provider).toMatchObject({ id: "newapi", envKey: "NEWAPI_API_KEY", baseUrl: "http://newapi:3000/v1" });
+    expect(reg.keys()).toEqual(["sk-builtin", "sk-cli"]);
+  });
+
+  it("knows who still uses a provider, and removing it drops its models", () => {
+    const { db, reg } = make();
+    const p = reg.addProvider({ name: "Other", baseUrl: "https://o/v1", apiKey: "k" });
+    reg.add(p.id, ["a", "b"]);
+    db.prepare(
+      `INSERT INTO agents (id, name, emoji, template, persona, model, approval_policy, desktop_policy, token_hash, created_at, updated_at)
+       VALUES ('ag1', '助理', '✨', 'assistant', 'p', 'a@p-other', 'auto', '{"mode":"none"}', 'h', 'now', 'now')`,
+    ).run();
+    expect(reg.usersOf(p.id, ["b@p-other"])).toEqual(["agent「助理」", "默认模型设置"]);
+    expect(() => reg.removeProvider("newapi")).toThrow();
+    reg.removeProvider(p.id);
+    expect(reg.list()).toEqual([]);
+    expect(() => reg.resolve("a@p-other")).toThrow("已被删除");
+  });
+});
+
+describe("settings", () => {
+  const box = new SecretBox(Buffer.alloc(32, 7).toString("base64"));
+  const make = () => {
+    const db = openDb(":memory:");
+    const secrets = new SecretStore(db, box);
+    return { db, settings: new Settings(db, secrets, new ModelRegistry({ db, secrets, newapiBaseUrl: "http://n", newapiKey: () => "" })) };
+  };
+
+  it("falls back to env defaults and normalizes model refs", () => {
+    const { db, settings } = make();
+    expect(settings.limits()).toMatchObject({ maxAutoResumes: 3 });
+    expect(settings.defaultModel()).not.toContain("@");
+    kvSet(db, "settings.runWatchdogMinutes", "0");
+    kvSet(db, "settings.autoReflect", "false");
+    expect(settings.limits().runWatchdogMinutes).toBe(0);
+    expect(settings.reflection()).toEqual({ enabled: false, minToolCalls: 3 });
+  });
+
+  it("knows quiet hours, including ranges past midnight", () => {
+    const { db, settings } = make();
+    const at = (hm: string) => new Date(`2026-10-14T${hm}:00+08:00`);
+    expect(settings.isQuiet(at("23:30"))).toBe(false);
+    kvSet(db, "settings.quiet.enabled", "true");
+    expect(settings.isQuiet(at("23:30"))).toBe(true);
+    expect(settings.isQuiet(at("07:59"))).toBe(true);
+    expect(settings.isQuiet(at("08:00"))).toBe(false);
+    kvSet(db, "settings.quiet.start", "12:00");
+    kvSet(db, "settings.quiet.end", "13:30");
+    expect(settings.isQuiet(at("12:45"))).toBe(true);
+    expect(settings.isQuiet(at("23:30"))).toBe(false);
+  });
+
+  it("keeps notifications in the inbox when their push is turned off", async () => {
+    const db = openDb(":memory:");
+    const n = new Notifier(db, new EventStore(db), { publicKey: "", privateKey: "", subject: "mailto:t@t" }, () => null);
+    expect(await n.send("任务完成", "x", "/", { push: false })).toEqual({ push: 0, telegram: false });
+    expect(n.inbox()).toHaveLength(1);
+  });
+});

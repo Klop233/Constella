@@ -8,10 +8,12 @@ import { Badge, Card, Empty, Header, IconButton, Loading, Section, Sheet, cx } f
 import { api } from "../lib/api";
 import { STATUS_TEXT, statusTone, timeAgo } from "../lib/format";
 import { useLiveStatus } from "../lib/live";
+import { useModelLabel } from "../lib/models";
 import type { Overview } from "../lib/types";
 
 export default function Home() {
   const nav = useNavigate();
+  const modelLabel = useModelLabel();
   const qc = useQueryClient();
   const live = useLiveStatus();
   const [inbox, setInbox] = useState(false);
@@ -82,7 +84,7 @@ export default function Home() {
                         <AgentStatus agent={a} />
                       </div>
                     </div>
-                    <div className="mt-2.5 text-xs text-muted truncate">{a.model}</div>
+                    <div className="mt-2.5 text-xs text-muted truncate">{modelLabel(a.model)}</div>
                   </Card>
                 ))}
               </div>

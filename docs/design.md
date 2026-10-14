@@ -17,7 +17,7 @@
 - 手机 App（Android）：同时管理多个 agent，聊天、审批，在 App 里查看并接管桌面；
 - 桌面按需分配：不是每个 agent 都有桌面；
 - 自学习：保留 旧工具 那样的记忆和技能沉淀，并且看得见、能撤销；
-- 模型统一走现有的 new-api，按 agent 统计用量、设置预算；
+- 模型默认走现有的 new-api，按 agent 统计用量、设置预算；也可以加别的 provider（必须支持 Responses API，Codex 只走这个接口），内置 new-api 的模型直接用模型名，其他 provider 的模型以 `model@provider` 引用；
 - 访问方式：Tailscale 加公网（Cloudflare）两条入口；
 - 默认隔离运行，必要时再授权；
 - 不迁移 旧工具 的任何数据，旧工具 整体删除（2026-10-13 决定）。

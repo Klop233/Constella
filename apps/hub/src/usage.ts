@@ -140,8 +140,16 @@ export function usageStats(
   };
 }
 
-/** Loads usage events since `since`, skipping replays (a resumed thread re-reports its last request with durationMs 0). */
-export function loadUsage(db: Db, since: string, filter: { agentId?: string; model?: string }): { events: UsageEvent[]; runs: Map<string, RunInfo> } {
+/**
+ * Loads usage events since `since`, skipping replays (a resumed thread re-reports its last request with durationMs 0).
+ * Each event's model becomes its run's model reference ("model@provider"), passed through `normalize`.
+ */
+export function loadUsage(
+  db: Db,
+  since: string,
+  filter: { agentId?: string; model?: string },
+  normalize: (ref: string) => string = (ref) => ref,
+): { events: UsageEvent[]; runs: Map<string, RunInfo> } {
   const rows = db
     .prepare(`SELECT data FROM events WHERE type = 'usage' AND ts >= ? ${filter.agentId ? "AND agent_id = ?" : ""} ORDER BY ts`)
     .all(...([since, filter.agentId].filter(Boolean) as string[])) as { data: string }[];
@@ -149,7 +157,6 @@ export function loadUsage(db: Db, since: string, filter: { agentId?: string; mod
   for (const { data } of rows) {
     const e = JSON.parse(data);
     if (e.durationMs === 0) continue;
-    if (filter.model && e.model !== filter.model) continue;
     events.push({
       ts: e.ts,
       runId: e.runId,
@@ -169,5 +176,6 @@ export function loadUsage(db: Db, since: string, filter: { agentId?: string; mod
     const rs = db.prepare(`SELECT id, conversation_id, status, model, agent_id FROM runs WHERE id IN (${chunk.map(() => "?").join(",")})`).all(...chunk) as unknown as RunInfo[];
     for (const r of rs) runs.set(r.id, r);
   }
-  return { events, runs };
+  for (const e of events) e.model = normalize(runs.get(e.runId)?.model ?? e.model);
+  return { events: filter.model ? events.filter((e) => e.model === filter.model) : events, runs };
 }

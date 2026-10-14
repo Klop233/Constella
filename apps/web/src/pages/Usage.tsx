@@ -11,11 +11,12 @@ import type { RunStatus } from "../lib/types";
 interface Stats {
   totals: { requests: number; runs: number; input: number; cached: number; output: number; reasoning: number; hitRate: number | null };
   trend: { label: string; tokens: number; requests: number }[];
-  models: { model: string; requests: number; runs: number; input: number; cached: number; output: number; successRate: number | null; tps: number | null; avgMs: number | null }[];
+  models: { model: string; label: string; providerName: string; requests: number; runs: number; input: number; cached: number; output: number; successRate: number | null; tps: number | null; avgMs: number | null }[];
+  providers: { provider: string; name: string; requests: number; input: number; cached: number; output: number; models: number }[];
   agents: { agentId: string; name: string; emoji: string; requests: number; input: number; cached: number; output: number; spendUsd: number | null }[];
-  log: { ts: string; agentId: string; model: string; input: number; cached: number; output: number; durationMs: number | null; tps: number | null; conversationId: string | null; status: RunStatus | null }[];
+  log: { ts: string; agentId: string; model: string; label: string; input: number; cached: number; output: number; durationMs: number | null; tps: number | null; conversationId: string | null; status: RunStatus | null }[];
   spendUsd: number | null;
-  filters: { models: string[]; agents: { id: string; name: string; emoji: string }[] };
+  filters: { models: { ref: string; label: string }[]; providers: { id: string; name: string }[]; agents: { id: string; name: string; emoji: string }[] };
 }
 
 const RANGES = [
@@ -39,10 +40,11 @@ export default function Usage() {
   const [range, setRange] = useState<"today" | "7d" | "30d">("today");
   const [agent, setAgent] = useState("");
   const [model, setModel] = useState("");
+  const [provider, setProvider] = useState("");
   const [metric, setMetric] = useState<"tokens" | "requests">("tokens");
-  const [tab, setTab] = useState<"models" | "agents" | "log">("models");
-  const qs = new URLSearchParams({ range, ...(agent && { agent }), ...(model && { model }) });
-  const q = useQuery({ queryKey: ["usage-stats", range, agent, model], queryFn: () => api.get<Stats>(`/api/usage/stats?${qs}`), refetchInterval: 30_000 });
+  const [tab, setTab] = useState<"models" | "providers" | "agents" | "log">("models");
+  const qs = new URLSearchParams({ range, ...(agent && { agent }), ...(model && { model }), ...(provider && { provider }) });
+  const q = useQuery({ queryKey: ["usage-stats", range, agent, model, provider], queryFn: () => api.get<Stats>(`/api/usage/stats?${qs}`), refetchInterval: 30_000 });
   const d = q.data;
   const agentName = (id: string) => d?.filters.agents.find((a) => a.id === id);
   const step = d ? Math.ceil(d.trend.length / (range === "30d" ? 8 : 7)) : 1;
@@ -68,11 +70,21 @@ export default function Usage() {
               </option>
             ))}
           </select>
+          {(d?.filters.providers.length ?? 0) > 1 && (
+            <select aria-label="provider" className={selectClass} value={provider} onChange={(e) => setProvider(e.target.value)}>
+              <option value="">全部 provider</option>
+              {d?.filters.providers.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+          )}
           <select aria-label="模型" className={selectClass} value={model} onChange={(e) => setModel(e.target.value)}>
             <option value="">全部模型</option>
             {d?.filters.models.map((m) => (
-              <option key={m} value={m}>
-                {m}
+              <option key={m.ref} value={m.ref}>
+                {m.label}
               </option>
             ))}
           </select>
@@ -126,6 +138,7 @@ export default function Usage() {
               onChange={setTab}
               options={[
                 { value: "models", label: "模型" },
+                { value: "providers", label: "Provider" },
                 { value: "agents", label: "agent" },
                 { value: "log", label: "请求日志" },
               ]}
@@ -153,7 +166,7 @@ export default function Usage() {
                       <tbody>
                         {d.models.map((m) => (
                           <tr key={m.model} className="border-b border-line">
-                            <Td className="font-mono text-[12.5px]">{m.model}</Td>
+                            <Td className="font-mono text-[12.5px]">{m.label}</Td>
                             <Td right>{m.requests}</Td>
                             <Td right>{tokens(m.input + m.output)}</Td>
                             <Td right>{pct(m.input ? m.cached / m.input : null)}</Td>
@@ -169,6 +182,32 @@ export default function Usage() {
                               )}
                             </Td>
                             <Td right>{m.avgMs != null ? `${(m.avgMs / 1000).toFixed(1)}s` : <Dash />}</Td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </>
+                  )}
+                  {tab === "providers" && (
+                    <>
+                      <thead>
+                        <tr className="border-b border-line">
+                          <Th>Provider</Th>
+                          <Th right>模型</Th>
+                          <Th right>请求</Th>
+                          <Th right>输入</Th>
+                          <Th right>输出</Th>
+                          <Th right>缓存命中</Th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {d.providers.map((p) => (
+                          <tr key={p.provider} className="border-b border-line">
+                            <Td>{p.name}</Td>
+                            <Td right>{p.models}</Td>
+                            <Td right>{p.requests}</Td>
+                            <Td right>{tokens(p.input)}</Td>
+                            <Td right>{tokens(p.output)}</Td>
+                            <Td right>{pct(p.input ? p.cached / p.input : null)}</Td>
                           </tr>
                         ))}
                       </tbody>
@@ -225,7 +264,7 @@ export default function Usage() {
                             <tr key={i} className="border-b border-line">
                               <Td className="text-muted">{new Date(l.ts).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" })}</Td>
                               <Td>{a ? `${a.emoji} ${a.name}` : <Dash />}</Td>
-                              <Td className="font-mono text-[12.5px]">{l.model}</Td>
+                              <Td className="font-mono text-[12.5px]">{l.label}</Td>
                               <Td right>{tokens(l.input)}</Td>
                               <Td right>{tokens(l.cached)}</Td>
                               <Td right>{tokens(l.output)}</Td>
@@ -256,7 +295,7 @@ export default function Usage() {
                   )}
                 </table>
                 <div className="pt-2.5 text-xs text-muted">
-                  共 {tab === "models" ? d.models.length : tab === "agents" ? d.agents.length : d.log.length} 条记录
+                  共 {tab === "models" ? d.models.length : tab === "providers" ? d.providers.length : tab === "agents" ? d.agents.length : d.log.length} 条记录
                 </div>
               </div>
             )}

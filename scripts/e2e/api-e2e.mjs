@@ -76,6 +76,8 @@ console.log("  answer:", answer.slice(0, 80));
 assert.ok(answer.includes("蓝色星星"));
 
 step("approval flow (ask mode)");
+// The default "smart" mode would approve this harmless command by itself.
+await call("PATCH", "/api/settings", { approvalMode: "ask" });
 await call("PATCH", `/api/agents/${agent.id}`, { approvalPolicy: "ask" });
 r = await post(`/api/agents/${agent.id}/messages`, { text: "运行这个命令：echo approved > /workspace/approval.txt ，然后回复“好了”。" });
 let w = await waitRun(r.conversationId, (run, conv) => conv.approvals.length > 0 || done(run), 180_000);

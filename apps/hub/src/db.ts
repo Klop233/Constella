@@ -81,6 +81,19 @@ const MIGRATIONS: string[] = [
   `,
 ];
 
+/**
+ * Model providers besides the built-in new-api, and the models picked from them. Created idempotently instead
+ * of as a numbered migration, so it can't take the same slot as a migration added on another branch.
+ */
+const ENSURE = `
+  CREATE TABLE IF NOT EXISTS providers (id TEXT PRIMARY KEY, name TEXT NOT NULL, base_url TEXT NOT NULL, created_at TEXT NOT NULL);
+  CREATE TABLE IF NOT EXISTS models (
+    model TEXT NOT NULL, provider TEXT NOT NULL, bare INTEGER NOT NULL DEFAULT 0,
+    test_ok INTEGER, test_ms INTEGER, test_error TEXT, tested_at TEXT, created_at TEXT NOT NULL,
+    PRIMARY KEY (model, provider)
+  );
+`;
+
 export type Db = DatabaseSync;
 
 export function openDb(file: string): Db {
@@ -102,6 +115,7 @@ export function openDb(file: string): Db {
       throw err;
     }
   }
+  db.exec(ENSURE);
   return db;
 }
 

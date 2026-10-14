@@ -9,6 +9,16 @@ export type RunnerEvent = DistributiveOmit<AgentEvent, "id" | "seq" | "ts" | "ag
 export const ApprovalPolicy = z.enum(["auto", "ask"]);
 export type ApprovalPolicy = z.infer<typeof ApprovalPolicy>;
 
+/** An OpenAI-compatible endpoint (Responses API) for Codex's `model_providers`. */
+export interface EngineProvider {
+  id: string;
+  name: string;
+  baseUrl: string;
+  /** Environment variable holding the key, or the key itself. */
+  envKey?: string;
+  apiKey?: string;
+}
+
 export type HubToRunner =
   | {
       t: "start";
@@ -19,6 +29,8 @@ export type HubToRunner =
       text: string;
       images?: string[];
       model: string;
+      /** Where the model is served; absent means the "newapi" provider from config.toml. */
+      provider?: EngineProvider;
       effort?: "low" | "medium" | "high" | "xhigh";
       instructions: string;
       approvalPolicy: ApprovalPolicy;

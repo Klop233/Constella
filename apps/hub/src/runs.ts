@@ -1,4 +1,4 @@
-import { canTransition, isTerminal, type HubToRunner, type RunStatus, type RunnerEvent } from "@constella/protocol";
+import { canTransition, isTerminal, type EngineProvider, type HubToRunner, type RunStatus, type RunnerEvent } from "@constella/protocol";
 import { config, newId, nowIso } from "./config.ts";
 import { audit, type Db } from "./db.ts";
 import { decideApproval, type ApprovalMode } from "./safety.ts";
@@ -52,20 +52,34 @@ export interface RunDeps {
     approvalPolicy: "auto" | "ask";
     skillRoots: string[];
   };
-  notify(title: string, body: string, url?: string): void;
+  notify(title: string, body: string, url: string, kind: NotifyKind): void;
+  /** Model reference ("model@provider") → the model name and provider the engine should use. Throws when unusable. */
+  resolveModel?(ref: string): { model: string; provider: EngineProvider };
   /** Whether runs cut off by an agent / hub restart are continued automatically. */
   autoResume?(): boolean;
+  /** Run length / stall limits and how many automatic continuations in a row to allow. */
+  limits?(): RunLimits;
   /** How approval requests are decided: always ask, ask only for destructive actions, or approve all. */
   approvalMode?(): ApprovalMode;
   /** Wait before the 1st, 2nd, 3rd automatic continuation in a row (tests pass zeros). */
   resumeDelaysMs?: number[];
 }
 
+export type NotifyKind = "done" | "failed" | "approval" | "stuck";
+
+export interface RunLimits {
+  /** A turn running longer than this is stopped and continued in a fresh one. */
+  runTimeoutMinutes: number;
+  /** Notify when a run makes no progress for this long (0 = never). */
+  runWatchdogMinutes: number;
+  maxAutoResumes: number;
+}
+
+const DEFAULT_LIMITS: RunLimits = { runTimeoutMinutes: config.runTimeoutMinutes, runWatchdogMinutes: config.runWatchdogMinutes, maxAutoResumes: 3 };
+
 /** Prompt of a run started automatically to continue one that was cut off. */
 export const RESUME_PREFIX = "［自动继续］";
 const resumeText = (why: string) => `${RESUME_PREFIX}上次任务因为${why}中断了，请从中断的地方继续完成。`;
-/** Give up after this many automatic continuations in a row that also got cut off. */
-const MAX_AUTO_RESUMES = 3;
 const RESUME_DELAYS_MS = [3_000, 30_000, 120_000];
 /** Engine failures worth retrying: crashes, dropped connections, rate limits, upstream 5xx. */
 const TRANSIENT =
@@ -93,6 +107,10 @@ export class RunManager {
 
   constructor(deps: RunDeps) {
     this.#d = deps;
+  }
+
+  #limits(): RunLimits {
+    return this.#d.limits?.() ?? DEFAULT_LIMITS;
   }
 
   onFinished(hook: FinishedHook): void {
@@ -148,6 +166,7 @@ export class RunManager {
     let conv = input.conversationId ? this.conversation(input.conversationId) : undefined;
     if (input.conversationId && !conv) throw new Error("conversation not found");
     if (conv && conv.agent_id !== input.agentId) throw new Error("conversation belongs to another agent");
+    if (input.model) this.#d.resolveModel?.(input.model);
     if (!conv) conv = this.createConversation(input.agentId, titleFrom(input.text), input.source ?? "user");
     if (input.model !== undefined || input.effort !== undefined) conv = this.setConversationModel(conv.id, input);
 
@@ -162,6 +181,7 @@ export class RunManager {
     const payload = this.#d.startPayload(input.agentId);
     if (conv.model) payload.model = conv.model;
     if (conv.effort) payload.effort = conv.effort;
+    const target = this.#d.resolveModel?.(payload.model);
     const run: RunRow = {
       id: newId("run"),
       conversation_id: conv.id,
@@ -202,6 +222,7 @@ export class RunManager {
           text: input.text,
           images: input.images,
           ...payload,
+          ...(target ? { model: target.model, provider: target.provider } : {}),
         });
         if (!ok) throw new Error("runner not connected");
       } catch (err) {
@@ -224,7 +245,7 @@ export class RunManager {
 
   finish(runId: string, status: "done" | "failed" | "cancelled", error?: string): void {
     if (!this.transition(runId, status, error)) return;
-    if (this.#resumeOnCancel.delete(runId)) this.#maybeResume(runId, resumeText(`单轮运行超过 ${config.runTimeoutMinutes} 分钟`));
+    if (this.#resumeOnCancel.delete(runId)) this.#maybeResume(runId, resumeText(`单轮运行超过 ${this.#limits().runTimeoutMinutes} 分钟`));
     this.#watchdogNotified.delete(runId);
     this.#d.events.forget(runId);
     for (const [id, a] of this.#hubApprovals) {
@@ -239,9 +260,9 @@ export class RunManager {
     const agent = this.#d.db.prepare("SELECT name FROM agents WHERE id = ?").get(run.agent_id) as { name: string } | undefined;
     const long = Date.now() - Date.parse(run.created_at) > 60_000;
     if (status === "failed") {
-      this.#d.notify(`${agent?.name ?? "agent"} 任务失败`, (error ?? "").slice(0, 120) || run.prompt.slice(0, 80), `/c/${run.conversation_id}`);
+      this.#d.notify(`${agent?.name ?? "agent"} 任务失败`, (error ?? "").slice(0, 120) || run.prompt.slice(0, 80), `/c/${run.conversation_id}`, "failed");
     } else if (status === "done" && (long || conv?.source !== "user")) {
-      this.#d.notify(`${agent?.name ?? "agent"} 完成了任务`, run.prompt.slice(0, 100), `/c/${run.conversation_id}`);
+      this.#d.notify(`${agent?.name ?? "agent"} 完成了任务`, run.prompt.slice(0, 100), `/c/${run.conversation_id}`, "done");
     }
     for (const hook of this.#finishedHooks) {
       try {
@@ -314,12 +335,13 @@ export class RunManager {
     const run = this.get(runId);
     if (!run) return;
     // How many automatic continuations in a row led here; stop once they keep getting cut off.
+    const max = this.#limits().maxAutoResumes;
     const recent = this.#d.db
       .prepare("SELECT prompt FROM runs WHERE conversation_id = ? ORDER BY created_at DESC LIMIT ?")
-      .all(run.conversation_id, MAX_AUTO_RESUMES) as { prompt: string }[];
+      .all(run.conversation_id, max) as { prompt: string }[];
     let streak = 0;
     while (streak < recent.length && recent[streak]!.prompt.startsWith(RESUME_PREFIX)) streak++;
-    if (streak >= MAX_AUTO_RESUMES) return;
+    if (streak >= max) return;
     const delays = this.#d.resumeDelaysMs ?? RESUME_DELAYS_MS;
     setTimeout(() => {
       // The user may have sent something meanwhile; don't stack a continuation on top of it.
@@ -432,25 +454,26 @@ export class RunManager {
     const { db } = this.#d;
     const rows = db.prepare("SELECT * FROM runs WHERE status IN ('running','queued')").all() as unknown as RunRow[];
     const now = Date.now();
+    const limits = this.#limits();
     for (const run of rows) {
       const idle = now - Date.parse(run.last_event_at ?? run.created_at);
       const age = now - Date.parse(run.created_at);
-      if (age > config.runTimeoutMinutes * 60_000) {
+      if (age > limits.runTimeoutMinutes * 60_000) {
         // Long tasks get split rather than dropped: stop this turn, then continue in a fresh one.
         this.#resumeOnCancel.add(run.id);
         void this.interrupt(run.id, "watchdog");
         continue;
       }
-      if (idle > config.runWatchdogMinutes * 60_000 && !this.#watchdogNotified.has(run.id)) {
+      if (limits.runWatchdogMinutes > 0 && idle > limits.runWatchdogMinutes * 60_000 && !this.#watchdogNotified.has(run.id)) {
         this.#watchdogNotified.add(run.id);
-        this.#d.notify("任务可能卡住了", `已 ${Math.round(idle / 60_000)} 分钟没有进展：${run.prompt.slice(0, 60)}`, `/c/${run.conversation_id}`);
+        this.#d.notify("任务可能卡住了", `已 ${Math.round(idle / 60_000)} 分钟没有进展：${run.prompt.slice(0, 60)}`, `/c/${run.conversation_id}`, "stuck");
       }
     }
   }
 
   #notifyApproval(run: RunRow, summary: string): void {
     const agent = this.#d.db.prepare("SELECT name FROM agents WHERE id = ?").get(run.agent_id) as { name: string } | undefined;
-    this.#d.notify(`${agent?.name ?? "agent"} 请求审批`, summary.slice(0, 140), `/c/${run.conversation_id}`);
+    this.#d.notify(`${agent?.name ?? "agent"} 请求审批`, summary.slice(0, 140), `/c/${run.conversation_id}`, "approval");
   }
 
   #append(run: Pick<RunRow, "id" | "agent_id" | "conversation_id">, ev: RunnerEvent): void {

@@ -1,7 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import readline from "node:readline";
-import type { HubToRunner, RunnerEvent } from "@constella/protocol";
+import type { EngineProvider, HubToRunner, RunnerEvent } from "@constella/protocol";
 
 type StartCmd = Extract<HubToRunner, { t: "start" }>;
 type Json = Record<string, any>;
@@ -48,6 +48,8 @@ export class CodexEngine {
   #runs = new Map<string, ActiveRun>();
   #approvals = new Map<string, PendingApproval>();
   #skillRoots = "";
+  /** Provider each thread was loaded with in this app-server; a loaded thread keeps it until unloaded. */
+  #threadProviders = new Map<string, string>();
   #ready: Promise<void> | null = null;
   #sink: EngineSink;
 
@@ -67,15 +69,19 @@ export class CodexEngine {
         await this.#request("skills/extraRoots/set", { extraRoots: cmd.skillRoots });
         this.#skillRoots = roots;
       }
+      const providerId = cmd.provider?.id ?? "newapi";
       const threadParams = {
         model: cmd.model,
         cwd: "/workspace",
         approvalPolicy: cmd.approvalPolicy === "ask" ? "untrusted" : "never",
         sandbox: "danger-full-access",
         developerInstructions: cmd.instructions,
+        ...(cmd.provider ? { modelProvider: providerId, config: { [`model_providers.${providerId}`]: providerConfig(cmd.provider) } } : {}),
       };
       let threadId = cmd.threadId;
       if (threadId) {
+        const loaded = this.#threadProviders.get(threadId);
+        if (loaded && loaded !== providerId) await this.#unload(threadId);
         try {
           await this.#request("thread/resume", { threadId, ...threadParams, excludeTurns: true });
         } catch {
@@ -86,6 +92,7 @@ export class CodexEngine {
         const res = await this.#request("thread/start", threadParams);
         threadId = res.thread.id as string;
       }
+      this.#threadProviders.set(threadId, providerId);
       this.#sink.thread(cmd.runId, threadId);
       const run: ActiveRun = {
         runId: cmd.runId,
@@ -146,6 +153,17 @@ export class CodexEngine {
     this.#proc?.kill();
   }
 
+  /** Drop a thread from the app-server so the next resume picks up a different provider. */
+  async #unload(threadId: string): Promise<void> {
+    this.#threadProviders.delete(threadId);
+    await this.#request("thread/unsubscribe", { threadId }).catch(() => {});
+    for (let i = 0; i < 20; i++) {
+      const res = await this.#request("thread/loaded/list", {}).catch(() => ({ data: [] }));
+      if (!(res.data ?? []).includes(threadId)) return;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+  }
+
   #ensureProcess(): Promise<void> {
     if (this.#ready) return this.#ready;
     this.#ready = new Promise<void>((resolve, reject) => {
@@ -161,6 +179,7 @@ export class CodexEngine {
         this.#proc = null;
         this.#ready = null;
         this.#skillRoots = "";
+        this.#threadProviders.clear();
         for (const p of this.#pending.values()) p.reject(new Error("codex app-server exited"));
         this.#pending.clear();
         for (const runId of [...this.#runs.keys()]) this.#finish(runId, "failed", "codex app-server exited");
@@ -375,6 +394,18 @@ export class CodexEngine {
     for (const [id, a] of this.#approvals) if (a.runId === runId) this.#approvals.delete(id);
     this.#sink.done(runId, status, error);
   }
+}
+
+/** Codex `model_providers` entry; every provider must speak the Responses API (Codex dropped chat completions). */
+function providerConfig(p: EngineProvider): Json {
+  return {
+    name: p.name,
+    base_url: p.baseUrl,
+    wire_api: "responses",
+    request_max_retries: 4,
+    stream_max_retries: 5,
+    ...(p.envKey ? { env_key: p.envKey } : p.apiKey ? { experimental_bearer_token: p.apiKey } : {}),
+  };
 }
 
 function errMessage(err: unknown): string {

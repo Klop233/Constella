@@ -4,7 +4,7 @@ import { config } from "./config.ts";
 import type { Db } from "./db.ts";
 import type { EventStore } from "./events.ts";
 import { KnowledgeOps, MEMORY_LIMIT, type Knowledge, type LearningEvent } from "./knowledge.ts";
-import type { NewApi } from "./newapi.ts";
+import type { ModelRegistry } from "./models.ts";
 import type { RunRow } from "./runs.ts";
 
 const REFLECT_SYSTEM = `你是一个 AI 助手团队的"复盘员"。你会读到某个 agent 刚完成的一次任务记录，判断其中有没有值得长期保存的知识。
@@ -42,22 +42,33 @@ export class Learning {
   #db: Db;
   #events: EventStore;
   #knowledge: Knowledge;
-  #newapi: NewApi;
+  #llm: Pick<ModelRegistry, "chatJson">;
   #model: () => string;
+  #auto: () => { enabled: boolean; minToolCalls: number };
   #queue: Promise<void> = Promise.resolve();
 
-  constructor(deps: { db: Db; events: EventStore; knowledge: Knowledge; newapi: NewApi; model: () => string }) {
+  constructor(deps: {
+    db: Db;
+    events: EventStore;
+    knowledge: Knowledge;
+    llm: Pick<ModelRegistry, "chatJson">;
+    model: () => string;
+    /** Reflect on finished runs by themselves, and from how many tool calls on (👍 / 👎 always triggers it). */
+    auto?: () => { enabled: boolean; minToolCalls: number };
+  }) {
     this.#db = deps.db;
     this.#events = deps.events;
     this.#knowledge = deps.knowledge;
-    this.#newapi = deps.newapi;
+    this.#llm = deps.llm;
     this.#model = deps.model;
+    this.#auto = deps.auto ?? (() => ({ enabled: true, minToolCalls: 3 }));
   }
 
   /** Hook for RunManager.onFinished; feedback can also trigger it later. */
   maybeReflect(run: RunRow): void {
     if (run.reflected) return;
-    const worth = run.feedback !== null || (run.status === "done" && run.tool_calls >= 3);
+    const auto = this.#auto();
+    const worth = run.feedback !== null || (auto.enabled && run.status === "done" && run.tool_calls >= auto.minToolCalls);
     if (!worth || run.status === "cancelled") return;
     this.#queue = this.#queue.then(() => this.reflect(run.id).then(() => undefined)).catch((err) => {
       console.error("reflection failed", err);
@@ -78,7 +89,7 @@ export class Learning {
       `## 已有技能\n${skills.join("\n") || "（无）"}`,
       `## 本次任务（状态：${run.status}${run.feedback === 1 ? "，用户点赞" : run.feedback === -1 ? "，用户点踩" : ""}）\n${transcript}`,
     ].join("\n\n");
-    const raw = await this.#newapi.chatJson(this.#model(), REFLECT_SYSTEM, user);
+    const raw = await this.#llm.chatJson(this.#model(), REFLECT_SYSTEM, user);
     const parsed = KnowledgeOps.safeParse(raw);
     if (!parsed.success) {
       console.error("reflection output rejected", parsed.error.issues.slice(0, 3));
@@ -98,7 +109,7 @@ export class Learning {
       `## 这个 agent 的记忆\n${memory.agent.trim() || "（空）"}`,
       `## 用户的要求\n${request}`,
     ].join("\n\n");
-    const parsed = Instruct.safeParse(await this.#newapi.chatJson(this.#model(), INSTRUCT_SYSTEM, user));
+    const parsed = Instruct.safeParse(await this.#llm.chatJson(this.#model(), INSTRUCT_SYSTEM, user));
     if (!parsed.success) throw new Error("没理解这个要求，换个说法再试试");
     const events = parsed.data.memory.length
       ? this.#knowledge.apply(agentId, { memory: parsed.data.memory, skills: [], promote: [] }, { runId: null, reason: "用户要求" })
@@ -112,7 +123,7 @@ export class Learning {
     const user = `## 记忆\n${memory.agent}\n\n## 技能（名称 / 说明 / 使用次数）\n${skills
       .map((s) => `- ${s.name} / ${s.description} / ${s.uses}`)
       .join("\n")}`;
-    const raw = await this.#newapi.chatJson(this.#model(), CURATE_SYSTEM, user);
+    const raw = await this.#llm.chatJson(this.#model(), CURATE_SYSTEM, user);
     const parsed = KnowledgeOps.safeParse(raw);
     const out = parsed.success ? this.#knowledge.apply(agentId, { ...parsed.data, skills: [], promote: [] }, { runId: null, reason: "curate" }) : [];
     // Retire agent skills nobody used for 60 days (and older than 60 days).

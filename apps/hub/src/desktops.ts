@@ -45,12 +45,14 @@ export class Desktops {
   /** Agent lease displaced by a takeover, restored on hand-back. */
   #displaced = new Map<string, Extract<DesktopLease, { holder: "agent" }>>();
   #timer: NodeJS.Timeout | null = null;
+  #idleMinutes: () => number;
 
-  constructor(deps: { db: Db; events: EventStore; containers: Containers; runs: RunManager }) {
+  constructor(deps: { db: Db; events: EventStore; containers: Containers; runs: RunManager; idleMinutes?: () => number }) {
     this.#db = deps.db;
     this.#events = deps.events;
     this.#containers = deps.containers;
     this.#runs = deps.runs;
+    this.#idleMinutes = deps.idleMinutes ?? (() => config.desktopIdleMinutes);
   }
 
   rows(): DesktopRow[] {
@@ -299,7 +301,9 @@ export class Desktops {
   }
 
   async #reap(): Promise<void> {
-    const cutoff = Date.now() - config.desktopIdleMinutes * 60_000;
+    const idle = this.#idleMinutes();
+    if (idle <= 0) return;
+    const cutoff = Date.now() - idle * 60_000;
     for (const r of this.rows()) {
       const l = JSON.parse(r.lease) as DesktopLease;
       if (l.holder !== "none" || Date.parse(r.last_used_at) > cutoff) continue;

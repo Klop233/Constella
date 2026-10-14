@@ -7,10 +7,12 @@ import { Markdown } from "../components/Markdown";
 import { Badge, Button, Card, Empty, Field, Header, IconButton, Loading, Row, Section, Segmented, Sheet, cx, inputClass, toast } from "../components/ui";
 import { api } from "../lib/api";
 import { STATUS_TEXT, statusTone, timeAgo } from "../lib/format";
+import { useModelLabel } from "../lib/models";
 import type { Agent, Conversation, Skill } from "../lib/types";
 
 export default function AgentDetail() {
   const { id } = useParams();
+  const modelLabel = useModelLabel();
   const nav = useNavigate();
   const [tab, setTab] = useState<"chats" | "knowledge" | "manage">("chats");
   const agent = useQuery({ queryKey: ["agent", id], queryFn: () => api.get<Agent>(`/api/agents/${id}`) });
@@ -35,7 +37,7 @@ export default function AgentDetail() {
             <div className="text-base font-semibold truncate">{a.name}</div>
             <AgentStatus agent={a} />
             <div className="text-xs text-muted mt-1 truncate">
-              {a.model} · 桌面{a.desktop_policy.mode === "none" ? "：不用" : a.desktop_policy.mode === "fixed" ? "：固定" : "：按需"}
+              {modelLabel(a.model)} · 桌面{a.desktop_policy.mode === "none" ? "：不用" : a.desktop_policy.mode === "fixed" ? "：固定" : "：按需"}
               {a.host_access && " · 可操作宿主机"}
             </div>
           </div>

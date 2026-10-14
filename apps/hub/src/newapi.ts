@@ -1,74 +1,18 @@
-import { config } from "./config.ts";
-
-export interface ModelInfo {
-  id: string;
-  /** Result of the phase 0 compatibility run (docs/spikes/models.md), if known. */
-  compat?: "ok" | "upstream_error";
-}
-
-/** Known results from docs/spikes/models.md; refreshed by re-running scripts/spikes/model-compat.sh. */
-const COMPAT: Record<string, ModelInfo["compat"]> = {
-  "gpt-6-astra": "ok",
-  "gpt-5.6-sol": "ok",
-  "mimo-v2.5-pro": "ok",
-};
-
 /** new-api quota units per USD (new-api's default QuotaPerUnit). */
 const QUOTA_PER_USD = 500_000;
 
-/** Thin client for new-api: OpenAI-compatible endpoints plus the optional admin API. */
+/** Admin API of the built-in new-api: per-agent tokens and spend (model calls go through ModelRegistry). */
 export class NewApi {
   #baseUrl: string;
-  #apiKey: () => string;
   #admin: () => { token: string; userId: string } | null;
-  #modelsCache: { at: number; models: ModelInfo[] } | null = null;
 
-  constructor(opts: {
-    baseUrl: string;
-    apiKey: () => string;
-    admin: () => { token: string; userId: string } | null;
-  }) {
+  constructor(opts: { baseUrl: string; admin: () => { token: string; userId: string } | null }) {
     this.#baseUrl = opts.baseUrl;
-    this.#apiKey = opts.apiKey;
     this.#admin = opts.admin;
   }
 
   get baseUrl(): string {
     return this.#baseUrl;
-  }
-
-  async models(force = false): Promise<ModelInfo[]> {
-    if (!force && this.#modelsCache && Date.now() - this.#modelsCache.at < 5 * 60_000) return this.#modelsCache.models;
-    const res = await fetch(`${this.#baseUrl}/v1/models`, { headers: { Authorization: `Bearer ${this.#apiKey()}` } });
-    if (!res.ok) throw new Error(`new-api /v1/models ${res.status}`);
-    const body = (await res.json()) as { data?: { id: string }[] };
-    const models = (body.data ?? [])
-      .map((m) => ({ id: m.id, compat: COMPAT[m.id] }))
-      .sort((a, b) => Number(!!b.compat) - Number(!!a.compat) || a.id.localeCompare(b.id));
-    this.#modelsCache = { at: Date.now(), models };
-    return models;
-  }
-
-  /** Chat completion that must return a JSON object (used for reflection and curation). */
-  async chatJson(model: string, system: string, user: string, timeoutMs = 120_000): Promise<unknown> {
-    const res = await fetch(`${this.#baseUrl}/v1/chat/completions`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${this.#apiKey()}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model,
-        messages: [
-          { role: "system", content: system },
-          { role: "user", content: user },
-        ],
-        response_format: { type: "json_object" },
-        temperature: 0.2,
-      }),
-      signal: AbortSignal.timeout(timeoutMs),
-    });
-    if (!res.ok) throw new Error(`new-api chat ${res.status}: ${(await res.text()).slice(0, 300)}`);
-    const body = (await res.json()) as { choices?: { message?: { content?: string } }[] };
-    const content = body.choices?.[0]?.message?.content ?? "";
-    return parseJsonLoose(content);
   }
 
   adminEnabled(): boolean {
@@ -131,6 +75,33 @@ export class NewApi {
   }
 }
 
+/** Chat completion on an OpenAI-compatible endpoint that must return a JSON object (reflection, curation, summaries). */
+export async function chatJson(
+  endpoint: { baseUrl: string; apiKey: string },
+  model: string,
+  system: string,
+  user: string,
+  timeoutMs = 120_000,
+): Promise<unknown> {
+  const res = await fetch(`${endpoint.baseUrl}/chat/completions`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${endpoint.apiKey}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model,
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: user },
+      ],
+      response_format: { type: "json_object" },
+      temperature: 0.2,
+    }),
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+  if (!res.ok) throw new Error(`chat ${res.status}: ${(await res.text()).slice(0, 300)}`);
+  const body = (await res.json()) as { choices?: { message?: { content?: string } }[] };
+  return parseJsonLoose(body.choices?.[0]?.message?.content ?? "");
+}
+
 export function parseJsonLoose(text: string): unknown {
   const trimmed = text.trim().replace(/^```(?:json)?\s*/i, "").replace(/```$/, "");
   try {
@@ -143,10 +114,3 @@ export function parseJsonLoose(text: string): unknown {
   }
 }
 
-export function defaultNewApi(): NewApi {
-  return new NewApi({
-    baseUrl: config.newapi.baseUrl,
-    apiKey: () => config.newapi.apiKey,
-    admin: () => (config.newapi.adminToken ? { token: config.newapi.adminToken, userId: config.newapi.adminUserId } : null),
-  });
-}

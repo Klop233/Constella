@@ -7,7 +7,7 @@
 ## 为什么做这个
 
 
-Constella 的思路是：**干活的部分不自己写**，直接用 OpenAI 开源的 Codex 作为 agent 内核；自己只做外面那层，也就是多 agent 管理、桌面、记忆和手机端。模型统一走 [new-api](https://github.com/QuantumNous/new-api)，不绑定任何一家。
+Constella 的思路是：**干活的部分不自己写**，直接用 OpenAI 开源的 Codex 作为 agent 内核；自己只做外面那层，也就是多 agent 管理、桌面、记忆和手机端。模型默认走 [new-api](https://github.com/QuantumNous/new-api)，也可以在设置里再加别的 provider（任何支持 OpenAI Responses API 的地址），不绑定任何一家。
 
 ## 能做什么
 
@@ -37,8 +37,9 @@ Constella 的思路是：**干活的部分不自己写**，直接用 OpenAI 开�
 - 定时任务：定时推送提醒，或者定时让 agent 去做某件事。也可以直接对 agent 说「每天早上 8 点提醒我……」
 - 推送走浏览器原生的 Web Push，可以再配 Telegram 当备用
 - 每个 agent 跑在独立容器里，搞坏了重建就行；需要操作宿主机的（比如运维用的 agent）要单独开权限，非只读命令每条都要你批
+- 「设置 → 模型」：添加多个 provider，每个模型绑定一个 provider，显示成 `model (provider)`；同名模型可以挑一个省略 provider；每个模型一键测试连通；用量按模型、provider、agent 拆开看
 - 可以给每个 agent 在 new-api 里单独开令牌，分开统计花费、设每日预算
-- 每天自动备份，保留最近 7 份
+- 每天自动备份，默认保留最近 7 份；自动继续、单轮时长、卡住提醒、闲置休眠、推送事项、免打扰等都能在设置里调
 
 ## 大致结构
 
@@ -148,7 +149,7 @@ scripts/spikes/model-compat.sh gpt-6-astra kimi-k3 glm-5.3
 ## 已知问题和没做的
 
 - 只支持一个账号，自己用
-- 按 agent 统计费用、每日预算这块需要 new-api 的管理员令牌（在「设置 → new-api」里填），这部分还没在真实环境里验证过
+- 按 agent 统计费用、每日预算这块需要 new-api 的管理员令牌（在「设置 → 模型 → new-api → 管理令牌」里填），这部分还没在真实环境里验证过
 - hub 重启、agent 容器崩溃这类故障场景，恢复逻辑已经写了，但还没专门做过演练
 - 用鼠标键盘直接操作桌面的工具，控制接口单独测过；但实测中模型一般都优先用网页工具，这条路径实际跑得少
 

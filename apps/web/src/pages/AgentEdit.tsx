@@ -5,23 +5,28 @@ import { useNavigate, useParams } from "react-router";
 import { AgentAvatar } from "../components/AgentBits";
 import { Button, Card, Field, Header, Loading, Segmented, Toggle, cx, inputClass, toast } from "../components/ui";
 import { api } from "../lib/api";
+import { useModelLabel, useModels, type ModelEntry } from "../lib/models";
 import type { Agent, Desktop, DesktopPolicy, Template } from "../lib/types";
 
-interface Model {
-  id: string;
-  compat?: "ok" | "upstream_error";
-}
-
+/** Model picker for forms: options grouped by provider, ✓ for models whose test passed in settings. */
 export function ModelSelect({ value, onChange }: { value: string; onChange: (v: string) => void }) {
-  const models = useQuery({ queryKey: ["models"], queryFn: () => api.get<Model[]>("/api/models"), staleTime: 300_000 });
+  const models = useModels();
+  const label = useModelLabel();
+  const groups = new Map<string, ModelEntry[]>();
+  for (const m of models.data ?? []) groups.set(m.providerName, [...(groups.get(m.providerName) ?? []), m]);
+  const known = models.data?.some((m) => m.ref === value);
   return (
     <select className={inputClass} value={value} onChange={(e) => onChange(e.target.value)}>
-      {!models.data?.some((m) => m.id === value) && value && <option value={value}>{value}</option>}
-      {models.data?.map((m) => (
-        <option key={m.id} value={m.id}>
-          {m.compat === "ok" ? "✓ " : ""}
-          {m.id}
-        </option>
+      {!known && value && <option value={value}>{label(value)}</option>}
+      {[...groups].map(([provider, list]) => (
+        <optgroup key={provider} label={provider}>
+          {list.map((m) => (
+            <option key={m.ref} value={m.ref}>
+              {m.test?.ok ? "✓ " : ""}
+              {m.label}
+            </option>
+          ))}
+        </optgroup>
       ))}
     </select>
   );
@@ -33,7 +38,7 @@ export default function AgentEdit() {
   const qc = useQueryClient();
   const editing = !!id;
   const templates = useQuery({ queryKey: ["templates"], queryFn: () => api.get<Template[]>("/api/templates") });
-  const settings = useQuery({ queryKey: ["settings"], queryFn: () => api.get<{ defaultModel: string }>("/api/settings") });
+  const settings = useQuery({ queryKey: ["settings"], queryFn: () => api.get<{ defaultModel: string; defaultEffort: string | null }>("/api/settings") });
   const desktops = useQuery({ queryKey: ["desktops"], queryFn: () => api.get<Desktop[]>("/api/desktops") });
   const existing = useQuery({ queryKey: ["agent", id], queryFn: () => api.get<Agent>(`/api/agents/${id}`), enabled: editing });
 
@@ -51,7 +56,10 @@ export default function AgentEdit() {
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    if (!editing && settings.data && !model) setModel(settings.data.defaultModel);
+    if (!editing && settings.data && !model) {
+      setModel(settings.data.defaultModel);
+      setEffort(settings.data.defaultEffort ?? "");
+    }
   }, [editing, settings.data, model]);
 
   useEffect(() => {
@@ -135,7 +143,7 @@ export default function AgentEdit() {
             <input className={cx(inputClass, "w-16 text-center")} value={emoji} onChange={(e) => setEmoji(e.target.value)} maxLength={8} />
           </Field>
         </div>
-        <Field label="模型" hint="✓ 表示已实测可用（经 new-api）">
+        <Field label="模型" hint="✓ 表示在「设置 → 模型」里测试通过">
           <ModelSelect value={model} onChange={setModel} />
         </Field>
         <Field group label="桌面">
@@ -195,6 +203,7 @@ export default function AgentEdit() {
                   { value: "low", label: "低" },
                   { value: "medium", label: "中" },
                   { value: "high", label: "高" },
+                  { value: "xhigh", label: "极高" },
                 ]}
               />
             </Field>
