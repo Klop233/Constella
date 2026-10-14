@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import type { FastifyReply, FastifyRequest } from "fastify";
-import { DesktopKind, DesktopOptions, IdleAction } from "@constella/protocol";
+import { DesktopKind, DesktopOptions, IdleAction, IMAGE_EXT, UPLOAD_DIR, uploadName } from "@constella/protocol";
 import { z } from "zod";
 import { AgentInput, TEMPLATES } from "./agents.ts";
 import { isArchiveName, listArchive } from "./archive.ts";
@@ -277,18 +277,37 @@ export function registerRoutes(hub: Hub): void {
     await containers.remove(containers.agentName(agentId)).catch(() => {});
     return { ok: true, tokenId: t.id };
   });
+  // Uploads go to the agent's workspace (an existing agent only, so the id can't point elsewhere).
+  const uploadsDir = (agentId: string) => path.join(config.agentsDir, agents.get(agentId).id, "workspace", "uploads");
   app.post("/api/agents/:id/uploads", { bodyLimit: 16 * 1024 * 1024 }, async (req) => {
     const b = z.object({ name: z.string().max(120), data: z.string() }).parse(req.body);
     const safe = b.name.replace(/[^\w.\-一-龥]/g, "_").slice(-80) || "file";
-    const rel = path.join("uploads", `${Date.now()}-${safe}`);
-    const abs = path.join(config.agentsDir, id(req), "workspace", rel);
+    const stored = `${Date.now()}-${safe}`;
+    const abs = path.join(uploadsDir(id(req)), stored);
     fs.mkdirSync(path.dirname(abs), { recursive: true });
     fs.writeFileSync(abs, Buffer.from(b.data, "base64"));
     try {
       fs.chownSync(abs, 1000, 1000);
       fs.chownSync(path.dirname(abs), 1000, 1000);
     } catch {}
-    return { path: `/workspace/${rel}`, image: /\.(png|jpe?g|gif|webp)$/i.test(safe) };
+    return { path: `${UPLOAD_DIR}${stored}`, image: IMAGE_EXT.test(safe) };
+  });
+  // An uploaded file, for showing it in the conversation: images inline, anything else as a download.
+  app.get("/api/agents/:id/uploads/:name", async (req, reply) => {
+    const name = (req.params as { name: string }).name;
+    if (!name || name.includes("/") || name.includes("\\") || name.startsWith(".")) throw new HttpError(400, "bad file name");
+    const file = path.join(uploadsDir(id(req)), name);
+    const stat = fs.statSync(file, { throwIfNoEntry: false });
+    if (!stat?.isFile()) throw new HttpError(404, "file not found");
+    const mime = IMAGE_MIME[path.extname(name).toLowerCase()];
+    return reply
+      .header("Content-Type", mime ?? "application/octet-stream")
+      .header("Content-Disposition", contentDisposition(mime ? "inline" : "attachment", uploadName(name)))
+      .header("Content-Length", stat.size)
+      .header("X-Content-Type-Options", "nosniff")
+      .header("Content-Security-Policy", "sandbox")
+      .header("Cache-Control", "private, max-age=31536000, immutable")
+      .send(fs.createReadStream(file));
   });
 
   // ── conversations & runs ─────────────────────────────────
@@ -1167,6 +1186,8 @@ function inlineType(v: ArtifactVersionRow): string | null {
       return "text/plain; charset=utf-8";
   }
 }
+
+const IMAGE_MIME: Record<string, string> = { ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp" };
 
 /** Content-Disposition with an ASCII fallback and the real (possibly Chinese) name per RFC 6266. */
 function contentDisposition(type: "inline" | "attachment", name: string): string {

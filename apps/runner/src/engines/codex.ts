@@ -113,13 +113,9 @@ export class CodexEngine {
       };
       this.#runs.set(cmd.runId, run);
       this.#runsByThread.set(threadId, run);
-      const input: Json[] = [{ type: "text", text: cmd.text, text_elements: [] }];
-      for (const img of cmd.images ?? []) {
-        input.push(img.startsWith("/") ? { type: "localImage", path: img } : { type: "image", url: img });
-      }
       const res = await this.#request("turn/start", {
         threadId,
-        input,
+        input: turnInput(cmd.text, cmd.images),
         model: cmd.model,
         ...(cmd.effort ? { effort: cmd.effort } : {}),
         summary: "auto",
@@ -130,13 +126,13 @@ export class CodexEngine {
     }
   }
 
-  async steer(runId: string, text: string): Promise<void> {
+  async steer(runId: string, text: string, images?: string[]): Promise<void> {
     const run = this.#runs.get(runId);
     if (!run?.turnId) return;
     await this.#request("turn/steer", {
       threadId: run.threadId,
       expectedTurnId: run.turnId,
-      input: [{ type: "text", text, text_elements: [] }],
+      input: turnInput(text, images),
     });
   }
 
@@ -441,6 +437,11 @@ function providerConfig(p: EngineProvider): Json {
 
 function errMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+/** A user message as Codex input items: the text, then each image (a path in the container, or a URL). */
+function turnInput(text: string, images: string[] = []): Json[] {
+  return [{ type: "text", text, text_elements: [] }, ...images.map((img): Json => (img.startsWith("/") ? { type: "localImage", path: img } : { type: "image", url: img }))];
 }
 
 /** MCP results may carry base64 images; keep text and drop binary payloads from the event log. */

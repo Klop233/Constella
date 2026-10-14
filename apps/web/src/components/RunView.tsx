@@ -1,4 +1,5 @@
 import { Brain, Check, ChevronRight, CircleSlash, CircleX, Eye, FileEdit, Globe, Hand, Layers, Loader2, MessageCircleQuestion, Monitor, Paperclip, RotateCw, ShieldCheck, ShieldX, Stethoscope, Terminal, ThumbsDown, ThumbsUp, Wrench, X } from "lucide-react";
+import { splitAttachments } from "@constella/protocol";
 import { useQuery } from "@tanstack/react-query";
 import { memo, useMemo, useState, type ReactNode } from "react";
 import { Link } from "react-router";
@@ -10,6 +11,7 @@ import { useModelLabel } from "../lib/models";
 import type { AgentEvent, Approval, DecisionOption, Incident, Run } from "../lib/types";
 import { ApprovalCard } from "./ApprovalCard";
 import { ArtifactCard, type DeliveredArtifact } from "./ArtifactCard";
+import { MessageAttachments } from "./Attachments";
 import { DesktopHelpCard, type DesktopHelp } from "./DesktopHelpCard";
 import { IncidentCard, IncidentStatus } from "./IncidentCard";
 import { RichMessage } from "./Widget";
@@ -289,11 +291,16 @@ function StepGroup({ steps, live, ended }: { steps: Step[]; live: boolean; ended
 }
 
 /** The user's message, right-aligned; its time (or a label like 追加指示) sits beside it instead of on a line of its own. */
-export function UserBubble({ text, meta }: { text: string; meta?: string }) {
+export function UserBubble({ text, meta, agentId }: { text: string; meta?: string; agentId?: string }) {
+  // Files it came with are listed on its last line; show them above the bubble instead of as paths.
+  const split = agentId ? splitAttachments(text) : { text, paths: [] };
   return (
     <div className="flex items-end justify-end gap-2.5">
       {meta && <span className="shrink-0 pb-2 text-[11px] text-muted tabular-nums">{meta}</span>}
-      <div className="max-w-[85%] bg-surface-2 rounded-xl px-3 py-2 whitespace-pre-wrap break-words text-sm">{text}</div>
+      <div className="min-w-0 max-w-[85%] flex flex-col items-end gap-1.5">
+        {agentId && split.paths.length > 0 && <MessageAttachments agentId={agentId} paths={split.paths} />}
+        {split.text && <div className="max-w-full bg-surface-2 rounded-xl px-3 py-2 whitespace-pre-wrap break-words text-sm">{split.text}</div>}
+      </div>
     </div>
   );
 }
@@ -437,9 +444,9 @@ function TurnStart({ run }: { run: Run }) {
     const cut = body.lastIndexOf("\n→ ");
     const question = cut >= 0 ? body.slice(0, cut) : "";
     const short = question.length > 14 ? `${question.slice(0, 14)}…` : question;
-    return <UserBubble text={cut >= 0 ? body.slice(cut + 3) : body} meta={question ? `回答「${short}」 · ${time}` : time} />;
+    return <UserBubble text={cut >= 0 ? body.slice(cut + 3) : body} meta={question ? `回答「${short}」 · ${time}` : time} agentId={run.agent_id} />;
   }
-  return <UserBubble text={p} meta={time} />;
+  return <UserBubble text={p} meta={time} agentId={run.agent_id} />;
 }
 
 /**
@@ -475,7 +482,7 @@ export function RunView({ run, approvals, incidents = [], onChanged }: { run: Ru
         switch (it.kind) {
           case "message":
             return it.user ? (
-              <UserBubble key={it.id} text={it.text} meta="追加指示" />
+              <UserBubble key={it.id} text={it.text} meta="追加指示" agentId={run.agent_id} />
             ) : (
               <RichMessage key={it.id} text={it.text} streaming={it.streaming && !finished} keyBase={`${run.id}:${it.id}`} runId={run.id} className="font-display text-sm" noHeadingEmoji={plainHeadings} />
             );
