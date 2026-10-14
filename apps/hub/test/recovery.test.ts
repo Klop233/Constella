@@ -140,6 +140,46 @@ describe("automatic continuation", () => {
   });
 });
 
+describe("single-turn time limit", () => {
+  const stops = (t: ReturnType<typeof setup>) => t.sent.filter((m) => m.t === "interrupt").length;
+  /** A turn that started `minutes` ago in a conversation with the given own limit (null = follow the setting). */
+  async function turn(t: ReturnType<typeof setup>, minutes: number, own: number | null) {
+    const r = await t.runs.send({ agentId: "ag1", text: "x", runTimeoutMinutes: own });
+    await tick();
+    t.db.prepare("UPDATE runs SET created_at = ? WHERE id = ?").run(minutesAgo(minutes), r.runId);
+    return r;
+  }
+
+  it("follows the setting (120 minutes here) unless the conversation has its own", async () => {
+    const t = setup();
+    await turn(t, 100, null);
+    t.runs.tick();
+    expect(stops(t)).toBe(0);
+    t.db.prepare("UPDATE runs SET created_at = ?").run(minutesAgo(130));
+    t.runs.tick();
+    expect(stops(t)).toBe(1);
+  });
+
+  it("stops a turn at the conversation's own, shorter limit", async () => {
+    const t = setup();
+    await turn(t, 40, 30);
+    t.runs.tick();
+    expect(stops(t)).toBe(1);
+  });
+
+  it("lets a conversation with no limit run as long as it needs", async () => {
+    const t = setup();
+    const r = await turn(t, 24 * 60, 0);
+    t.runs.tick();
+    expect(stops(t)).toBe(0);
+    expect(t.runs.conversation(r.conversationId)!.run_timeout_minutes).toBe(0);
+    // Back to following the setting: now it is overdue.
+    t.runs.setConversationTimeout(r.conversationId, null);
+    t.runs.tick();
+    expect(stops(t)).toBe(1);
+  });
+});
+
 describe("start failures", () => {
   it("repairs the runner and carries on with the same run", async () => {
     let fail = true;
