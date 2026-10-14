@@ -38,6 +38,8 @@ export interface ConversationRow {
   /** Overrides of the agent's model / reasoning effort for this conversation. */
   model: string | null;
   effort: Effort | null;
+  /** This conversation's single-turn time limit in minutes (0 = none); null follows the setting. */
+  run_timeout_minutes: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -79,7 +81,7 @@ export interface RunDeps {
 export type NotifyKind = "done" | "failed" | "approval" | "stuck";
 
 export interface RunLimits {
-  /** A turn running longer than this is stopped and continued in a fresh one. */
+  /** A turn running longer than this is stopped and continued in a fresh one (0 = never). */
   runTimeoutMinutes: number;
   /** A run with no sign of life for this long gets the supervisor's attention (0 = never). */
   runWatchdogMinutes: number;
@@ -169,6 +171,12 @@ export class RunManager {
     return this.conversation(id)!;
   }
 
+  /** This conversation's own single-turn time limit: minutes, 0 for none, null to follow the setting. */
+  setConversationTimeout(id: string, minutes: number | null): ConversationRow {
+    this.#d.db.prepare("UPDATE conversations SET run_timeout_minutes = ? WHERE id = ?").run(minutes, id);
+    return this.conversation(id)!;
+  }
+
   activeRun(conversationId: string): RunRow | undefined {
     return this.#d.db
       .prepare(
@@ -179,7 +187,7 @@ export class RunManager {
 
   createConversation(agentId: string, title: string, source = "user"): ConversationRow {
     const now = nowIso();
-    const conv: ConversationRow = { id: newId("cv"), agent_id: agentId, title, thread_id: null, source, model: null, effort: null, created_at: now, updated_at: now };
+    const conv: ConversationRow = { id: newId("cv"), agent_id: agentId, title, thread_id: null, source, model: null, effort: null, run_timeout_minutes: null, created_at: now, updated_at: now };
     this.#d.db
       .prepare("INSERT INTO conversations (id, agent_id, title, thread_id, source, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
       .run(conv.id, conv.agent_id, conv.title, null, conv.source, now, now);
@@ -199,6 +207,8 @@ export class RunManager {
     /** Switch this conversation's model / effort (null = back to the agent's) before sending. */
     model?: string | null;
     effort?: Effort | null;
+    /** Likewise for this conversation's single-turn time limit (0 = no limit). */
+    runTimeoutMinutes?: number | null;
   }): Promise<{ conversationId: string; runId: string; steered: boolean }> {
     const { db } = this.#d;
     let conv = input.conversationId ? this.conversation(input.conversationId) : undefined;
@@ -207,6 +217,7 @@ export class RunManager {
     if (input.model) this.#d.resolveModel?.(input.model);
     if (!conv) conv = this.createConversation(input.agentId, titleFrom(input.text), input.source ?? "user");
     if (input.model !== undefined || input.effort !== undefined) conv = this.setConversationModel(conv.id, input);
+    if (input.runTimeoutMinutes !== undefined) conv = this.setConversationTimeout(conv.id, input.runTimeoutMinutes);
 
     const active = this.activeRun(conv.id);
     if (active && (active.status === "running" || active.status === "paused_by_user")) {
@@ -696,7 +707,7 @@ export class RunManager {
   }
 
   startWatchdog(): void {
-    this.#timer = setInterval(() => this.#tick(), 60_000);
+    this.#timer = setInterval(() => this.tick(), 60_000);
     this.#timer.unref();
     // Continuations live in the database; this poll starts them, including ones a restart interrupted.
     this.#resumeTimer = setInterval(() => this.processResumes(), 2_000);
@@ -718,14 +729,22 @@ export class RunManager {
     // Running runs wait for their runner's hello (onRunnerHello); scheduled continuations are picked up by the poll.
   }
 
-  #tick(): void {
-    const rows = this.#d.db.prepare("SELECT * FROM runs WHERE status = 'running'").all() as unknown as RunRow[];
+  /** One watchdog pass over the running turns (the interval calls it once a minute). */
+  tick(): void {
+    const rows = this.#d.db
+      .prepare(
+        `SELECT r.*, c.run_timeout_minutes AS own_timeout FROM runs r LEFT JOIN conversations c ON c.id = r.conversation_id WHERE r.status = 'running'`,
+      )
+      .all() as unknown as (RunRow & { own_timeout: number | null })[];
     const now = Date.now();
-    const limits = this.#limits();
+    const { runTimeoutMinutes } = this.#limits();
     for (const run of rows) {
+      // The conversation's own limit wins over the setting; 0 means this turn may run as long as it needs.
+      const minutes = run.own_timeout ?? runTimeoutMinutes;
+      if (minutes <= 0) continue;
       // Long tasks get split rather than dropped: stop this turn, then continue in a fresh one.
-      if (now - Date.parse(run.created_at) > limits.runTimeoutMinutes * 60_000) {
-        void this.restart(run.id, `单轮运行超过 ${limits.runTimeoutMinutes} 分钟`, resumeText(`单轮运行超过 ${limits.runTimeoutMinutes} 分钟`), "watchdog");
+      if (now - Date.parse(run.created_at) > minutes * 60_000) {
+        void this.restart(run.id, `单轮运行超过 ${minutes} 分钟`, resumeText(`单轮运行超过 ${minutes} 分钟`), "watchdog");
       }
     }
   }
