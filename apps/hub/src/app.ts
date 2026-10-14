@@ -30,6 +30,8 @@ import { RunManager, type NotifyKind, type RunLimits } from "./runs.ts";
 import { Scheduler } from "./scheduler.ts";
 import { Reflect } from "./reflect.ts";
 import type { ApprovalMode } from "./safety.ts";
+import { OfficeService } from "./office.ts";
+import { registerOfficeProxy } from "./office-proxy.ts";
 import { SecretBox, SecretStore } from "./secrets.ts";
 
 export interface Hub {
@@ -50,6 +52,8 @@ export interface Hub {
   /** What this host can run (instance kinds, Android backends), probed with throwaway containers. */
   hostcaps: HostCapabilities;
   containers: Containers;
+  /** Optional online Office editor (installed and managed from Settings). */
+  office: OfficeService;
   scheduler: Scheduler;
   notifier: Notifier;
   newapi: NewApi;
@@ -471,8 +475,11 @@ export async function createHub(opts: { dbPath?: string; webDist?: string; logge
   await app.register(rateLimit, { global: false });
 
   const auth = new Auth(db);
+  const office = new OfficeService({ db, secrets, docker: containers.docker });
+  office.startIdleStop();
   const hub: Hub = {
     app,
+    office,
     db,
     auth,
     secrets,
@@ -571,6 +578,7 @@ export async function createHub(opts: { dbPath?: string; webDist?: string; logge
     instanceApproval: () => settings.instanceApproval(),
   });
   registerRoutes(hub);
+  registerOfficeProxy(hub);
 
   const webDist = opts.webDist ?? process.env.CONSTELLA_WEB_DIST ?? path.resolve(import.meta.dirname, "../../web/dist");
   if (fs.existsSync(webDist)) {
@@ -583,7 +591,7 @@ export async function createHub(opts: { dbPath?: string; webDist?: string; logge
       },
     });
     app.setNotFoundHandler((req, reply) => {
-      if (req.method === "GET" && !req.url.startsWith("/api/") && !req.url.startsWith("/mcp")) {
+      if (req.method === "GET" && !req.url.startsWith("/api/") && !req.url.startsWith("/mcp") && !req.url.startsWith("/office-ds/")) {
         return reply.header("Cache-Control", "no-cache").sendFile("index.html");
       }
       return reply.code(404).send({ error: "not found" });
