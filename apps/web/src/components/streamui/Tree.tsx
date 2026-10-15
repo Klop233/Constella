@@ -96,14 +96,21 @@ export const NodeView = memo(function NodeView({ id, runtime, ctx }: { id: strin
   const snapshot = useSyncExternalStore(
     useCallback((fn: () => void) => runtime.subscribeNode(id, fn), [runtime, id]),
     useCallback(() => runtime.nodeSnapshot(id), [runtime, id]),
+    useCallback(() => runtime.nodeSnapshot(id), [runtime, id]),
   );
   const node = snapshot.node;
   if (!node) return null;
   const doc = runtime.doc;
+  const spec = GENUI_SCHEMA[node.type];
   const p = propsFor(node, snapshot.value, runtime, ctx);
   const seen = new Set<string>([id]);
   const kids = node.children.map((child) => (typeof child === "string" ? materializeStatic(doc, child, seen) : child.text)).filter((k): k is LiveNode | string => k !== null);
-  const children = kids.map((k, i) => renderKid(k, i, runtime, ctx));
+  // A component that has no `text` prop of its own renders `props.text` as its content (the model
+  // writes prose that way); the program host hands it over as a child element, and so does this one.
+  // `children` stays undefined when there is nothing, which is what Button and Link expect before
+  // falling back to their own label.
+  const inlineText = spec && !spec.props.text && typeof node.props.text === "string" ? node.props.text : null;
+  const children = kids.length ? kids.map((k, i) => renderKid(k, i, runtime, ctx)) : inlineText !== null ? <Inline text={inlineText} /> : undefined;
   const Comp = COMPONENTS[node.type];
   if (!Comp) {
     // An unknown component (a newer hub, or a model inventing one) shows its content instead of breaking the reply.
@@ -123,6 +130,7 @@ export const NodeView = memo(function NodeView({ id, runtime, ctx }: { id: strin
 export function UiTree({ runtime, ctx }: { runtime: UiBlockRuntime; ctx: Ctx }) {
   const snapshot = useSyncExternalStore(
     useCallback((fn: () => void) => runtime.subscribeRoots(fn), [runtime]),
+    useCallback(() => runtime.rootsSnapshot(), [runtime]),
     useCallback(() => runtime.rootsSnapshot(), [runtime]),
   );
   return (

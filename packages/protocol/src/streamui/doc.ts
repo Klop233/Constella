@@ -74,6 +74,17 @@ export function isPartialOp(value: unknown): boolean {
   return !!value && typeof value === "object" && (value as { partial?: unknown }).partial === true;
 }
 
+const REVISABLE_OPS = new Set(["node", "create", "update", "set", "data", "text"]);
+
+/**
+ * Op kinds a half-written reading can be trusted with. A `node` op replaces its subtree wholesale, so
+ * applying a partial reading and revising it later is exact; an `append` would leave a second,
+ * auto-numbered child behind, so it waits until it is complete.
+ */
+export function isRevisableOp(value: unknown): boolean {
+  return isUiOp(value) && REVISABLE_OPS.has(value.op.toLowerCase());
+}
+
 // ── reading JSON out of a stream ─────────────────────────
 
 /**
@@ -280,9 +291,26 @@ function listFor(d: UIDoc, parent: string | null): UIChild[] | null {
   return clone.children;
 }
 
+/** True when `node` is `ancestor` or sits under it (moving it there would make a cycle). */
+function isUnder(d: UIDoc, node: string | null, ancestor: string): boolean {
+  let cur = node;
+  const seen = new Set<string>();
+  while (cur && !seen.has(cur)) {
+    if (cur === ancestor) return true;
+    seen.add(cur);
+    cur = d.nodes[cur]?.parent ?? null;
+  }
+  return false;
+}
+
 function pushChild(d: UIDoc, parent: string | null, child: UIChild): void {
   const list = listFor(d, parent);
   if (!list) return;
+  // The depth cap has to hold for every way a node is attached, not just for `node` ops.
+  if (parent !== null && depthOf(d, parent) + 1 > UI_LIMITS.depth) {
+    note(d, `嵌套超过 ${UI_LIMITS.depth} 层，已忽略`);
+    return;
+  }
   if (list.some((c) => c === child || (typeof c === "object" && typeof child === "object" && c.text === child.text))) return;
   if (list.length >= UI_LIMITS.children) {
     note(d, `一个组件最多 ${UI_LIMITS.children} 个子组件，多余的已忽略`);
@@ -292,7 +320,11 @@ function pushChild(d: UIDoc, parent: string | null, child: UIChild): void {
 }
 
 /** References to a node that doesn't exist yet become a Loading placeholder, filled in when it arrives. */
-function placeholder(d: UIDoc, id: string, parent: string | null): UINode {
+function placeholder(d: UIDoc, id: string, parent: string | null): UINode | null {
+  if (Object.keys(d.nodes).length >= UI_LIMITS.nodes) {
+    note(d, `组件数量超过 ${UI_LIMITS.nodes}，后面的已忽略`);
+    return null;
+  }
   const node: UINode = { id, type: "Loading", parent, props: {}, children: [] };
   d.nodes[id] = node;
   return node;
@@ -305,12 +337,13 @@ function addChild(d: UIDoc, parent: string | null, entry: unknown, revising = fa
       note(d, "引用了不合法的组件 id");
       return;
     }
-    if (id === parent) {
-      note(d, "组件不能把自己当成子组件");
+    if (id === parent || (parent !== null && isUnder(d, parent, id))) {
+      note(d, "组件不能放进自己的子组件里");
       return;
     }
-    if (!d.nodes[id]) placeholder(d, id, parent);
-    else if (d.nodes[id]!.parent !== parent) detach(d, id);
+    if (!d.nodes[id]) {
+      if (!placeholder(d, id, parent)) return;
+    } else if (d.nodes[id]!.parent !== parent) detach(d, id);
     d.nodes[id] = { ...d.nodes[id]!, parent };
     pushChild(d, parent, id);
     return;
@@ -489,11 +522,11 @@ function insertChild(d: UIDoc, o: Record<string, unknown>, index: number): Apply
       note(d, "引用了不合法的组件 id");
       return "drop";
     }
-    if (id === parent) {
-      note(d, "组件不能把自己当成子组件");
+    if (id === parent || (parent !== null && isUnder(d, parent, id))) {
+      note(d, "组件不能放进自己的子组件里");
       return "drop";
     }
-    if (!d.nodes[id]) placeholder(d, id, parent);
+    if (!d.nodes[id] && !placeholder(d, id, parent)) return "drop";
   }
   const list = listFor(d, parent);
   if (!list) return "drop";
@@ -506,6 +539,10 @@ function insertChild(d: UIDoc, o: Record<string, unknown>, index: number): Apply
     if (!target) return "drop";
     const from = target.indexOf(id);
     if (from >= 0) target.splice(from, 1);
+    if (parent !== null && depthOf(d, parent) + 1 > UI_LIMITS.depth) {
+      note(d, `嵌套超过 ${UI_LIMITS.depth} 层，已忽略`);
+      return "drop";
+    }
     if (target.length >= UI_LIMITS.children) {
       note(d, `一个组件最多 ${UI_LIMITS.children} 个子组件`);
       return "drop";
@@ -637,14 +674,25 @@ function drain(d: UIDoc): void {
       }
       if (applyEntry(d, next, false) === "retry") d.retry.push(next);
       moved = true;
+      // An op that couldn't be applied yet is older than everything that follows it, so it is retried
+      // right here: retrying at the end would let it overwrite a later op with an earlier value.
+      if (d.retry.length) retryPending(d);
     }
     if (!d.retry.length) break;
-    const left: unknown[] = [];
-    for (const op of d.retry) if (applyEntry(d, op, false) === "retry") left.push(op);
-    if (left.length !== d.retry.length) moved = true;
-    d.retry = left.slice(0, 64);
-    if (!moved) break;
+    if (!retryPending(d) && !moved) break;
   }
+}
+
+/** Re-applies ops that were waiting for something; returns true when at least one landed. */
+function retryPending(d: UIDoc): boolean {
+  const left: unknown[] = [];
+  let applied = false;
+  for (const op of d.retry) {
+    if (applyEntry(d, op, false) === "retry") left.push(op);
+    else applied = true;
+  }
+  d.retry = left.slice(0, 64);
+  return applied;
 }
 
 /**
@@ -657,7 +705,7 @@ function drain(d: UIDoc): void {
  */
 export function reduceOps(doc: UIDoc, entries: UIOpEntry[]): UIDoc {
   const fresh = entries.filter((entry) => Number.isFinite(entry.seq) && entry.seq > doc.seq);
-  const revisions = entries.filter((entry) => Number.isFinite(entry.seq) && entry.seq === doc.seq && doc.seq > 0 && (doc.partial || isPartialOp(entry.op)));
+  const revisions = entries.filter((entry) => Number.isFinite(entry.seq) && entry.seq === doc.seq && doc.seq > 0 && (doc.partial || isPartialOp(entry.op)) && isRevisableOp(entry.op));
   // Nothing new to apply: hand back the same object, so a browser that replays a block's ops on
   // every render keeps the node identities (and its memoized subtrees) intact.
   if (!fresh.length && !revisions.length) return doc;

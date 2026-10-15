@@ -93,6 +93,7 @@ function StreamUiBlockInner({ title, source, mode, stateKey, runId, doc: docFrom
   const snapshot = useSyncExternalStore(
     useCallback((fn: () => void) => runtime.subscribeRoots(fn), [runtime]),
     useCallback(() => runtime.rootsSnapshot(), [runtime]),
+    useCallback(() => runtime.rootsSnapshot(), [runtime]),
   );
 
   const ctx = useMemo<Ctx>(

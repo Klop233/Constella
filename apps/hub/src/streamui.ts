@@ -3,6 +3,7 @@ import {
   UI_OPS_PER_EVENT,
   docNodeCount,
   emptyDoc,
+  isRevisableOp,
   isUiOp,
   migrateDoc,
   reduceOps,
@@ -119,9 +120,12 @@ class MessageStream {
         continue;
       }
       // The last value of an unfinished read is the model's op as far as it has got: it revises the
-      // op already at the cursor (or opens a new one), so a big tree shows up as it is typed.
+      // op already at the cursor (or opens a new one), so a big tree shows up as it is typed. Only op
+      // kinds that survive being applied half-written are sent that way; the rest wait until they are
+      // complete (an `append` read in halves would leave a second, auto-numbered child behind).
       const partial = scan.open && i === scan.values.length - 1;
       if (partial) {
+        if (!isRevisableOp(value)) continue;
         // Only send a reading that says more than the last one: otherwise every delta would carry the
         // whole op again.
         const json = JSON.stringify(value);

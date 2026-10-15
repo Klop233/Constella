@@ -370,6 +370,51 @@ describe("reduceOps: stream boundaries", () => {
     expect(f.doc.seq).toBe(2);
     expect(f.doc.roots).toHaveLength(2);
   });
+  it("applies an op that was waiting for a forward reference before the ops that follow it", () => {
+    // Last write wins: the op that couldn't be applied yet is older than everything after it, so
+    // retrying it at the end of the batch (after the later op) would resurrect an earlier value.
+    const oneBatch = feeder();
+    oneBatch.push({ op: "update", id: "t", props: { text: "A" } }, { op: "node", id: "t", type: "Text" }, { op: "update", id: "t", props: { text: "B" } });
+    expect(oneBatch.doc.nodes["t"]!.props.text).toBe("B");
+
+    const inSteps = feeder();
+    inSteps.push({ op: "update", id: "t", props: { text: "A" } });
+    inSteps.push({ op: "node", id: "t", type: "Text" });
+    inSteps.push({ op: "update", id: "t", props: { text: "B" } });
+    expect(inSteps.doc.nodes["t"]!.props.text).toBe("B");
+  });
+  it("refuses to put a component inside its own descendant", () => {
+    const f = feeder();
+    f.push({ op: "node", id: "a", type: "Col" });
+    f.push({ op: "node", id: "b", type: "Col", parent: "a" });
+    f.push({ op: "append", parent: "b", child: "a" });
+    // Otherwise both nodes end up under each other and the block has no roots left to render.
+    expect(f.doc.roots).toEqual(["a"]);
+    expect(f.doc.nodes["a"]!.children).toEqual(["b"]);
+    expect(f.doc.nodes["b"]!.children).toEqual([]);
+    expect(hasIssue(f.doc, "自己的子组件")).toBe(true);
+  });
+  it("holds the depth cap for append and insert too", () => {
+    const f = feeder();
+    // A 10-deep chain (the cap), then a second one attached under its leaf.
+    f.push({ op: "node", id: "top", type: "Col" });
+    let parent = "top";
+    for (let i = 0; i < UI_LIMITS.depth - 1; i++) {
+      f.push({ op: "node", id: `d${i}`, type: "Col", parent });
+      parent = `d${i}`;
+    }
+    f.push({ op: "node", id: "other", type: "Col" });
+    f.push({ op: "append", parent, child: "other" });
+    expect(hasIssue(f.doc, `嵌套超过 ${UI_LIMITS.depth} 层`)).toBe(true);
+    expect(f.doc.nodes["other"]!.parent).toBeNull();
+  });
+  it("holds the node cap when a forward reference makes a placeholder", () => {
+    const f = feeder();
+    const ops = Array.from({ length: UI_LIMITS.nodes + 40 }, (_, i) => ({ op: "append", parent: null, child: `p${i}` }));
+    f.push(...ops);
+    expect(docNodeCount(f.doc)).toBeLessThanOrEqual(UI_LIMITS.nodes);
+    expect(hasIssue(f.doc, `组件数量超过 ${UI_LIMITS.nodes}`)).toBe(true);
+  });
   it("applies a duplicate op (same seq twice) only once", () => {
     const op = { op: "node", id: "a", type: "Col" };
     let doc = reduceOps(emptyDoc(), [
@@ -688,6 +733,25 @@ describe("UiStreams", () => {
     const stored = JSON.parse(String(row[8])) as UIDoc;
     expect(stored.status).toBe("done");
     expect(stored.nodes["root"]!.children).toHaveLength(70);
+  });
+  it("waits for an append to be complete instead of applying half of it", () => {
+    const { rows, db } = fakeDb();
+    const { events, store } = fakeStore();
+    const streams = new UiStreams(db, store);
+    const body = ['{"op":"node","id":"root","type":"Col"}', '{"op":"append","parent":"root","child":{"type":"Text","text":"第一行内容比较长，会被切成两半"}}'].join("\n");
+    const reply = uiJsonBlock("列表", body);
+    for (let i = 0; i < reply.length; i += 12) streams.onText(run, "m1", reply.slice(i, i + 12), false);
+    streams.onText(run, "m1", reply, true);
+
+    // An `append` read in halves would leave a second, auto-numbered child behind, so it is only sent
+    // once it is whole; `node` ops are the ones that stream in pieces.
+    for (const ev of opEvents(events)) {
+      for (const op of ev.ops) expect((op as { op: string; partial?: boolean }).op === "append" ? (op as { partial?: boolean }).partial : undefined).toBeFalsy();
+    }
+    const stored = JSON.parse(String(rows.at(-1)![8])) as UIDoc;
+    const kids = stored.nodes["root"]!.children;
+    expect(kids).toHaveLength(1);
+    expect(stored.nodes[kids[0] as string]!.props.text).toBe("第一行内容比较长，会被切成两半");
   });
   it("splits a large batch into 64-op events", () => {
     const { db } = fakeDb();
