@@ -38,6 +38,10 @@ interface BlockState {
   cursor: number;
   /** Op index of the last op emitted. */
   seq: number;
+  /** True when the op at `seq` is a partial reading of one the model is still writing. */
+  provisional: boolean;
+  /** The last partial reading emitted, so an unchanged one isn't sent again on every delta. */
+  lastPartial: string;
   dropped: number;
   failed: string | null;
   finalized: boolean;
@@ -68,12 +72,13 @@ class MessageStream {
   /** A delta, or the finished text. The finished text may differ from what was streamed. */
   feed(text: string, final: boolean): void {
     if (final) {
-      if (text.startsWith(this.#text)) this.#push(text.slice(this.#text.length));
-      else {
-        // The engine rewrote the reply: re-read every block from the start. Op indices keep going up,
-        // so the browser merges the second pass into the tree instead of replaying it as new nodes.
-        this.#text = text;
-        for (const st of this.#blocks.values()) st.cursor = 0;
+      if (text.startsWith(this.#text)) {
+        this.#push(text.slice(this.#text.length));
+      } else {
+        // The engine's finished text differs from what it streamed (whitespace, a rewritten tail).
+        // What we already built stands — the browser has those ops — so only a block that produced
+        // nothing gets re-read, rather than replaying every op under a second set of indices.
+        for (const st of this.#blocks.values()) if (!st.seq) st.cursor = 0;
         this.#push("");
       }
       this.finish();
@@ -92,7 +97,7 @@ class MessageStream {
     for (const block of uiJsonBlocks(this.#text)) {
       let st = this.#blocks.get(block.index);
       if (!st) {
-        st = { index: block.index, title: block.title, doc: emptyDoc(), cursor: 0, seq: 0, dropped: 0, failed: null, finalized: false };
+        st = { index: block.index, title: block.title, doc: emptyDoc(), cursor: 0, seq: 0, provisional: false, lastPartial: "", dropped: 0, failed: null, finalized: false };
         this.#blocks.set(block.index, st);
       }
       if (block.title) st.title = block.title;
@@ -100,16 +105,44 @@ class MessageStream {
       const scan = scanJsonValues(block.source, st.cursor);
       st.cursor = scan.next;
       st.dropped += scan.bad;
-      if (scan.values.length) this.#apply(st, scan.values);
+      if (scan.values.length) this.#apply(st, scan);
     }
     this.#emitStates(false);
   }
 
-  #apply(st: BlockState, values: unknown[]): void {
+  #apply(st: BlockState, scan: { values: unknown[]; open: boolean }): void {
     const entries: { seq: number; op: unknown }[] = [];
-    for (const op of values) {
-      if (!isOp(op)) {
+    for (let i = 0; i < scan.values.length; i++) {
+      const value = scan.values[i];
+      if (!isOp(value)) {
         st.dropped++;
+        continue;
+      }
+      // The last value of an unfinished read is the model's op as far as it has got: it revises the
+      // op already at the cursor (or opens a new one), so a big tree shows up as it is typed.
+      const partial = scan.open && i === scan.values.length - 1;
+      if (partial) {
+        // Only send a reading that says more than the last one: otherwise every delta would carry the
+        // whole op again.
+        const json = JSON.stringify(value);
+        if (st.provisional && json === st.lastPartial) continue;
+        st.lastPartial = json;
+        if (!st.provisional) {
+          if (st.seq >= UI_LIMITS.ops) {
+            st.failed = `指令超过 ${UI_LIMITS.ops} 条`;
+            break;
+          }
+          st.seq++;
+          st.provisional = true;
+        }
+        entries.push({ seq: st.seq, op: { ...value, partial: true } });
+        continue;
+      }
+      if (st.provisional) {
+        // The op we were reading has finished: same index, no longer a partial reading.
+        st.provisional = false;
+        st.lastPartial = "";
+        entries.push({ seq: st.seq, op: value });
         continue;
       }
       if (st.seq >= UI_LIMITS.ops) {
@@ -117,7 +150,7 @@ class MessageStream {
         break;
       }
       st.seq++;
-      entries.push({ seq: st.seq, op });
+      entries.push({ seq: st.seq, op: value });
     }
     if (!entries.length) return;
     st.doc = reduceOps(st.doc, entries);

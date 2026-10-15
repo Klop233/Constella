@@ -116,13 +116,24 @@ check(storedDoc?.nodes["pick"]?.type === "Button", "第二个根节点（按钮�
 check(JSON.stringify(storedDoc?.nodes["pick"]?.props.send) === JSON.stringify("就选这个"), "按钮带着声明式的 send（浏览器把它接到 Action Dispatcher 上）");
 check(migrateDoc(JSON.parse(JSON.stringify(storedDoc))) !== null, "存下来的文档能被重新读回（刷新/重开对话）");
 
-// Ops are numbered 1..n with no gaps: a gap would leave the browser waiting forever.
+// Ops are numbered 1..n and never skip an index: a revision reuses the last one (the model is still
+// writing that op). A gap would leave the browser waiting forever.
 const opEvents = emitted.filter((e) => e.type === "ui.op");
-const seqs = opEvents.flatMap((e) => e.ops.map((_, i) => e.from + i));
-check(seqs.length > 0 && seqs.every((s, i) => s === i + 1), `ui.op 的序号从 1 连续到 ${seqs.length}`);
+let highest = 0;
+const gapless = opEvents.every((e) => {
+  const ok = e.from <= highest + 1;
+  highest = Math.max(highest, e.from + e.ops.length - 1);
+  return ok;
+});
+check(gapless, `ui.op 的序号不跳号（最高 ${highest}）`);
+check(highest === 5, `5 条指令（还在写的那条复用同一个序号），实际 ${highest}`);
 check(
-  emitted.filter((e) => e.type === "ui.op").every((e) => e.ops.every(isUiOp)),
+  opEvents.every((e) => e.ops.every(isUiOp)),
   "发出去的每条指令都是合法形状",
+);
+check(
+  opEvents.some((e) => e.ops.some((op) => op.partial === true)),
+  "界面是边写边出来的（有正在写的半成品指令）",
 );
 
 console.log(failures ? `\n${failures} 项不符合预期` : "\n全部符合预期");

@@ -30,6 +30,8 @@ export interface UIDoc {
   v: number;
   /** Highest op index applied; ops arrive numbered from 1. */
   seq: number;
+  /** True when the op at `seq` is a partial reading of one the model is still writing. */
+  partial: boolean;
   roots: UIChild[];
   nodes: Record<string, UINode>;
   /** Ops that arrived early (a gap in the stream); keyed by their index. */
@@ -49,7 +51,7 @@ export interface UIOpEntry {
 }
 
 export function emptyDoc(): UIDoc {
-  return { v: UI_DOC_VERSION, seq: 0, roots: [], nodes: {}, pending: {}, retry: [], issues: [], status: "streaming", error: null, ops: 0 };
+  return { v: UI_DOC_VERSION, seq: 0, partial: false, roots: [], nodes: {}, pending: {}, retry: [], issues: [], status: "streaming", error: null, ops: 0 };
 }
 
 export function docNodeCount(doc: UIDoc): number {
@@ -65,6 +67,11 @@ export function isUiOp(value: unknown): value is { op: string } & Record<string,
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const op = (value as { op?: unknown }).op;
   return typeof op === "string" && op.length > 0 && op.length <= 16;
+}
+
+/** True for an op the hub marked as the best reading of something still being written. */
+export function isPartialOp(value: unknown): boolean {
+  return !!value && typeof value === "object" && (value as { partial?: unknown }).partial === true;
 }
 
 // ── reading JSON out of a stream ─────────────────────────
@@ -113,14 +120,69 @@ function endOfValue(text: string, start: number): number {
 }
 
 /**
+ * The most complete reading of a JSON value that is still being written, or null. Walks back to the
+ * last point where a value ended and closes whatever is still open, so a model that writes one big
+ * tree in a single op still shows that tree growing instead of appearing all at once.
+ */
+function salvage(text: string, start: number): string | null {
+  const closers: string[] = [];
+  /** A place where a value ended, with the closers that were open there (they differ per place). */
+  const safe: { at: number; tail: string }[] = [];
+  const mark = (at: number) => safe.push({ at, tail: [...closers].reverse().join("") });
+  let inString = false;
+  let escaped = false;
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i]!;
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === '"') {
+        inString = false;
+        mark(i + 1);
+      }
+      continue;
+    }
+    if (ch === '"') inString = true;
+    else if (ch === "{" || ch === "[") closers.push(ch === "{" ? "}" : "]");
+    else if (ch === "}" || ch === "]") {
+      closers.pop();
+      mark(i + 1);
+    } else if (/[0-9tfn-]/.test(ch)) {
+      let j = i;
+      while (j < text.length && !/[\s,\]}]/.test(text[j]!)) j++;
+      if (j >= text.length) break; // the token may still be growing
+      mark(j);
+      i = j - 1;
+    }
+  }
+  if (!closers.length) return null;
+  // Try the last few places a value ended, longest first: the most recent one is usually the best.
+  for (let k = safe.length - 1; k >= 0 && k >= safe.length - 8; k--) {
+    const spot = safe[k]!;
+    const repaired = text.slice(start, spot.at) + spot.tail;
+    try {
+      JSON.parse(repaired);
+      return repaired;
+    } catch {
+      // that cut is mid-key or mid-token; try one earlier
+    }
+  }
+  return null;
+}
+
+/**
  * Every complete JSON value in `text` from `next` on, plus where to continue. One value per line is
  * the documented form, but a pretty-printed object, a `[...]` array of ops and values written back
  * to back all work — which is what keeps a half-written reply readable instead of broken.
+ *
+ * `open` says the last value returned is a partial reading of a value that is still being written
+ * (and `next` still points at its start, so the next chunk revises it).
  */
-export function scanJsonValues(text: string, next = 0): { values: unknown[]; next: number; bad: number } {
+export function scanJsonValues(text: string, next = 0): { values: unknown[]; next: number; bad: number; open: boolean } {
   const values: unknown[] = [];
   let i = Math.max(0, Math.min(next, text.length));
   let bad = 0;
+  let open = false;
   while (i < text.length) {
     while (i < text.length && /[\s,;]/.test(text[i]!)) i++;
     if (i >= text.length) break;
@@ -132,7 +194,20 @@ export function scanJsonValues(text: string, next = 0): { values: unknown[]; nex
       continue;
     }
     const end = endOfValue(text, i);
-    if (end < 0) break;
+    if (end < 0) {
+      const repaired = salvage(text, i);
+      if (repaired !== null) {
+        try {
+          const parsed: unknown = JSON.parse(repaired);
+          if (Array.isArray(parsed)) values.push(...parsed.slice(0, UI_LIMITS.items));
+          else values.push(parsed);
+          open = true;
+        } catch {
+          // not readable yet
+        }
+      }
+      break;
+    }
     const slice = text.slice(i, end);
     i = end;
     if (slice.length > UI_LIMITS.op) {
@@ -149,7 +224,7 @@ export function scanJsonValues(text: string, next = 0): { values: unknown[]; nex
     if (Array.isArray(parsed)) values.push(...parsed.slice(0, UI_LIMITS.items));
     else values.push(parsed);
   }
-  return { values, next: i, bad };
+  return { values, next: i, bad, open };
 }
 
 // ── applying ops ─────────────────────────────────────────
@@ -223,7 +298,7 @@ function placeholder(d: UIDoc, id: string, parent: string | null): UINode {
   return node;
 }
 
-function addChild(d: UIDoc, parent: string | null, entry: unknown): void {
+function addChild(d: UIDoc, parent: string | null, entry: unknown, revising = false): void {
   if (typeof entry === "string") {
     const id = asId(entry);
     if (!id) {
@@ -243,7 +318,15 @@ function addChild(d: UIDoc, parent: string | null, entry: unknown): void {
   if (entry && typeof entry === "object" && !Array.isArray(entry)) {
     const inline = entry as Record<string, unknown>;
     const id = asId(inline.id) ?? autoId(d, parent);
-    if (createNode(d, { ...inline, id, op: "node", parent }) !== "ok") note(d, "内联的子组件没有建立");
+    if (createNode(d, { ...inline, id, op: "node", parent }, revising) !== "ok") {
+      note(d, "内联的子组件没有建立");
+      return;
+    }
+    // createNode links a node it creates; one that already existed (the same id written again, a
+    // forward reference, or the previous reading of a revision) has to be linked here instead.
+    const node = d.nodes[id];
+    if (node && node.parent !== parent) d.nodes[id] = { ...node, parent };
+    pushChild(d, parent, id);
     return;
   }
   note(d, "子组件只能是 id 或组件对象");
@@ -268,7 +351,7 @@ function collectProps(type: string, o: Record<string, unknown>): Record<string, 
   return out;
 }
 
-function createNode(d: UIDoc, o: Record<string, unknown>): Apply {
+function createNode(d: UIDoc, o: Record<string, unknown>, revising = false): Apply {
   const id = asId(o.id);
   const type = typeof o.type === "string" ? o.type.trim().slice(0, 40) : "";
   if (!id) {
@@ -282,9 +365,25 @@ function createNode(d: UIDoc, o: Record<string, unknown>): Apply {
   const parent = o.parent === null || o.parent === undefined || o.parent === "" ? null : asId(o.parent);
   if (parent !== null && !d.nodes[parent]) return "retry"; // its parent op hasn't arrived yet
   const existing = d.nodes[id];
+  const nested = Array.isArray(o.children) ? o.children : Array.isArray((o.props as Record<string, unknown> | undefined)?.children) ? ((o.props as Record<string, unknown>).children as unknown[]) : [];
   if (existing) {
-    // The same id again (a replayed stream, or a placeholder being filled in): merge instead of failing.
-    return updateNode(d, { op: "update", id, type, props: collectProps(type, o) });
+    if (!revising) {
+      // The same id again (a replayed stream, or a placeholder being filled in): merge instead of failing.
+      return updateNode(d, { op: "update", id, type, props: collectProps(type, o) });
+    }
+    // A revision is the best reading of an op the model is still writing: replace the node wholesale,
+    // so a child that the finished version drops doesn't linger from an earlier reading. The parent
+    // comes from this reading too — a half-written op has no parent yet, and the node must move.
+    const props = validateProps(type, collectProps(type, o), id, d.issues) ?? {};
+    capRows(type, props, d.issues);
+    detach(d, id);
+    d.nodes[id] = { id, type, parent, props, children: [] };
+    pushChild(d, parent, id);
+    // Clear the old subtree first, so children without an id get the same auto ids every time —
+    // stable ids are what lets the browser keep a node instead of rebuilding it on every revision.
+    prune(d);
+    for (const entry of nested.slice(0, UI_LIMITS.children)) addChild(d, id, entry, true);
+    return "ok";
   }
   if (Object.keys(d.nodes).length >= UI_LIMITS.nodes) {
     note(d, `组件数量超过 ${UI_LIMITS.nodes}，后面的已忽略`);
@@ -299,8 +398,7 @@ function createNode(d: UIDoc, o: Record<string, unknown>): Apply {
   const node: UINode = { id, type, parent, props, children: [] };
   d.nodes[id] = node;
   pushChild(d, parent, id);
-  const nested = Array.isArray(o.children) ? o.children : Array.isArray((o.props as Record<string, unknown> | undefined)?.children) ? ((o.props as Record<string, unknown>).children as unknown[]) : [];
-  for (const entry of nested.slice(0, UI_LIMITS.children)) addChild(d, id, entry);
+  for (const entry of nested.slice(0, UI_LIMITS.children)) addChild(d, id, entry, revising);
   return "ok";
 }
 
@@ -470,7 +568,7 @@ function finish(d: UIDoc, o: Record<string, unknown>): Apply {
   return "ok";
 }
 
-function applyOp(d: UIDoc, raw: unknown): Apply {
+function applyOp(d: UIDoc, raw: unknown, revising = false): Apply {
   // A block that said `done` (or failed) is closed: anything after it is not part of this interface.
   if (d.status !== "streaming") return "drop";
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
@@ -483,7 +581,7 @@ function applyOp(d: UIDoc, raw: unknown): Apply {
   switch (kind) {
     case "node":
     case "create":
-      return createNode(d, o);
+      return createNode(d, o, revising);
     case "update":
     case "set":
     case "data":
@@ -508,6 +606,20 @@ function applyOp(d: UIDoc, raw: unknown): Apply {
   }
 }
 
+/**
+ * Applies one op. A half-written op is expected to be missing things, so its complaints are collected
+ * and dropped rather than shown as the block's problems.
+ */
+function applyEntry(d: UIDoc, op: unknown, revising: boolean): Apply {
+  const partial = isPartialOp(op);
+  d.partial = partial;
+  const kept = d.issues;
+  if (partial) d.issues = [];
+  const result = applyOp(d, op, revising);
+  if (partial) d.issues = kept;
+  return result;
+}
+
 function drain(d: UIDoc): void {
   for (let pass = 0; pass < 4; pass++) {
     let moved = false;
@@ -523,12 +635,12 @@ function drain(d: UIDoc): void {
         d.error = "指令数量超出上限";
         return;
       }
-      if (applyOp(d, next) === "retry") d.retry.push(next);
+      if (applyEntry(d, next, false) === "retry") d.retry.push(next);
       moved = true;
     }
     if (!d.retry.length) break;
     const left: unknown[] = [];
-    for (const op of d.retry) if (applyOp(d, op) === "retry") left.push(op);
+    for (const op of d.retry) if (applyEntry(d, op, false) === "retry") left.push(op);
     if (left.length !== d.retry.length) moved = true;
     d.retry = left.slice(0, 64);
     if (!moved) break;
@@ -539,11 +651,16 @@ function drain(d: UIDoc): void {
  * Applies ops to a doc and returns the new doc. Ops are numbered from 1: an op whose number was
  * already applied is ignored (a replayed stream), one that arrives early waits for the gap to be
  * filled, and one that refers to something not created yet waits for that instead of being lost.
+ *
+ * An op that says it is a `partial` reading, or that lands on the index of one, revises that op in
+ * place — that is how a tree the model is still typing grows instead of popping in at the end.
  */
 export function reduceOps(doc: UIDoc, entries: UIOpEntry[]): UIDoc {
+  const fresh = entries.filter((entry) => Number.isFinite(entry.seq) && entry.seq > doc.seq);
+  const revisions = entries.filter((entry) => Number.isFinite(entry.seq) && entry.seq === doc.seq && doc.seq > 0 && (doc.partial || isPartialOp(entry.op)));
   // Nothing new to apply: hand back the same object, so a browser that replays a block's ops on
   // every render keeps the node identities (and its memoized subtrees) intact.
-  if (!entries.some((entry) => Number.isFinite(entry.seq) && entry.seq > doc.seq)) return doc;
+  if (!fresh.length && !revisions.length) return doc;
   const d: UIDoc = {
     ...doc,
     roots: [...doc.roots],
@@ -552,8 +669,10 @@ export function reduceOps(doc: UIDoc, entries: UIOpEntry[]): UIDoc {
     retry: [...doc.retry],
     issues: [...doc.issues],
   };
-  for (const entry of entries) {
-    if (!Number.isFinite(entry.seq) || entry.seq <= d.seq) continue;
+  for (const revision of revisions) {
+    if (applyEntry(d, revision.op, true) === "retry") note(d, "这一条指令还没法应用");
+  }
+  for (const entry of fresh) {
     d.pending[String(entry.seq)] = entry.op;
   }
   const keys = Object.keys(d.pending)
@@ -594,6 +713,7 @@ export function migrateDoc(raw: unknown): UIDoc | null {
   if (version > UI_DOC_VERSION) return null;
   const doc = emptyDoc();
   doc.seq = typeof o.seq === "number" && Number.isFinite(o.seq) ? o.seq : 0;
+  doc.partial = o.partial === true;
   doc.ops = typeof o.ops === "number" && Number.isFinite(o.ops) ? o.ops : doc.seq;
   doc.status = o.status === "done" || o.status === "failed" ? o.status : "streaming";
   doc.error = typeof o.error === "string" ? o.error.slice(0, 300) : null;

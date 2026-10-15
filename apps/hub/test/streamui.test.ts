@@ -41,6 +41,14 @@ function feeder(start: UIDoc = emptyDoc()) {
       );
       return doc;
     },
+    /** Sends an op at the index already applied (a partial reading being revised). */
+    revise(...ops: unknown[]): UIDoc {
+      doc = reduceOps(
+        doc,
+        ops.map((op) => ({ seq, op })),
+      );
+      return doc;
+    },
   };
 }
 
@@ -110,15 +118,41 @@ describe("scanJsonValues", () => {
     const array = scanJsonValues('[{"op":"node","id":"a"},{"op":"node","id":"b"}]');
     expect(array.values).toEqual([{ op: "node", id: "a" }, { op: "node", id: "b" }]);
   });
-  it("holds an incomplete trailing object back and picks it up when more text arrives", () => {
+  it("reads a value that is still being written as far as it has got, and revises it later", () => {
     const head = '{"op":"node","id":"a"}\n{"op":"node","id":"b"';
     const first = scanJsonValues(head);
-    expect(first.values).toEqual([{ op: "node", id: "a" }]);
-    expect(head.slice(first.next)).toBe('{"op":"node","id":"b"'); // `next` is where to resume
+    // The unfinished op is read as far as it has got, and `next` still points at it so the next chunk
+    // revises it instead of starting a new op — this is what makes a big op render as it is typed.
+    expect(first.values).toEqual([{ op: "node", id: "a" }, { op: "node", id: "b" }]);
+    expect(first.open).toBe(true);
+    expect(head.slice(first.next)).toBe('{"op":"node","id":"b"');
 
-    const rest = scanJsonValues(head + "}", first.next);
-    expect(rest.values).toEqual([{ op: "node", id: "b" }]);
+    const rest = scanJsonValues(head + ',"type":"Col"}', first.next);
+    expect(rest.values).toEqual([{ op: "node", id: "b", type: "Col" }]);
+    expect(rest.open).toBe(false);
     expect(rest.bad).toBe(0);
+  });
+  it("salvages a whole tree that is still being written, element by element", () => {
+    const full = '{"op":"node","id":"root","type":"Col","children":[{"type":"Text","text":"一"},{"type":"Text","text":"二"},{"type":"Text","text":"三"}]}';
+    const seen: number[] = [];
+    for (let cut = 1; cut <= full.length; cut++) {
+      const scan = scanJsonValues(full.slice(0, cut));
+      const last = scan.values.at(-1) as { children?: unknown[] } | undefined;
+      seen.push(last?.children?.length ?? 0);
+    }
+    // The number of children the reader can see never goes backwards, and it gets all the way there.
+    expect(seen.every((n, i) => i === 0 || n >= seen[i - 1]!)).toBe(true);
+    expect(seen.at(-1)).toBe(3);
+    // A prefix that stops inside the third child still shows the first two, plus what of the third has
+    // been typed — which is exactly what makes the interface appear while the model is writing.
+    const mid = full.indexOf('"三"');
+    const partial = scanJsonValues(full.slice(0, mid));
+    expect(partial.open).toBe(true);
+    const kids = (partial.values.at(-1) as { children: { type: string; text?: string }[] }).children;
+    expect(kids).toHaveLength(3);
+    expect(kids[0]).toEqual({ type: "Text", text: "一" });
+    expect(kids[1]).toEqual({ type: "Text", text: "二" });
+    expect(kids[2]).toEqual({ type: "Text" });
   });
   it("is not confused by braces inside strings, and counts garbage as bad", () => {
     const value = { op: "node", id: "t", text: 'a } [ b " { c' };
@@ -311,6 +345,31 @@ describe("validateProps", () => {
 // ── C. robustness at the boundaries ──────────────────────
 
 describe("reduceOps: stream boundaries", () => {
+  it("grows an op that is still being written instead of waiting for it to finish", () => {
+    const f = feeder();
+    const reading = (texts: string[]) => ({ op: "node", id: "root", type: "Col", partial: true, children: texts.map((text) => ({ type: "Text", text })) });
+    f.push(reading(["一"]));
+    expect(f.doc.seq).toBe(1);
+    expect(docNodeCount(f.doc)).toBe(2);
+
+    // The same index again with more of the op: the tree grows in place, it doesn't become a second tree.
+    f.revise(reading(["一", "二"]));
+    expect(f.doc.seq).toBe(1);
+    expect(f.doc.nodes["root"]!.children).toHaveLength(2);
+    expect(docNodeCount(f.doc)).toBe(3);
+
+    // The finished op lands on the same index and replaces the reading, so nothing from it lingers.
+    f.revise({ op: "node", id: "root", type: "Col", children: [{ type: "Text", text: "一" }] });
+    expect(f.doc.seq).toBe(1);
+    expect(f.doc.partial).toBe(false);
+    expect(f.doc.nodes["root"]!.children).toHaveLength(1);
+    expect(docNodeCount(f.doc)).toBe(2);
+
+    // A later op still gets its own index.
+    f.push({ op: "node", id: "foot", type: "Caption" });
+    expect(f.doc.seq).toBe(2);
+    expect(f.doc.roots).toHaveLength(2);
+  });
   it("applies a duplicate op (same seq twice) only once", () => {
     const op = { op: "node", id: "a", type: "Col" };
     let doc = reduceOps(emptyDoc(), [
@@ -593,16 +652,22 @@ describe("UiStreams", () => {
 
     const emitted = opEvents(events);
     expect(emitted.length).toBeGreaterThan(1); // one delta at a time reaches #apply, so one op per event
-    let expectedFrom = 1;
+    let highest = 0;
     for (const ev of emitted) {
       expect(ev.runId).toBe("r1");
       expect(ev.messageId).toBe("m1");
       expect(ev.blockId).toBe("0");
-      expect(ev.from).toBe(expectedFrom); // no gaps between batches
-      expectedFrom += ev.ops.length;
+      // Never skips an index: an event either continues from the last one or revises it (the reading
+      // of an op the model is still writing). A gap would leave the browser waiting forever.
+      expect(ev.from).toBeLessThanOrEqual(highest + 1);
+      highest = Math.max(highest, ev.from + ev.ops.length - 1);
     }
-    expect(expectedFrom - 1).toBe(ops.length);
-    expect(emitted[0]!.ops[0]).toMatchObject({ op: "node", id: "root", type: "Col" });
+    expect(highest).toBe(ops.length);
+    // The first thing out is the reading of the op as far as it had got, marked as partial; the same
+    // index later carries the finished op.
+    expect(emitted[0]!.ops[0]).toMatchObject({ op: "node", partial: true });
+    const settled = emitted.find((ev) => ev.from === 1 && !(ev.ops[0] as { partial?: boolean }).partial);
+    expect(settled?.ops[0]).toMatchObject({ op: "node", id: "root", type: "Col" });
 
     const states = stateEvents(events);
     const last = states.at(-1)!;
