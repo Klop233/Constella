@@ -240,7 +240,7 @@ describe("prompt examples are valid programs", () => {
     const { validateTree } = await import("../../web/src/components/genui/validate.ts");
     const note = intelligentUiNote("rich");
     const blocks = [...note.matchAll(/```ui [^\n]*\n([\s\S]*?)\n```/g)].map((m) => m[1]!);
-    expect(blocks.length).toBeGreaterThanOrEqual(3);
+    expect(blocks.length).toBeGreaterThanOrEqual(1);
     for (const src of blocks) {
       const rt = runtime();
       const { code } = await compileWidget(src);
@@ -248,6 +248,37 @@ describe("prompt examples are valid programs", () => {
       await rt.settle();
       expect(rt.out.filter((m) => m.type === "error")).toEqual([]);
       expect(validateTree(rt.trees().at(-1)).diagnostics).toEqual([]);
+    }
+  });
+
+  it("every ui-json example in the instructions builds a clean tree", async () => {
+    // The declarative examples are the ones the model copies: if one of them trips the validator, the
+    // instructions themselves are wrong, so they are held to the same standard as the programs.
+    const { intelligentUiNote } = await import("../src/widgets.ts");
+    const { GENUI_SCHEMA, emptyDoc, isUiOp, reduceOps, scanJsonValues } = await import("@constella/protocol");
+    const note = intelligentUiNote("rich");
+    const blocks = [...note.matchAll(/```ui-json[^\n]*\n([\s\S]*?)\n```/g)].map((m) => m[1]!);
+    expect(blocks.length).toBeGreaterThanOrEqual(3);
+    for (const src of blocks) {
+      const scan = scanJsonValues(src, 0);
+      expect(scan.bad).toBe(0);
+      const entries: { seq: number; op: unknown }[] = [];
+      for (const value of scan.values) if (isUiOp(value)) entries.push({ seq: entries.length + 1, op: value });
+      expect(entries.length).toBeGreaterThan(0);
+      const doc = reduceOps(emptyDoc(), entries);
+      expect(doc.issues).toEqual([]);
+      expect(doc.roots.length).toBeGreaterThan(0);
+      expect(doc.status).toBe("done");
+      for (const node of Object.values(doc.nodes)) {
+        expect(Object.keys(GENUI_SCHEMA)).toContain(node.type);
+        // Every action in an example must be one the dispatcher knows how to run.
+        for (const [key, value] of Object.entries(node.props)) {
+          if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+          if (typeof (value as { type?: unknown }).type !== "string") continue;
+          if (!["send", "copy", "open", "state", "submit", "reset"].includes((value as { type: string }).type)) continue;
+          expect(key, `an action belongs on a prop that can run it`).toMatch(/^on[A-Z]/);
+        }
+      }
     }
   });
 });

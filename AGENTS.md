@@ -47,7 +47,8 @@
 | `perf.ts` | 性能采样：宿主机（`CONSTELLA_HOST_ROOT` 下的 /proc 与 cgroup）和每个容器的 CPU、内存、网络，内存里保留一天历史 |
 | `audit.ts` / `request-source.ts` | 审计详情：把记录里的 ID 解析成对象、算改动的前后值 / 当前请求的设备和 IP（`audit()` 自动附进 `via`） |
 | `db.ts` / `config.ts` | 迁移与 `kv` / 环境变量与目录布局 |
-| `widgets.ts` | 智能界面（回复里的 `ui` 块）：给 agent 的说明，按设置分关闭 / 适度 / 丰富；块本身的解析在 `packages/protocol/src/widgets.ts` |
+| `widgets.ts` | 智能界面（回复里的 `ui` / `ui-json` 块）：给 agent 的说明，按设置分关闭 / 适度 / 丰富；块的拆分在 `packages/protocol/src/widgets.ts` |
+| `streamui.ts` | 流式界面（回复里的 `ui-json` 块）：回复还在写时就读出里面的指令，校验、限流、按条转成 `ui.op` 事件（`ui.state` 报进度），结束后把文档存进 `ui_blocks`。DSL、状态树与 reducer 在 `packages/protocol/src/streamui/`，前后端共用同一份 |
 
 ### web（`apps/web/src`）
 
@@ -59,7 +60,8 @@
 - `pages/Performance.tsx`、`components/PerfChart.tsx`、`lib/perf.ts`：性能页（宿主机 + 实例/agent/服务）；`components/LineChart.tsx`：时间序列曲线。
 - `lib/audit.ts`、`components/AuditDetail.tsx`：操作记录的动作/字段中文名、一行摘要，和点开的详情面板（设置页与审计页共用）。
 - `lib/api.ts`：fetch 封装；`lib/live.ts`：SSE；`lib/types.ts`：前端用的类型（事件类型从 protocol 引）；`sw.ts`：Service Worker 与推送。
-- 智能界面（回复里的 ` ```ui ` 块）：`components/Widget.tsx` 拆分回复、按格式分发、工具条与全屏；`lib/genui/`（`compile.ts` 把「JS 语句 + JSX 组件树」编成程序，`repair.ts` 流式时截取写好的部分并补齐标签，`runtime.ts` 隐藏沙盒 iframe 里的 Worker 运行时：hooks、状态、函数按编号回调）；`components/genui/`（`Block.tsx` 宿主侧：编译、看门狗、按需启动、保存状态与快照；`validate.ts` 按组件 Schema 校验每棵树，转换或丢弃不对的属性并给出诊断；`Renderer.tsx` 渲染成原生组件；`components.tsx` 组件库；`Chart.tsx` SVG 图表；`icons.ts` 可用图标）。组件清单、属性和可用图标只在 `packages/protocol/src/genui.ts`（`GENUI_SCHEMA`）定义一次，运行时名单、校验和给 agent 的组件说明都由它生成。` ```ui-html ` 是自包含网页的退路，走 `lib/widget-runtime.ts` 的沙盒 iframe。
+- 流式界面（回复里的 ` ```ui-json ` 块，首选）：协议与状态树 `packages/protocol/src/streamui/`（`schema.ts` 组件属性校验、上限与动作；`doc.ts` 规范化状态树与 reducer——去重、乱序缓冲、父节点没到先挂 Loading、上限与诊断；`wire.ts` SSE 上的形状）。hub 侧 `apps/hub/src/streamui.ts` 边写边读、发 `ui.op` / `ui.state` 事件并存快照；web 侧 `components/streamui/`（`Tree.tsx` 把树渲染成原生组件，每个节点只订阅自己；`Block.tsx` 一块界面的宿主：骨架、源码、全屏、把主人填的值存回 `widget_state`）+ `lib/streamui/`（`runtime.ts` 交互状态与 Action Dispatcher、`inputs.ts` 表单字段、`docs.ts` 从事件重建文档，事件缺失时直接从回复正文重建）。模型不写任何可执行代码，交互只能通过声明式动作走 dispatcher。
+- 组件程序（回复里的 ` ```ui ` 块，需要界面自己算数时）：`components/Widget.tsx` 拆分回复、按格式分发、工具条与全屏；`lib/genui/`（`compile.ts` 把「JS 语句 + JSX 组件树」编成程序，`repair.ts` 流式时截取写好的部分并补齐标签，`runtime.ts` 隐藏沙盒 iframe 里的 Worker 运行时：hooks、状态、函数按编号回调）；`components/genui/`（`Block.tsx` 宿主侧：编译、看门狗、按需启动、保存状态与快照；`validate.ts` 按组件 Schema 校验每棵树，转换或丢弃不对的属性并给出诊断；`Renderer.tsx` 渲染成原生组件；`components.tsx` 组件库；`Chart.tsx` SVG 图表；`icons.ts` 可用图标）。组件清单、属性和可用图标只在 `packages/protocol/src/genui.ts`（`GENUI_SCHEMA`）定义一次，两条路径的校验、运行时名单和给 agent 的组件说明都由它生成。` ```ui-html ` 是自包含网页的退路，走 `lib/widget-runtime.ts` 的沙盒 iframe。
 
 ## 改什么去哪里
 
@@ -72,7 +74,7 @@
 | agent 往对话里交付文件或文档 | `artifacts.ts`（存储与版本）、`mcp.ts` 的 `send_file` / `artifact_*`、protocol 的 `artifact` 事件、web 的 `Artifact*` 组件 |
 | 新增会写审计的操作 | 调用处 `audit(db, actor, action, detail)`：`detail` 里记对象的名字，改动类再加 `changes: changesOf(前, 后, 字段)`（不记密钥明文）；中文名登记到 web `lib/audit.ts`；新的对象类型在 `audit.ts` 的 `auditRefs` 里加解析 |
 | 加表或列 | `db.ts`，见下面的「数据库迁移」 |
-| 改智能界面（交互式回复块） | 解析 `packages/protocol/src/widgets.ts` → 给 agent 的说明 `apps/hub/src/widgets.ts` → 加组件：先在 `packages/protocol/src/genui.ts` 的 `GENUI_SCHEMA` 写属性，再在 `apps/web/src/components/genui/components.tsx` 的 `COMPONENTS` 加渲染（单测会核对两边一致，给 agent 的说明自动带上）→ 运行时 `lib/genui/`；界面出问题会记进 `widget_issues` 供复盘；测试 `apps/hub/test/genui.test.ts`；设置项 `intelligentUi` |
+| 改智能界面（交互式回复块） | 给 agent 的说明 `apps/hub/src/widgets.ts`；块怎么拆在 `packages/protocol/src/widgets.ts`。声明式流式界面（`ui-json`）：协议与 reducer `packages/protocol/src/streamui/` → hub 解析与转发 `apps/hub/src/streamui.ts`（事件 `ui.op` / `ui.state`，表 `ui_blocks`，事件类型在 `packages/protocol/src/index.ts`）→ 渲染 `apps/web/src/components/streamui/`、交互状态与动作 `apps/web/src/lib/streamui/`。组件程序（`ui`）的运行时在 `lib/genui/`。加组件：先在 `packages/protocol/src/genui.ts` 的 `GENUI_SCHEMA` 写属性，再在 `apps/web/src/components/genui/components.tsx` 的 `COMPONENTS` 加渲染（单测会核对两边一致，给 agent 的说明自动带上）。界面出问题会记进 `widget_issues` 供复盘；测试 `apps/hub/test/genui.test.ts`（连给 agent 的示例一起校验）、`apps/hub/test/streamui.test.ts`；设置项 `intelligentUi` |
 | 接新的凭据提供方（别的密码库） | 实现 `apps/hub/src/credential-provider.ts` 的 `CredentialProvider`（连接状态、解锁/锁定、同步、条目摘要、按字段读取），在 `credentials.ts` 里注册；申请、审批和授权消费不用改 |
 | 接新的 agent 引擎 | `apps/runner/src/engines/` 新增适配器，事件统一成 protocol 事件 |
 | 改桌面镜像或桌面控制 | `images/desktop/`；hub 侧在 `desktops.ts` 和 `mcp.ts` 的 `desktop_*` |
@@ -88,6 +90,7 @@ pnpm --filter @constella/hub exec vitest run test/recovery.test.ts   # 单个测
 pnpm --filter @constella/web dev       # 前端开发服务器
 pnpm --filter @constella/web build
 scripts/e2e/run.sh                     # 端到端：需要 Docker、deploy/.env 和真实模型，端口 8781
+HUB=http://127.0.0.1:8790 node --experimental-strip-types scripts/e2e/streamui-demo.mjs   # 流式界面演示：真模型边写边渲染，并读回服务端快照
 ```
 
 Node 22.18+，pnpm 12。TypeScript 由 Node 直接运行（`node src/index.ts`），没有编译步骤。

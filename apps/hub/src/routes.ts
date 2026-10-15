@@ -22,6 +22,7 @@ import { loadUsage, rangeStart, usageStats } from "./usage.ts";
 import { groupOf, PERF_INTERVAL_S, type PerfGroup, type PerfRange } from "./perf.ts";
 import { contextBreakdown } from "./context.ts";
 import { intelligentUiNote } from "./widgets.ts";
+import { loadUiBlocks } from "./streamui.ts";
 import { ScheduleInput } from "./scheduler.ts";
 import { IMPORT_TEXT_MAX } from "./learning.ts";
 
@@ -417,6 +418,13 @@ export function registerRoutes(hub: Hub): void {
     const run = runs.setFeedback(id(req), b.value);
     if (run && ["done", "failed"].includes(run.status)) learning.maybeReflect(run);
     return { ok: true };
+  });
+
+  // The stored documents of a reply's streaming UI blocks (```ui-json). The browser normally rebuilds
+  // them from the ui.op events; this is what it falls back to when those are no longer in the stream.
+  app.get("/api/messages/:id/ui", async (req) => {
+    const { id: messageId } = req.params as { id: string };
+    return { blocks: loadUiBlocks(db, messageId) };
   });
 
   // ── artifacts (files and documents agents delivered) ─────

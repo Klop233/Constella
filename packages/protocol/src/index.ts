@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { UI_OPS_PER_EVENT, UIStatusSchema, UIWireOpSchema } from "./streamui/wire.ts";
 
 /** Lifecycle of a run; persisted so the hub can resume after a restart. */
 export const RunStatus = z.enum([
@@ -168,6 +169,30 @@ export const AgentEvent = z.discriminatedUnion("type", [
     target: z.string(),
     commit: z.string(),
   }),
+  /**
+   * A batch of ops for one streaming-UI block (see streamui/): the hub reads the ```ui-json block
+   * out of the reply while it is written, checks it and forwards it. `from` is the index of the
+   * first op, so a replayed stream is idempotent.
+   */
+  z.object({
+    ...envelope,
+    type: z.literal("ui.op"),
+    messageId: z.string(),
+    blockId: z.string(),
+    from: z.number().int().positive(),
+    ops: z.array(UIWireOpSchema).min(1).max(UI_OPS_PER_EVENT),
+  }),
+  /** How a block is doing: still being written, finished, or stopped with a reason. */
+  z.object({
+    ...envelope,
+    type: z.literal("ui.state"),
+    messageId: z.string(),
+    blockId: z.string(),
+    status: UIStatusSchema,
+    nodes: z.number().int().nonnegative(),
+    ops: z.number().int().nonnegative(),
+    issues: z.array(z.string()).max(20),
+  }),
 ]);
 export type AgentEvent = z.infer<typeof AgentEvent>;
 export type AgentEventType = AgentEvent["type"];
@@ -225,3 +250,4 @@ export * from "./attachments.ts";
 export * from "./runner.ts";
 export * from "./widgets.ts";
 export * from "./genui.ts";
+export * from "./streamui/index.ts";

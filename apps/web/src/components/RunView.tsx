@@ -8,6 +8,7 @@ import { openInstanceWindow } from "../lib/instanceWindow";
 import { useAppearance } from "../lib/appearance";
 import { clock, duration, STATUS_TEXT, tokens } from "../lib/format";
 import { useModelLabel } from "../lib/models";
+import { applyUiOps, emptyMessageUi, type MessageUi } from "../lib/streamui/docs";
 import type { AgentEvent, Approval, DecisionOption, Incident, Run } from "../lib/types";
 import { ApprovalCard } from "./ApprovalCard";
 import { ArtifactCard, type DeliveredArtifact } from "./ArtifactCard";
@@ -18,7 +19,7 @@ import { RichMessage } from "./Widget";
 import { cx, toast } from "./ui";
 
 type Item =
-  | { kind: "message"; id: string; text: string; streaming: boolean; user: boolean }
+  | { kind: "message"; id: string; text: string; streaming: boolean; user: boolean; ui?: MessageUi }
   | { kind: "reasoning"; id: string; text: string }
   | { kind: "tool"; id: string; name: string; input: unknown; output: string; done: boolean; ok: boolean; error?: string; result?: unknown }
   | { kind: "approval"; id: string; approvalId: string; summary: string; question: boolean; secret?: boolean; options?: DecisionOption[]; resolved?: "approve" | "deny"; by?: "user" | "policy"; answer?: string }
@@ -82,6 +83,27 @@ export function buildItems(events: AgentEvent[]): { items: Item[]; usage: Usage 
       case "reasoning.summary":
         items.push({ kind: "reasoning", id: ev.id, text: ev.text.replace(/\*\*/g, "").trim() });
         break;
+      /**
+       * Streaming UI blocks: the hub reads the ```ui-json block out of the reply while it is written
+       * and forwards the ops, so the interface can be built without waiting for the reply to end.
+       * The documents are cached by block (lib/streamui/docs), which keeps node identities stable
+       * across rebuilds and lets the renderer redraw only what changed.
+       */
+      case "ui.op": {
+        const msg = byId.get(ev.messageId) as Extract<Item, { kind: "message" }> | undefined;
+        if (!msg) break;
+        const ui = (msg.ui ??= emptyMessageUi());
+        ui.docs[ev.blockId] = applyUiOps(`${ev.runId}:${ev.messageId}:${ev.blockId}`, ev.from, ev.ops);
+        break;
+      }
+      case "ui.state": {
+        const msg = byId.get(ev.messageId) as Extract<Item, { kind: "message" }> | undefined;
+        if (!msg) break;
+        const ui = (msg.ui ??= emptyMessageUi());
+        ui.status[ev.blockId] = ev.status;
+        ui.issues[ev.blockId] = ev.issues;
+        break;
+      }
       case "tool.started": {
         const t: Item = { kind: "tool", id: ev.callId, name: ev.name, input: ev.input, output: "", done: false, ok: true };
         byId.set(ev.callId, t);
@@ -501,7 +523,7 @@ export function RunView({ run, approvals, incidents = [], onChanged }: { run: Ru
             return it.user ? (
               <UserBubble key={it.id} text={it.text} meta="追加指示" agentId={run.agent_id} />
             ) : (
-              <RichMessage key={it.id} text={it.text} streaming={it.streaming && !finished} keyBase={`${run.id}:${it.id}`} runId={run.id} className="font-display text-sm" noHeadingEmoji={plainHeadings} />
+              <RichMessage key={it.id} text={it.text} streaming={it.streaming && !finished} keyBase={`${run.id}:${it.id}`} runId={run.id} className="font-display text-sm" noHeadingEmoji={plainHeadings} ui={it.ui} />
             );
           case "steps":
             return <StepGroup key={it.id} steps={it.steps} live={!finished && i === blocks.length - 1} ended={finished} />;
