@@ -36,7 +36,7 @@
 | `events.ts` | 追加式事件日志与实时总线 |
 | `agents.ts` | agent 配置、凭据、引擎配置文件、注入给 agent 的 instructions |
 | `containers.ts` | dockerode：agent / desktop 容器的创建、重建、休眠 |
-| `desktops.ts` | 桌面池、租约（同一时刻只有一方操作）、接管/交还、VNC 桥接与输入过滤、实例健康诊断（`diagnose`）与修复（`repair`） |
+| `desktops.ts` | 桌面池、租约（同一时刻只有一方操作）、接管/交还、VNC 桥接与输入过滤、实例健康诊断（`diagnose`）与修复（`repair`）；启停等长操作经 `operate` 在后台跑，`list()` 带 `op` / `error`，路由加 `?wait=0` 立即返回 202（公网入口有请求超时，安卓启动会超过它），容器状态有 2 s 短缓存 |
 | `mcp.ts` | 给 agent 的工具：`memory_*`、`ask_user`、`get_help`、`notify_user`、`schedule_*`、`send_file`、`artifact_*`、`desktop_*`、`browser_*`、`credentials_*`（含登录时填入的 `credentials_fill`）、`host_exec` |
 | `credentials.ts` / `credential-provider.ts` / `credential-routes.ts` | 凭据与隐私：密码库连接与解锁会话、agent 的访问申请、指定审批 agent 的审核与限时单次授权、`/api/credentials`；provider 接口的 Bitwarden 实现在 `credential-provider.ts`，官方区和第三方 / 自托管（Vaultwarden 等，可带自签名证书）共用（见 [docs/credentials.md](docs/credentials.md)）；登录输入框是 `approvals` 里 `kind = 'secret'` 的一类（`runs.ts` 的 `requestSecret` / `provideSecret`，值只在内存里交给等待中的 `credentials_fill`，前端 `ApprovalCard.tsx` 的 `SecretForm`）；输入的登录可勾选存进密码库（`Credentials.save` → provider 的 `create`，只新增条目，经 CLI 标准输入传入） |
 | `artifacts.ts` | 成果：agent 交付到对话里的文件和文档，带版本，可预览、可原地编辑 |
