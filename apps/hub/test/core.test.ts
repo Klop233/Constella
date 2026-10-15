@@ -52,6 +52,7 @@ describe("RunManager", () => {
   let runs: InstanceType<typeof RunManager>;
   let resume = false;
   let mode: "ask" | "smart" | "auto" = "ask";
+  let perKind: Record<string, "ask" | "smart" | "auto"> = {};
 
   beforeEach(() => {
     db = openDb(":memory:");
@@ -72,7 +73,7 @@ describe("RunManager", () => {
       startPayload: () => ({ model: "m", instructions: "i", approvalPolicy: "auto", skillRoots: [] }),
       notify: (t) => notes.push(t),
       autoResume: () => resume,
-      approvalMode: () => mode,
+      permission: (kind) => perKind[kind] ?? mode,
       resumeDelaysMs: [0, 0, 0],
     });
   });
@@ -218,6 +219,17 @@ describe("RunManager", () => {
     mode = "ask";
   });
 
+  it("decides each kind of action under its own permission", async () => {
+    perKind = { command: "ask", host_access: "auto" };
+    const r = await runs.send({ agentId: "ag1", text: "x" });
+    await new Promise((res) => setTimeout(res, 10));
+    expect(await runs.requestHubApproval(r.runId, "host_access", "宿主机命令：systemctl restart nginx")).toBe(true);
+    runs.onRunnerEvent("ag1", { type: "approval.requested", runId: r.runId, approvalId: "ap1", kind: "command", summary: "ls" });
+    await new Promise((res) => setTimeout(res, 10));
+    expect(runs.get(r.runId)!.status).toBe("waiting_approval");
+    perKind = {};
+  });
+
   it("only continues engine failures that look temporary", async () => {
     resume = true;
     const tick = () => new Promise((res) => setTimeout(res, 10));
@@ -272,7 +284,7 @@ describe("desktop takeover requests", () => {
       startPayload: () => ({ model: "m", instructions: "i", approvalPolicy: "auto", skillRoots: [] }),
       notify: () => {},
       autoResume: () => false,
-      approvalMode: () => "auto",
+      permission: () => "auto",
     });
     const desktops = new Desktops({ db, events, containers: {} as any, runs });
     const r = await runs.send({ agentId: "ag1", text: "登录网站" });
@@ -707,6 +719,27 @@ describe("settings", () => {
     kvSet(db, "settings.quiet.end", "13:30");
     expect(settings.isQuiet(at("12:45"))).toBe(true);
     expect(settings.isQuiet(at("23:30"))).toBe(false);
+  });
+
+  it("approves every kind of action by default, and keeps explicit choices from the older settings", () => {
+    const { db, settings } = make();
+    expect(settings.permissions()).toEqual({ command: "auto", file_change: "auto", host_access: "auto", instance_create: "auto", instance_update: "auto" });
+    expect(settings.instanceApproval()).toEqual({ create: false, update: false });
+    expect(settings.engineApprovalPolicy()).toBe("auto");
+    expect(settings.permission("desktop")).toBe("ask");
+
+    kvSet(db, "settings.approvalMode", "ask");
+    kvSet(db, "settings.instanceApproval.create", "true");
+    kvSet(db, "settings.instanceApproval.update", "false");
+    expect(settings.permissions()).toMatchObject({ command: "auto", host_access: "ask", instance_create: "ask", instance_update: "auto" });
+
+    kvSet(db, "settings.permission.host_access", "smart");
+    kvSet(db, "settings.permission.instance_create", "auto");
+    kvSet(db, "settings.permission.command", "smart");
+    // "smart" only means something for commands; a stray one on file edits is ignored.
+    kvSet(db, "settings.permission.file_change", "smart");
+    expect(settings.permissions()).toMatchObject({ command: "smart", file_change: "auto", host_access: "smart", instance_create: "auto" });
+    expect(settings.engineApprovalPolicy()).toBe("ask");
   });
 
   it("keeps notifications in the inbox when their push is turned off", async () => {

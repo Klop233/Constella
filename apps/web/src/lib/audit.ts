@@ -100,6 +100,7 @@ export const AUDIT_FIELD: Record<string, string> = {
   runTimeoutMinutes: "单轮最长运行",
   runWatchdogMinutes: "卡住处理",
   approvalMode: "审批方式",
+  permissions: "权限",
   agentIdleMinutes: "agent 闲置休眠",
   desktopIdleMinutes: "实例闲置时间",
   desktopIdleAction: "实例闲置时",
@@ -197,6 +198,7 @@ const SUB_FIELD: Record<string, Record<string, string>> = {
   quietHours: { enabled: "开关", start: "开始", end: "结束" },
   desktopPolicy: { desktopIds: "实例", mode: "方式", desktopId: "实例" },
   instanceApproval: { create: "新建", update: "修改" },
+  permissions: { command: "执行命令", file_change: "修改文件", host_access: "在宿主机上执行命令", instance_create: "新建实例", instance_update: "修改实例" },
   options: {
     width: "屏幕宽",
     height: "屏幕高",
@@ -212,6 +214,9 @@ const SUB_FIELD: Record<string, Record<string, string>> = {
 /** Values of enum-like fields, as the forms label them. */
 const VALUE_TEXT: Record<string, Record<string, string>> = {
   approvalMode: { ask: "每次询问", smart: "智能", auto: "全部自动" },
+  ...Object.fromEntries(
+    ["command", "file_change", "host_access", "instance_create", "instance_update"].map((k) => [`permissions.${k}`, { auto: "自动批准", smart: "危险时问我", ask: "每次问我" }]),
+  ),
   intelligentUi: { off: "关闭", balanced: "适度", rich: "丰富" },
   emojiUse: { none: "不用", rare: "少用", some: "适度", free: "不限制" },
   approvalPolicy: { auto: "自动执行（容器内）", ask: "每条都问我" },

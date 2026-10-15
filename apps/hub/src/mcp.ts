@@ -957,7 +957,7 @@ function buildServer(agent: AgentRow, d: McpDeps): McpServer {
     server.registerTool(
       "host_exec",
       {
-        description: "在宿主服务器上执行一条 shell 命令（以 root 身份）。只读命令自动放行；其余需要用户审批，请在 reason 里说明目的。",
+        description: "在宿主服务器上执行一条 shell 命令（以 root 身份）。只读命令直接执行；其余按主人的权限设置，可能需要审批，请在 reason 里说明目的。",
         inputSchema: { command: z.string().max(4000), reason: z.string().max(300) },
       },
       guard(async ({ command, reason }) => {

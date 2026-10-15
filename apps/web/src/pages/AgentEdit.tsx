@@ -57,7 +57,6 @@ export default function AgentEdit() {
   const [model, setModel] = useState("");
   const [persona, setPersona] = useState("");
   const [desktopPolicy, setDesktopPolicy] = useState<DesktopPolicy>({ desktopIds: [] });
-  const [approvalPolicy, setApprovalPolicy] = useState<"auto" | "ask">("auto");
   const [hostAccess, setHostAccess] = useState(false);
   const [effort, setEffort] = useState<string>("");
   const [budget, setBudget] = useState("");
@@ -81,7 +80,6 @@ export default function AgentEdit() {
     setModel(a.model);
     setPersona(a.persona);
     setDesktopPolicy(a.desktop_policy);
-    setApprovalPolicy(a.approval_policy);
     setHostAccess(a.host_access);
     setEffort(a.effort ?? "");
     setBudget(a.budget_daily_usd ? String(a.budget_daily_usd) : "");
@@ -92,7 +90,6 @@ export default function AgentEdit() {
     setEmoji(t.emoji);
     setPersona(t.persona);
     // Instance bindings are the owner's pick, not part of a template.
-    setApprovalPolicy(t.approvalPolicy);
     setHostAccess(t.hostAccess);
     if (!name || templates.data?.some((x) => x.name === name)) setName(t.name);
   };
@@ -112,7 +109,6 @@ export default function AgentEdit() {
         persona,
         model,
         effort: effort || null,
-        approvalPolicy,
         desktopPolicy,
         hostAccess,
         budgetDailyUsd: budget ? Number(budget) : null,
@@ -193,20 +189,10 @@ export default function AgentEdit() {
             <div className="text-sm text-muted">还没有实例。可以到「实例」页新建，或让 agent 需要时自己新建。</div>
           )}
         </Field>
-        <Field group label="命令审批">
-          <Segmented
-            value={approvalPolicy}
-            onChange={setApprovalPolicy}
-            options={[
-              { value: "auto", label: "自动执行（容器内）" },
-              { value: "ask", label: "每条都问我" },
-            ]}
-          />
-        </Field>
         <Card className="p-3 flex items-start gap-3">
           <div className="flex-1">
             <div className="font-medium">允许操作宿主服务器</div>
-            <div className="text-xs text-muted mt-1">开启后可用 host_exec 在这台服务器上执行命令。只读命令自动放行，其余每条都要你在手机上批准。</div>
+            <div className="text-xs text-muted mt-1">开启后可用 host_exec 在这台服务器上执行命令。只读命令直接执行，其余按「设置 → 权限」审批。</div>
           </div>
           <Toggle checked={hostAccess} onChange={setHostAccess} label="允许操作宿主服务器" />
         </Card>
