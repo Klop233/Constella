@@ -11,10 +11,12 @@ export interface Appearance {
   usage: boolean;
   /** Sidebar entries (route paths) tucked under 更多. */
   navFolded: string[];
+  /** How the 实例 page lays instances out. */
+  instanceView: "card" | "list";
 }
 
 const KEY = "constella:appearance";
-const DEFAULTS: Appearance = { theme: "system", palette: "nebula", font: "sans", emoji: "flat", usage: true, navFolded: ["/artifacts", "/audit", "/usage", "/perf", "/reflect"] };
+const DEFAULTS: Appearance = { theme: "system", palette: "nebula", font: "sans", emoji: "flat", usage: true, navFolded: ["/artifacts", "/audit", "/usage", "/perf", "/reflect"], instanceView: "card" };
 const dark = window.matchMedia("(prefers-color-scheme: dark)");
 const listeners = new Set<() => void>();
 
