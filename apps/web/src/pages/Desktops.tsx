@@ -71,9 +71,10 @@ export default function Desktops() {
 
   const all = list.data ?? [];
   const instance = (id: string) => perf.data?.groups.find((g) => g.type === "instance" && g.id === id);
+  // The sampled usage only counts while the instance itself says it is running (a sample can lag a stop by a few seconds).
   const memory = (id: string) => {
     const g = instance(id);
-    return g?.running ? (g.now?.mem ?? 0) : 0;
+    return g?.running && all.find((d) => d.id === id)?.state === "running" ? (g.now?.mem ?? 0) : 0;
   };
   // Counts follow the search and the kind filter; the tab then narrows the list itself.
   const matching = all.filter((d) => (kind === "all" || d.kind === kind) && matchesQuery(d, query, agents.data));
@@ -110,8 +111,11 @@ export default function Desktops() {
     }
   };
 
-  const hostNow = perf.data?.host.now?.mem ?? null;
-  const hostTotal = perf.data?.host.info?.memTotal ?? null;
+  // Only when the hub can see the machine (or its cgroup); from inside a bare container the figure isn't the host's.
+  const hostInfo = perf.data?.host.info;
+  const hostOk = hostInfo?.scope === "host" || hostInfo?.scope === "cgroup";
+  const hostNow = hostOk ? (perf.data?.host.now?.mem ?? null) : null;
+  const hostTotal = hostOk ? (hostInfo?.memTotal ?? null) : null;
   const usedByInstances = all.reduce((sum, d) => sum + memory(d.id), 0);
 
   return (
@@ -227,7 +231,7 @@ export default function Desktops() {
                           · {KIND_INFO[d.kind].label} · {users.length ? users.map((a) => a.emoji).join("") : "没有分给 agent"} · {timeAgo(d.last_used_at)}
                         </span>
                       </div>
-                      {p?.running && p.now && (
+                      {p?.running && d.state === "running" && p.now && (
                         <div className="text-xs text-muted tabular-nums truncate mt-0.5">
                           CPU {cores(p.now.cpu)} · 内存 {p.memLimit ? `${bytes(p.now.mem).replace(" GB", "")}/${bytes(p.memLimit)}` : bytes(p.now.mem)}
                         </div>
