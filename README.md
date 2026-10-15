@@ -65,7 +65,7 @@ Constella 的思路是：**干活的部分不自己写**，直接用 OpenAI 开�
 已经有一台装好 Docker 的 Linux 服务器、一个能用的 [new-api](https://github.com/QuantumNous/new-api) 的话，十分钟左右能跑起来：
 
 ```bash
-git clone https://github.com/Klop233/Censtella.git constella
+git clone https://github.com/Klop233/Constella.git constella
 cd constella/deploy
 cp .env.example .env && chmod 600 .env
 # 编辑 .env：至少填 CONSTELLA_MASTER_KEY、CONSTELLA_SETUP_CODE、CONSTELLA_ORIGINS、NEWAPI_BASE_URL、NEWAPI_API_KEY
@@ -113,7 +113,7 @@ constella-hub ─────────────── 管理服务：登�
 **1. 拉代码，写配置**
 
 ```bash
-git clone https://github.com/Klop233/Censtella.git constella
+git clone https://github.com/Klop233/Constella.git constella
 cd constella/deploy
 cp .env.example .env
 chmod 600 .env
