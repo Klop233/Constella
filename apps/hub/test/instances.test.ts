@@ -624,6 +624,34 @@ describe("instance operations in progress", () => {
     expect(containers.calls).toContain(`ensure ${r.id}`);
   });
 
+  it("frees memory in bulk: stops only instances nobody holds, and pauses only running ones", async () => {
+    const containers = fakeContainers("running");
+    const s = setup({ containers, caps: caps() });
+    const idle = await s.desktops.create({ name: "空闲", kind: "browser" });
+    const held = await s.desktops.create({ name: "agent 在用", kind: "browser" });
+    const parked = await s.desktops.create({ name: "已暂停", kind: "browser" });
+    const off = await s.desktops.create({ name: "已停止", kind: "browser" });
+    s.db.prepare("UPDATE desktops SET lease = ? WHERE id = ?").run(JSON.stringify({ holder: "agent", agentId: "a", runId: "r", since: "now" }), held.id);
+    containers.states.set(`constella-desktop-${parked.id}`, "paused");
+    containers.states.set(`constella-desktop-${off.id}`, "stopped");
+
+    expect(s.desktops.idleIds().sort()).toEqual([idle.id, parked.id, off.id].sort());
+    // Pausing touches only what is running; a paused one keeps its memory, so stopping is what releases it.
+    const paused = await s.desktops.releaseIdle("pause", "owner");
+    expect(paused.map((r) => r.id)).toEqual([idle.id]);
+    await vi.waitFor(() => expect(s.desktops.op(idle.id)).toBeNull());
+    expect(containers.calls).toEqual([`pause constella-desktop-${idle.id}`]);
+
+    containers.calls.length = 0;
+    containers.states.set(`constella-desktop-${idle.id}`, "running");
+    const stopped = await s.desktops.releaseIdle("stop", "owner");
+    expect(stopped.map((r) => r.id).sort()).toEqual([idle.id, parked.id].sort());
+    await vi.waitFor(() => expect(stopped.every((r) => s.desktops.op(r.id) === null)).toBe(true));
+    expect(containers.calls.sort()).toEqual([`stop constella-desktop-${idle.id}`, `stop constella-desktop-${parked.id}`].sort());
+    // The agent's instance was never touched.
+    expect(containers.calls.some((c) => c.includes(held.id))).toBe(false);
+  });
+
   it("only resets Android", async () => {
     const s = setup({ caps: caps() });
     const b = await s.desktops.create({ name: "浏览器", kind: "browser" });

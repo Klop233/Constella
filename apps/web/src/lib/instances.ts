@@ -66,6 +66,46 @@ export function leaseText(d: Desktop, agents: Agent[] | undefined): { text: stri
   return { text: "已停止", tone: "off" };
 }
 
+export type InstanceGroup = "running" | "paused" | "stopped" | "error";
+
+export const GROUP_LABEL: Record<InstanceGroup, string> = { running: "运行中", paused: "已暂停", stopped: "已停止", error: "出错" };
+
+/** Which tab an instance is under: a failed operation or a broken container is 出错, a starting one counts as running. */
+export function groupOf(d: Desktop): InstanceGroup {
+  if (d.error || d.state === "error") return "error";
+  if (d.state === "running" || d.state === "starting" || d.op === "starting") return "running";
+  if (d.state === "paused") return "paused";
+  return "stopped";
+}
+
+export type InstanceSort = "recent" | "name" | "memory" | "created";
+
+export const SORT_OPTIONS: { value: InstanceSort; label: string }[] = [
+  { value: "recent", label: "最近使用" },
+  { value: "name", label: "名称" },
+  { value: "memory", label: "内存占用" },
+  { value: "created", label: "创建时间" },
+];
+
+/** Whether the search text is in the instance's name, its kind or the name of an agent it is given to. */
+export function matchesQuery(d: Desktop, query: string, agents: Agent[] | undefined): boolean {
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+  const users = (agents ?? []).filter((a) => d.agentIds.includes(a.id)).map((a) => a.name);
+  return [d.name, KIND_INFO[d.kind].label, d.kind, ...users].some((t) => t.toLowerCase().includes(q));
+}
+
+/** A sorted copy. `memory` is the container memory in bytes by instance id (instances that aren't running count as 0). */
+export function sortInstances(list: Desktop[], sort: InstanceSort, memory: (id: string) => number): Desktop[] {
+  const by: Record<InstanceSort, (a: Desktop, b: Desktop) => number> = {
+    recent: (a, b) => b.last_used_at.localeCompare(a.last_used_at),
+    name: (a, b) => a.name.localeCompare(b.name, "zh-Hans-CN"),
+    memory: (a, b) => memory(b.id) - memory(a.id),
+    created: (a, b) => b.created_at.localeCompare(a.created_at),
+  };
+  return [...list].sort((a, b) => by[sort](a, b) || a.name.localeCompare(b.name, "zh-Hans-CN"));
+}
+
 /** Whether a thumbnail (live, or the last frame kept when paused / stopped) may exist. */
 export function hasThumbnail(d: Desktop): boolean {
   return d.state !== "missing" && d.state !== "error";

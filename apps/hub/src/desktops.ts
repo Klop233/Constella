@@ -307,6 +307,34 @@ export class Desktops {
     };
   }
 
+  /**
+   * Instances nobody is using: running or paused, no lease, no viewer, nothing under way. What a bulk
+   * "free some memory" acts on; anything an agent or the owner has in hand is left alone.
+   */
+  idleIds(): string[] {
+    return this.rows()
+      .filter((r) => (JSON.parse(r.lease) as DesktopLease).holder === "none" && !this.#viewers.get(r.id) && !this.busy(r.id))
+      .map((r) => r.id);
+  }
+
+  /**
+   * Pause or stop every idle instance (stopping is what actually frees memory: a paused one keeps it). The operations
+   * run in the background, each on the instance's own `op`; returns the instances that were running or paused.
+   */
+  async releaseIdle(action: "pause" | "stop", actor: string): Promise<DesktopRow[]> {
+    const picked: DesktopRow[] = [];
+    for (const id of this.idleIds()) {
+      const state = await this.state(id);
+      const hit = action === "pause" ? state === "running" : state === "running" || state === "paused";
+      if (!hit) continue;
+      const row = this.row(id);
+      picked.push(row);
+      const op: InstanceOp = action === "pause" ? "pausing" : "stopping";
+      void this.operate(id, op, () => (action === "pause" ? this.pause(id) : this.stop(id)), actor).catch(() => {});
+    }
+    return picked;
+  }
+
   /** What is being done to an instance right now: an owner-triggered operation, else a start or repair from anywhere. */
   op(id: string): InstanceOp | null {
     return this.#ops.get(id)?.op ?? (this.#repairs.has(id) ? "repairing" : this.#starting.has(id) ? "starting" : null);

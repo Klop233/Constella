@@ -13,10 +13,12 @@ export interface Appearance {
   navFolded: string[];
   /** How the 实例 page lays instances out. */
   instanceView: "card" | "list";
+  /** The order the 实例 page lists them in. */
+  instanceSort: "recent" | "name" | "memory" | "created";
 }
 
 const KEY = "constella:appearance";
-const DEFAULTS: Appearance = { theme: "system", palette: "nebula", font: "sans", emoji: "flat", usage: true, navFolded: ["/artifacts", "/audit", "/usage", "/perf", "/reflect"], instanceView: "card" };
+const DEFAULTS: Appearance = { theme: "system", palette: "nebula", font: "sans", emoji: "flat", usage: true, navFolded: ["/artifacts", "/audit", "/usage", "/perf", "/reflect"], instanceView: "card", instanceSort: "recent" };
 const dark = window.matchMedia("(prefers-color-scheme: dark)");
 const listeners = new Set<() => void>();
 

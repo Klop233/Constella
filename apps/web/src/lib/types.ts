@@ -167,6 +167,7 @@ export interface Desktop {
   agentIds: string[];
   viewers: number;
   last_used_at: string;
+  created_at: string;
   /** What is being done to it right now (an operation, a start or a repair), if anything. */
   op: InstanceOp | null;
   /** Why the last operation failed, while it isn't running. */

@@ -798,6 +798,13 @@ export function registerRoutes(hub: Hub): void {
     audit(db, actor(req), "desktop.delete", { id: id(req), name });
     return { ok: true };
   });
+  /** Free some memory in one go: pause or stop every instance nobody is using (agents' and the owner's are left alone). */
+  app.post("/api/desktops/bulk", async (req, reply) => {
+    const b = z.object({ action: z.enum(["pause", "stop"]) }).parse(req.body ?? {});
+    const picked = await desktops.releaseIdle(b.action, actor(req));
+    if (picked.length) audit(db, actor(req), "desktop.bulk", { action: b.action, count: picked.length, names: picked.map((r) => r.name) });
+    return reply.code(202).send({ ok: true, pending: true, ids: picked.map((r) => r.id), names: picked.map((r) => r.name) });
+  });
   app.get("/api/desktops/:id", async (req) => desktops.get(id(req)));
   /**
    * Start / stop / restart / pause wait for the result by default (scripts, e2e). `?wait=0` answers 202 at once and
