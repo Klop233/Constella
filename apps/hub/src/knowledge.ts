@@ -5,6 +5,7 @@ import { z } from "zod";
 import { config, newId, nowIso } from "./config.ts";
 import type { Db } from "./db.ts";
 import type { EventStore } from "./events.ts";
+import { redact } from "./secrets.ts";
 
 /**
  * Engine-agnostic knowledge: plain Markdown memory and Agent Skills (SKILL.md) in git repos.
@@ -395,10 +396,8 @@ export class Knowledge {
   }
 
   #redact(text: string): string {
-    let out = text;
-    for (const v of this.#secretValues()) if (v && v.length >= 6) out = out.split(v).join("«secret»");
     // Common key shapes even if we don't know the value.
-    return out.replace(/\b(sk-[A-Za-z0-9_-]{16,}|ghp_[A-Za-z0-9]{20,}|xox[bp]-[A-Za-z0-9-]{10,})\b/g, "«secret»");
+    return redact(text, this.#secretValues()).replace(/\b(sk-[A-Za-z0-9_-]{16,}|ghp_[A-Za-z0-9]{20,}|xox[bp]-[A-Za-z0-9-]{10,})\b/g, "«secret»");
   }
 
   #commit(

@@ -10,6 +10,7 @@ import {
   auditDetail,
   auditValue,
   auditVia,
+  CREDENTIAL_REQUEST_STATUS,
   detailKeyLabel,
   fieldLabel,
   INCIDENT_STATUS,
@@ -69,12 +70,17 @@ function Body({ entry, refs, loading, agents }: { entry: AuditEntry; refs: Audit
   if (r.run) hidden.add("runId");
   if (r.conversation) hidden.add("conversationId");
   if (r.agent) hidden.add("agentId");
+  if (r.credentialRequest) {
+    hidden.add("requestId");
+    hidden.add("item");
+    hidden.add("fields");
+  }
   if (r.agent || r.schedule || r.desktop || r.incident || r.artifact) {
     hidden.add("id");
     hidden.add("name");
   }
   const rest = Object.entries(d).filter(([k, v]) => !hidden.has(k) && v !== null && v !== undefined && v !== "");
-  const hasObject = r.agent || r.conversation || r.run || r.approval || r.schedule || r.desktop || r.incident || r.artifact;
+  const hasObject = r.agent || r.conversation || r.run || r.approval || r.schedule || r.desktop || r.incident || r.artifact || r.credentialRequest;
 
   return (
     <div className="space-y-5">
@@ -164,6 +170,15 @@ function Body({ entry, refs, loading, agents }: { entry: AuditEntry; refs: Audit
                     {" "}
                     · {r.artifact.filename} · v{r.artifact.version}
                   </span>
+                </Kv>
+              )}
+              {r.credentialRequest && (
+                <Kv label="凭据申请">
+                  <Link to="/credentials" className="hover:underline">
+                    {r.credentialRequest.item || "凭据条目"}
+                  </Link>
+                  <Badge className="ml-1.5">{CREDENTIAL_REQUEST_STATUS[r.credentialRequest.status] ?? r.credentialRequest.status}</Badge>
+                  <span className="text-muted"> · {r.credentialRequest.fields.map(fieldLabel).join("、") || "未指定字段"} · 提出 {fullTime(r.credentialRequest.createdAt)}</span>
                 </Kv>
               )}
               {r.incident && (

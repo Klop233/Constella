@@ -20,6 +20,7 @@ export interface AuditRefs {
   schedule?: { id: string; name: string; cron: string; enabled: boolean };
   incident?: { id: string; title: string; kind: string; status: string };
   artifact?: { id: string; title: string; filename: string; version: number };
+  credentialRequest?: { id: string; item: string; fields: string[]; status: string; agentId: string; createdAt: string };
 }
 
 const PROMPT_MAX = 300;
@@ -85,6 +86,20 @@ export function auditRefs(db: Db, row: { action: string; detail: string | null }
 
   const incident = kind === "incident" ? one<NonNullable<AuditRefs["incident"]>>("SELECT id, title, kind, status FROM incidents WHERE id = ?", str("id")) : undefined;
   if (incident) refs.incident = incident;
+
+  // Credential requests keep their payload in `data`; only names, field names and status are shown.
+  const cred = kind === "credentials" ? one<{ id: string; status: string; created_at: string; data: string }>("SELECT id, status, created_at, data FROM credential_requests WHERE id = ?", str("requestId")) : undefined;
+  if (cred) {
+    const parsed = parseDetail(cred.data);
+    refs.credentialRequest = {
+      id: cred.id,
+      item: typeof parsed.itemName === "string" ? parsed.itemName : "",
+      fields: Array.isArray(parsed.fields) ? (parsed.fields as unknown[]).map(String) : [],
+      status: cred.status,
+      agentId: typeof parsed.agentId === "string" ? parsed.agentId : "",
+      createdAt: cred.created_at,
+    };
+  }
 
   return refs;
 }

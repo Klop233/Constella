@@ -1,3 +1,4 @@
+import { registerCredentialRoutes } from "./credential-routes.ts";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -88,6 +89,7 @@ export function registerRoutes(hub: Hub): void {
     req.sessionId = s.sessionId;
   });
 
+  registerCredentialRoutes(hub);
   const actor = (req: FastifyRequest) => req.userId ?? "anonymous";
   const authLimit = { config: { rateLimit: { max: 10, timeWindow: "1 minute" } } };
 
