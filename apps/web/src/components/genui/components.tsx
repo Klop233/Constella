@@ -4,7 +4,7 @@ import { marked } from "marked";
 import { ArrowDown, ArrowRight, Check, ChevronDown, ChevronLeft, ChevronRight, Copy, RotateCcw, Send, X } from "lucide-react";
 import { Children, createElement, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { Markdown } from "../Markdown";
-import { cx } from "../ui";
+import { cx, Select as Dropdown } from "../ui";
 import { Chart, formatValue, type ChartProps, type ValueFormat } from "./Chart";
 import { ICONS } from "./icons";
 
@@ -823,21 +823,16 @@ function Select({ p }: CompProps) {
   return (
     <label className={labelCls}>
       {p.label && <span className="text-[13px] text-muted">{str(p.label)}</span>}
-      <select
+      <Dropdown
+        className="w-full"
         value={v}
-        onChange={(e) => {
-          setV(e.target.value);
+        options={options.map((o) => ({ value: o.value, label: o.label }))}
+        onChange={(x) => {
+          setV(x);
           done();
-          onChange?.(rawOf(options, e.target.value));
+          onChange?.(rawOf(options, x));
         }}
-        className={cx(fieldCls, "pr-7")}
-      >
-        {options.map((o) => (
-          <option key={o.value} value={o.value}>
-            {o.label}
-          </option>
-        ))}
-      </select>
+      />
     </label>
   );
 }

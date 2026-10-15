@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { CalendarClock, Play, Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
-import { Badge, Button, Card, Empty, Field, Header, IconButton, Loading, Section, Segmented, Sheet, Toggle, cx, inputClass, toast } from "../components/ui";
+import { Badge, Button, Card, Empty, Field, Header, IconButton, Loading, Section, Segmented, Select, Sheet, Toggle, cx, inputClass, toast } from "../components/ui";
 import { api } from "../lib/api";
 import { clock, describeCron, timeAgo } from "../lib/format";
 import type { Agent, Schedule } from "../lib/types";
@@ -170,13 +170,13 @@ export default function Tasks() {
             ) : (
               <>
                 <Field label="由哪个 agent 执行">
-                  <select className={inputClass} value={edit.agent_id ?? ""} onChange={(e) => setEdit({ ...edit, agent_id: e.target.value })} disabled={!!edit.id}>
-                    {agents.data?.map((a) => (
-                      <option key={a.id} value={a.id}>
-                        {a.emoji} {a.name}
-                      </option>
-                    ))}
-                  </select>
+                  <Select
+                    className="w-full"
+                    value={edit.agent_id ?? ""}
+                    onChange={(v) => setEdit({ ...edit, agent_id: v })}
+                    disabled={!!edit.id}
+                    options={(agents.data ?? []).map((a) => ({ value: a.id, label: `${a.emoji} ${a.name}` }))}
+                  />
                 </Field>
                 <Field label="要它做什么">
                   <textarea className={cx(inputClass, "min-h-24")} value={edit.payload?.text ?? ""} onChange={(e) => setEdit({ ...edit, payload: { ...edit.payload, text: e.target.value } })} placeholder="例如：汇总昨天的服务器状态，有异常就通知我" />

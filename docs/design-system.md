@@ -63,7 +63,7 @@
 
 ## 4. 尺寸、间距、圆角
 
-- **高度**：顶栏 48px（`h-12`）；按钮、输入框、下拉框、菜单项 32px（`h-8`）；侧边栏条目、设置导航项、侧边栏搜索框、分组标题、工具栏和浮层触发器、小按钮 28px（`h-7`）；分段控件容器 28px、选项 24px；chip 和行内小按钮 20–24px。
+- **高度**：顶栏 48px（`h-12`）；按钮、输入框、下拉框、菜单项、设置导航项 32px（`h-8`）；侧边栏条目、侧边栏搜索框、分组标题、工具栏和浮层触发器、小按钮 28px（`h-7`）；分段控件容器 28px、选项 24px；chip 和行内小按钮 20–24px。
 - **图标**：lucide，`strokeWidth={1.8}`。条目、顶栏、关闭按钮、`IconButton` 里都是 16px（`size-4`），密集行内 14px（`size-3.5`），空状态 24px；不用 `size-5` 及以上（手机底部标签除外）。
 - **间距**：页面左右 `px-4`；区块之间 `space-y-5`；区块标题和内容 `space-y-1.5`；卡片内 `p-3`–`p-3.5`；列表行 `px-3.5 py-2.5`。
 - **圆角**：照 Claude Code 收得很小，档位在 `index.css` 的 `@theme` 里统一调小了：`rounded`（3px）用于徽标，`rounded-md`（4px）用于按钮和条目，`rounded-lg`（6px）用于气泡和代码块，`rounded-xl`（8px）用于卡片、输入框、浮层，`rounded-2xl`（10px）用于对话框；状态点和头像用 `rounded-full`。不要绕过档位写任意值（比如 `rounded-[12px]`）。
@@ -78,6 +78,7 @@
   - 账户行（头像首字、名字、设置齿轮）
 - **手机**：底部五个标签（首页、桌面、任务、学习、设置），高度尽量小；只在桌面侧边栏出现的页面（成果、审计、用量、性能、回顾），在设置页顶部放入口行（`lg:hidden`）。
 - 顶栏：标题在左，操作在右；桌面上对话页不显示返回按钮（`backMobileOnly`）。
+- **设置页**（照 Claude 的设置页）：桌面上顶部是页面标题「设置」（`font-display text-2xl font-medium`，和导航文字左对齐），下面左边 176px 的分区导航只有文字（`h-8 text-sm`，选中用 `navItemClass`，不放图标），右边内容 `max-w-2xl`，分组之间 `space-y-8`。手机上先是分区列表（带图标和 ›），点进去是该分区。
 - 浮层：小选择用 `Popover`（在触发按钮上方弹出，点外面或按 Esc 关闭）；表单、确认、长内容用 `Sheet`（手机从底部弹出，桌面居中）。
 
 ## 6. 组件配方
@@ -86,18 +87,20 @@
 
 | 组件 | 要点 |
 |---|---|
-| `Button` | `primary`（渐变主色）、`secondary`（白底细边框）、`soft`（`bg-surface-2` 无边框：设置行、浮层、卡片里的次要操作）、`ghost`、`danger`；尺寸 `sm` 28px / `md` 32px / `lg` 40px（`lg` 只给手机底部主操作） |
-| `inputClass` / `selectClass` | 白底细边框、`rounded-lg`，悬停加深边框，聚焦主色边框，`text-[13.5px]` / `text-[13px]` |
+| `Button` | `primary`（渐变主色）、`secondary`（白底细边框：设置行里的操作，如「检测」「测试」「编辑」）、`soft`（`bg-surface-2` 无边框：浮层、卡片里的次要操作）、`ghost`、`danger`；尺寸 `sm` 28px / `md` 32px / `lg` 40px（`lg` 只给手机底部主操作） |
+| `inputClass` | 白底细边框、`rounded-lg`，悬停加深边框，聚焦主色边框，`text-[13.5px]` |
+| `Select` | 全站唯一的下拉框，不用原生 `<select>`（Windows 深色下弹出的是系统菜单，宽度还随选项变）：触发器同 `inputClass` 的边框，右侧 16px muted 向下箭头；菜单浮在页面最上层（`createPortal`，Sheet 里也不会被裁），`rounded-xl border bg-surface shadow-xl p-1`，选项 `h-8 rounded-md`，悬停 / 键盘移到的项 `bg-surface-2`，当前值右侧打勾；下方放不下就往上开。宽度由调用处给：设置行 `w-36`（同一页的下拉一样宽，左沿对齐），表单 `w-full`，筛选栏 `w-32`–`w-44`；工具栏里的小号用 `size="sm"`（28px、`text-xs`）。选项可带 `group`（如按 provider 分组的模型）。键盘：方向键 / Home / End 移动，Enter 或空格选中，Esc 关闭，焦点一直在触发器上 |
 | `Toggle` | 36×20，打开时纯色 `bg-accent` |
 | `Segmented` | 指标切换、二三选一：容器 `h-7 p-0.5 bg-surface-2`，选项 `h-6`，选中项 `bg-surface border border-line`，不加阴影 |
 | `Card` | `rounded-xl border bg-surface`，可点击时悬停加深边框 |
 | `Section` | 标题 `text-xs font-medium text-muted`，右侧文字操作用 `text-xs text-muted hover:text-[var(--text)]`，不用主色 |
 | `Row` | 可点击的列表行：图标、标题和副标题、右侧内容；在 `Card` 里用 `divide-y` 分隔。设置项不用它，用 `SettingRow` |
-| `SettingGroup` / `SettingRow` | 设置页：组标题 `text-sm font-semibold`，组间 `space-y-5`；行 `py-2.5`，左边标题 `text-[13.5px] font-medium` + 描述 `text-xs text-muted leading-snug`（可换行，写短），右边控件；行间 `divide-y`，不套卡片、不放图标；控件宽的行加 `wide`，窄屏时换到下一行；长列表里每行只有名字和几个按钮的（模型、provider、设备、容器、操作记录）加 `dense`，`py-1.5` |
+| `SettingGroup` / `SettingRow` | 设置页，照 Claude：组标题 `text-[15px] font-semibold`，组间 `space-y-8`；行 `py-3`，左边标题 `text-sm font-medium` + 描述 `text-[13px] text-muted leading-5`（可换行，写短），和右边控件之间 24px；行间 `divide-y`，不套卡片、不放图标；控件宽的行加 `wide`，窄屏时换到下一行；长列表里每行只有名字和几个按钮的（模型、provider、设备、容器、操作记录）加 `dense`，`py-2` |
+| `StatusText` | 行尾的只读状态（可用 / 不可用 / 检测中、正常 / 异常、运行中）：`text-[13px] text-muted` 文字前一个 14px 图标（✓ 用 ok 色、— muted、⚠ 连文字一起 danger、检测中转圈），不用带底色的徽标；一列状态竖排时右对齐，安静不抢眼 |
 | `navItemClass(active)` | 侧边栏和设置导航的条目：选中是文字色 9% 的中性底，悬停 5%；不要再手写这串 color-mix |
 | `Tabs` | 下划线标签：同一份数据的不同视角；选中项加粗加 2px 主色下划线，右侧可放一句 muted 说明 |
 | `StatTile` | 统计卡片：上面是 `text-xs text-muted` 标签，下面是数字（`lg` 是 `text-2xl`，`sm` 是 `text-base`），`tabular-nums` |
-| `Badge` | `rounded px-1.5 text-[11.5px]`，tone 只用 muted / ok / warn / danger / accent |
+| `Badge` | `rounded px-1.5 text-[11.5px]`，tone 只用 muted / ok / warn / danger / accent；用于标签（内置、当前、推荐）和卡片上的状态，设置行尾的状态用 `StatusText` |
 | 状态点 | 8px 圆点：空闲是空心描边，进行中是主色并闪烁，等审批是 warn，失败是 danger |
 | `Popover` | 浮层：触发器默认 `h-7 px-1.5 text-[13px] text-muted`，展开时 `bg-surface-2`；面板 `rounded-xl border bg-surface shadow-xl`，`side` 定上下、`align` 定左右。面板内 `p-3`，分节线左右内缩（不通栏），每行左标签、右 `text-muted tabular-nums` 数值；进度条 `h-1.5 rounded-full`，轨道用文字色 12% |
 | `MenuItem` / `MenuDivider` | 菜单（如账户菜单）：面板 `w-60 p-1.5`，首行可放 `text-xs text-muted` 的身份信息；项 `h-8 px-2.5 gap-2.5 rounded-md`，16px muted 图标，右侧提示用 `text-xs text-muted`（快捷键、›、↗）；用分隔线分组，退出登录放最后一组。红色只给删除数据的操作 |

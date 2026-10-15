@@ -2,7 +2,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, KeyRound, Lock, LockOpen, Plus, RefreshCw, Search, Shield, Trash2, Unlock, X } from "lucide-react";
 import { useState } from "react";
 import { api } from "../lib/api";
-import { Badge, Button, Card, Empty, Field, Header, Loading, Section, Sheet, Tabs, cx, inputClass, selectClass, toast } from "../components/ui";
+import { Badge, Button, Card, Empty, Field, Header, Loading, Section, Select, Sheet, Tabs, cx, inputClass, toast } from "../components/ui";
 
 type Connection = { id: string; name: string; provider: "bitwarden"; server: string; status: "locked" | "unlocked" | "error"; error?: string };
 type Item = { id: string; name: string; username?: string; uris: string[]; fields: string[] };
@@ -52,7 +52,7 @@ export default function Credentials() {
   return <div className="pb-8"><Header title="凭据与隐私" sub="Bitwarden 连接与访问审批" />
     <div className="px-4 space-y-5">
       <Card className="p-3.5 space-y-2"><div className="flex items-center gap-2"><Shield className="size-4 text-accent" /><div className="font-medium">安全边界</div></div><p className="text-xs text-muted leading-relaxed">主密码只在解锁时提交给服务器，不保存也不显示；连接信息加密存放。批准记录和访问历史里只有条目名、字段名和用途，没有密码本身。</p><p className="text-xs text-muted leading-relaxed">批准后，被申请的字段值会交给申请它的 agent，进入那次对话和模型上下文，也可能留在它自己的会话记录里。锁定、撤销和任务结束只能阻止之后的读取，收不回已经交出去的值。</p></Card>
-      <Section title="审批 agent"><div className="flex items-center gap-2"><select className={cx(selectClass, "flex-1")} value={d.approverAgentId ?? ""} onChange={(e) => void saveApprover(e.target.value || null)} aria-label="审批 agent"><option value="">不指定（手动审批）</option>{(agents.data ?? []).map(a => <option key={a.id} value={a.id}>{a.emoji ? `${a.emoji} ` : ""}{a.name}</option>)}</select><Badge tone={d.approverAgentId ? "accent" : "muted"}>{d.approverAgentId ? "已指定" : "手动"}</Badge></div></Section>
+      <Section title="审批 agent"><div className="flex items-center gap-2"><Select label="审批 agent" className="flex-1 min-w-0" value={d.approverAgentId ?? ""} onChange={(v) => void saveApprover(v || null)} options={[{ value: "", label: "不指定（手动审批）" }, ...(agents.data ?? []).map(a => ({ value: a.id, label: `${a.emoji ? `${a.emoji} ` : ""}${a.name}` }))]} /><Badge tone={d.approverAgentId ? "accent" : "muted"}>{d.approverAgentId ? "已指定" : "手动"}</Badge></div></Section>
       <Tabs value={tab} options={[{ value: "connections", label: `连接 (${d.connections.length})` }, { value: "requests", label: `访问请求 (${d.requests.filter(r => r.status === "pending").length})` }, { value: "history", label: "访问历史" }]} onChange={setTab} />
       {tab === "connections" && <Connections data={d.connections} onAdd={() => setAdd(true)} onUnlock={setUnlock} onItems={setItems} act={act} busy={busy} />}
       {tab === "requests" && <Requests requests={d.requests} agents={agents.data ?? []} act={act} busy={busy} />}
@@ -129,7 +129,7 @@ function AddSheet({ open, onClose, onSaved }: { open: boolean; onClose: () => vo
     <Sheet open={open} onClose={onClose} title="添加 Bitwarden 连接">
       <div className="space-y-3">
         <Field label="名称"><input className={inputClass} value={name} onChange={e => setName(e.target.value)} placeholder="例如：团队密码库" /></Field>
-        <Field label="服务器"><select className={selectClass} value={preset} onChange={e => setPreset(e.target.value)} aria-label="服务器"><option value="us">Bitwarden（美国）</option><option value="eu">Bitwarden（欧洲）</option><option value="custom">第三方 / 自托管</option></select></Field>
+        <Field label="服务器"><Select className="w-full" value={preset} onChange={setPreset} options={[{ value: "us", label: "Bitwarden（美国）" }, { value: "eu", label: "Bitwarden（欧洲）" }, { value: "custom", label: "第三方 / 自托管" }]} /></Field>
         {preset === "custom" && <Field label="服务器地址" hint="Vaultwarden 等 Bitwarden 兼容服务填完整地址。内网地址（192.168.x.x、*.local）可以用 http://，其余必须 https://。"><input className={inputClass} value={customUrl} onChange={e => setCustomUrl(e.target.value)} placeholder="https://vault.example.com" /></Field>}
         <Field label="Client ID" hint="Bitwarden 个人 API Key 的 client_id，在网页版的「安全 → 密钥」里生成；第三方服务在同一个位置。"><input className={inputClass} value={clientId} onChange={e => setClientId(e.target.value)} autoComplete="off" /></Field>
         <Field label="Client Secret" hint="只发送到服务器，之后不再显示。"><input className={inputClass} type="password" value={clientSecret} onChange={e => setClientSecret(e.target.value)} autoComplete="new-password" /></Field>

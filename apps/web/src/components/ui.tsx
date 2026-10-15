@@ -1,5 +1,6 @@
-import { ChevronLeft, Loader2, X } from "lucide-react";
-import { useEffect, useRef, useState, type ButtonHTMLAttributes, type ReactNode } from "react";
+import { Check, ChevronDown, ChevronLeft, CircleAlert, Loader2, Minus, X } from "lucide-react";
+import { useEffect, useId, useLayoutEffect, useRef, useState, type ButtonHTMLAttributes, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { useNavigate } from "react-router";
 
 export function cx(...c: (string | false | null | undefined)[]): string {
@@ -328,11 +329,11 @@ export function MenuDivider() {
   return <div className="my-1 h-px bg-[var(--border)]" />;
 }
 
-/** A settings section: heading, then rows separated by hairlines. */
+/** A settings section: heading, then rows separated by hairlines. Sections stack with `space-y-8`. */
 export function SettingGroup({ title, children }: { title: string; children: ReactNode }) {
   return (
     <section>
-      <h2 className="text-sm font-semibold pb-1">{title}</h2>
+      <h2 className="text-[15px] font-semibold pb-1.5">{title}</h2>
       <div className="divide-y divide-[var(--border)]">{children}</div>
     </section>
   );
@@ -359,18 +360,29 @@ export function SettingRow({ title, desc, children, wide, dense, onClick }: { ti
     <div
       {...press}
       className={cx(
-        "flex gap-x-4 gap-y-1.5",
-        dense ? "py-1.5" : "py-2.5",
+        "flex gap-x-6 gap-y-2",
+        dense ? "py-2" : "py-3",
         wide ? "flex-col sm:flex-row sm:items-center" : "items-center",
         onClick && "-mx-2 px-2 rounded-md cursor-pointer hover:bg-[color-mix(in_oklab,var(--text)_5%,transparent)]",
       )}
     >
       <div className="flex-1 min-w-0">
-        <div className="text-[13.5px] font-medium">{title}</div>
-        {desc && <div className="text-xs text-muted mt-px leading-snug">{desc}</div>}
+        <div className="text-sm font-medium">{title}</div>
+        {desc && <div className="text-[13px] text-muted mt-0.5 leading-5">{desc}</div>}
       </div>
       {children != null && <div className="shrink-0 flex items-center gap-1.5">{children}</div>}
     </div>
+  );
+}
+
+/** Read-only state at the end of a row (可用 / 不可用 / 正常…): muted text after a small icon, no tinted chip. */
+export function StatusText({ tone = "muted", children }: { tone?: "ok" | "muted" | "danger" | "busy"; children: ReactNode }) {
+  const Icon = { ok: Check, muted: Minus, danger: CircleAlert, busy: Loader2 }[tone];
+  return (
+    <span className={cx("inline-flex items-center gap-1.5 text-[13px] whitespace-nowrap", tone === "danger" ? "text-danger" : "text-muted")}>
+      <Icon className={cx("size-3.5 shrink-0", tone === "ok" && "text-ok", tone === "busy" && "animate-spin")} strokeWidth={2} />
+      {children}
+    </span>
   );
 }
 
@@ -414,5 +426,183 @@ export function StatTile({ label, value, sub, size = "lg" }: { label: ReactNode;
   );
 }
 
-export const selectClass = "h-8 pl-2.5 pr-7 rounded-lg border border-line bg-surface text-[13px] outline-none hover:border-[color-mix(in_oklab,var(--text)_25%,transparent)]";
+export interface SelectOption<T> {
+  value: T;
+  label: ReactNode;
+  /** Options sharing a group are listed under its name (in order; keep a group's options together). */
+  group?: string;
+  disabled?: boolean;
+}
+
+/**
+ * Dropdown: a bordered trigger with a chevron; the menu floats over the page (so sheets don't clip it), opens
+ * above when there's no room below, and marks the current value with a check. Focus stays on the trigger
+ * (select-only combobox): arrows / Home / End move, Enter or Space picks, Esc closes.
+ * Give it a width with `className` (`w-36` in settings rows, `w-full` in forms); `label` names it when no <label> does.
+ */
+export function Select<T extends string | number>({
+  value,
+  options,
+  onChange,
+  label,
+  className,
+  disabled,
+  size = "md",
+}: {
+  value: T;
+  options: SelectOption<T>[];
+  onChange: (v: T) => void;
+  label?: string;
+  className?: string;
+  disabled?: boolean;
+  size?: "sm" | "md";
+}) {
+  const [open, setOpen] = useState(false);
+  const [active, setActive] = useState(0);
+  const [pos, setPos] = useState<{ left: number; top: number; width: number } | null>(null);
+  const btn = useRef<HTMLButtonElement>(null);
+  const menu = useRef<HTMLDivElement>(null);
+  const id = useId();
+  const current = options.find((o) => o.value === value);
+
+  const show = () => {
+    if (disabled || !options.length) return;
+    setActive(Math.max(0, options.findIndex((o) => o.value === value)));
+    setOpen(true);
+  };
+  const hide = () => {
+    setOpen(false);
+    setPos(null);
+  };
+  const pick = (i: number) => {
+    const o = options[i];
+    if (!o || o.disabled) return;
+    hide();
+    if (o.value !== value) onChange(o.value);
+  };
+  const step = (from: number, dir: 1 | -1) => {
+    for (let i = from + dir; i >= 0 && i < options.length; i += dir) if (!options[i]!.disabled) return i;
+    return from;
+  };
+
+  // Place the menu under the trigger (above when it doesn't fit), left edges aligned unless that runs off screen.
+  useLayoutEffect(() => {
+    if (!open) return;
+    const place = () => {
+      const r = btn.current?.getBoundingClientRect();
+      const m = menu.current;
+      if (!r || !m) return;
+      const h = m.offsetHeight;
+      const w = Math.max(m.offsetWidth, r.width);
+      const up = r.bottom + 4 + h > innerHeight - 8 && r.top - 4 - h >= 8;
+      const left = r.left + w > innerWidth - 8 ? Math.max(8, r.right - w) : r.left;
+      setPos({ left, top: up ? r.top - 4 - h : r.bottom + 4, width: r.width });
+    };
+    place();
+    const onScroll = (e: Event) => !menu.current?.contains(e.target as Node) && place();
+    const onDown = (e: PointerEvent) => !btn.current?.contains(e.target as Node) && !menu.current?.contains(e.target as Node) && hide();
+    window.addEventListener("scroll", onScroll, true);
+    window.addEventListener("resize", place);
+    document.addEventListener("pointerdown", onDown);
+    return () => {
+      window.removeEventListener("scroll", onScroll, true);
+      window.removeEventListener("resize", place);
+      document.removeEventListener("pointerdown", onDown);
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (open) menu.current?.querySelector(`[data-i="${active}"]`)?.scrollIntoView({ block: "nearest" });
+  }, [open, active]);
+
+  const onKey = (e: ReactKeyboardEvent) => {
+    if (!open) {
+      if (["ArrowDown", "ArrowUp", "Enter", " "].includes(e.key)) {
+        e.preventDefault();
+        show();
+      }
+      return;
+    }
+    const keys: Record<string, () => void> = {
+      ArrowDown: () => setActive((a) => step(a, 1)),
+      ArrowUp: () => setActive((a) => step(a, -1)),
+      Home: () => setActive(step(-1, 1)),
+      End: () => setActive(step(options.length, -1)),
+      Enter: () => pick(active),
+      " ": () => pick(active),
+      Escape: hide,
+    };
+    if (e.key === "Tab") hide();
+    else if (keys[e.key]) {
+      e.preventDefault();
+      e.stopPropagation(); // Esc closes the menu, not the sheet around it
+      keys[e.key]!();
+    }
+  };
+
+  return (
+    <>
+      <button
+        ref={btn}
+        type="button"
+        role="combobox"
+        aria-label={label}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-controls={open ? id : undefined}
+        aria-activedescendant={open ? `${id}-${active}` : undefined}
+        disabled={disabled}
+        onClick={() => (open ? hide() : show())}
+        onKeyDown={onKey}
+        onKeyUp={(e) => e.key === " " && e.preventDefault()}
+        className={cx(
+          "inline-flex items-center gap-2 border border-line bg-surface text-left outline-none transition-colors disabled:opacity-50",
+          "hover:border-[color-mix(in_oklab,var(--text)_25%,transparent)] focus-visible:border-[var(--color-accent)]",
+          open && "border-[color-mix(in_oklab,var(--text)_25%,transparent)]",
+          size === "sm" ? "h-7 pl-2 pr-1.5 rounded-md text-xs" : "h-8 pl-3 pr-2 rounded-lg text-[13.5px]",
+          className,
+        )}
+      >
+        <span className={cx("flex-1 min-w-0 truncate", !current && "text-muted")}>{current?.label ?? "选择…"}</span>
+        <ChevronDown className="size-4 shrink-0 text-muted" strokeWidth={1.8} />
+      </button>
+      {open &&
+        createPortal(
+          <div
+            ref={menu}
+            id={id}
+            role="listbox"
+            aria-label={label}
+            onMouseDown={(e) => e.preventDefault()}
+            style={pos ? { left: pos.left, top: pos.top, minWidth: pos.width } : { left: 0, top: 0, visibility: "hidden" }}
+            className="fixed z-[60] w-max max-w-[min(24rem,calc(100vw-16px))] max-h-72 overflow-y-auto rounded-xl border border-line bg-surface shadow-xl p-1"
+          >
+            {options.map((o, i) => (
+              <div key={String(o.value)}>
+                {o.group != null && o.group !== options[i - 1]?.group && <div className={cx("px-2.5 pb-1 text-xs text-muted truncate", i > 0 ? "pt-2.5" : "pt-1.5")}>{o.group}</div>}
+                <div
+                  id={`${id}-${i}`}
+                  data-i={i}
+                  role="option"
+                  aria-selected={o.value === value}
+                  aria-disabled={o.disabled || undefined}
+                  onMouseEnter={() => !o.disabled && setActive(i)}
+                  onClick={() => pick(i)}
+                  className={cx(
+                    "flex items-center gap-2 h-8 pl-2.5 pr-2 rounded-md text-[13.5px] select-none",
+                    o.disabled ? "opacity-45" : "cursor-pointer",
+                    i === active && !o.disabled && "bg-surface-2",
+                  )}
+                >
+                  <span className="flex-1 min-w-0 truncate">{o.label}</span>
+                  <Check className={cx("size-4 shrink-0", o.value !== value && "invisible")} strokeWidth={1.8} />
+                </div>
+              </div>
+            ))}
+          </div>,
+          document.body,
+        )}
+    </>
+  );
+}
 

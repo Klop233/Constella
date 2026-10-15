@@ -6,7 +6,7 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
 import { ModelSelect } from "./AgentEdit";
 import { AuditDetailSheet } from "../components/AuditDetail";
-import { Badge, Button, Field, Header, Loading, navItemClass, Segmented, SettingGroup, SettingRow, Sheet, StatTile, Tabs, Toggle, cx, inputClass, selectClass, toast } from "../components/ui";
+import { Badge, Button, Field, Header, Loading, navItemClass, Segmented, Select, SettingGroup, SettingRow, Sheet, StatTile, StatusText, Tabs, Toggle, cx, inputClass, toast } from "../components/ui";
 import { api, logout } from "../lib/api";
 import { setAppearance, useAppearance, type Appearance } from "../lib/appearance";
 import { auditAction, auditActor, auditSummary } from "../lib/audit";
@@ -79,26 +79,10 @@ const SECTIONS: { id: string; label: string; icon: LucideIcon }[] = [
 /** Old links (?s=newapi) land on the section that replaced them. */
 const ALIASES: Record<string, string> = { newapi: "models" };
 
-/** Compact select for a fixed set of values; a value set elsewhere (env) still shows up. */
+/** Dropdown for a fixed set of values, one width for every row; a value set elsewhere (env) still shows up. */
 function Choice<T extends string | number>({ value, options, onChange, label }: { value: T; options: { value: T; label: string }[]; onChange: (v: T) => void; label: string }) {
   const all = options.some((o) => o.value === value) ? options : [{ value, label: typeof value === "number" ? fmtMinutes(value) : String(value) }, ...options];
-  return (
-    <select
-      aria-label={label}
-      className={selectClass}
-      value={String(value)}
-      onChange={(e) => {
-        const o = all.find((x) => String(x.value) === e.target.value);
-        if (o) onChange(o.value);
-      }}
-    >
-      {all.map((o) => (
-        <option key={String(o.value)} value={String(o.value)}>
-          {o.label}
-        </option>
-      ))}
-    </select>
-  );
+  return <Select label={label} className="w-36" value={value} options={all} onChange={onChange} />;
 }
 
 const minuteOptions = (list: number[], zero?: string) => list.map((m) => ({ value: m, label: m === 0 ? zero! : fmtMinutes(m) }));
@@ -126,7 +110,7 @@ export default function Settings() {
   const go = (id: string) => setParams({ s: id }, { replace: !!picked });
 
   const body = (
-    <div className="space-y-5">
+    <div className="space-y-8">
       {current.id === "general" && <GeneralSection s={s} save={save} />}
       {current.id === "permissions" && <PermissionsSection s={s} save={save} />}
       {current.id === "models" && <ModelsSection s={s} save={save} />}
@@ -203,22 +187,24 @@ export default function Settings() {
         )}
       </div>
 
-      {/* Desktop: Claude Code-style two-pane settings. */}
-      <div className="hidden lg:flex gap-6 pt-4 pb-8">
-        <nav className="w-40 shrink-0 space-y-px sticky top-4 self-start">
-          <div className="px-2.5 pb-1 text-xs text-muted">设置</div>
-          {SECTIONS.map((x) => (
-            <button
-              key={x.id}
-              onClick={() => go(x.id)}
-              className={cx(navItemClass(x.id === current.id), "w-full h-7 text-left text-[13px]")}
-            >
-              <x.icon className="size-4" strokeWidth={1.8} />
-              {x.label}
-            </button>
-          ))}
-        </nav>
-        <div className="flex-1 min-w-0 max-w-2xl">{body}</div>
+      {/* Desktop, after Claude's settings: page title, a text-only section list, then the section. */}
+      <div className="hidden lg:block pt-8 pb-10">
+        <h1 className="font-display text-2xl font-medium px-2.5 pb-6">设置</h1>
+        <div className="flex gap-8">
+          <nav className="w-44 shrink-0 space-y-0.5 sticky top-4 self-start">
+            {SECTIONS.map((x) => (
+              <button
+                key={x.id}
+                aria-current={x.id === current.id ? "page" : undefined}
+                onClick={() => go(x.id)}
+                className={cx(navItemClass(x.id === current.id), "w-full h-8 text-left text-sm")}
+              >
+                {x.label}
+              </button>
+            ))}
+          </nav>
+          <div className="flex-1 min-w-0 max-w-2xl">{body}</div>
+        </div>
       </div>
     </div>
   );
@@ -422,7 +408,7 @@ function ModelsSection({ s, save }: { s: SettingsView; save: Save }) {
       <SettingGroup title="默认">
         <SettingRow wide title="新 agent 默认模型" desc="新建 agent 时预选的模型，之后每个 agent、每个对话都能单独改。">
           <div className="w-60">
-            <ModelSelect value={s.defaultModel} onChange={(v) => void save({ defaultModel: v })} />
+            <ModelSelect label="新 agent 默认模型" value={s.defaultModel} onChange={(v) => void save({ defaultModel: v })} />
           </div>
         </SettingRow>
         <SettingRow wide title="新 agent 推理强度" desc="新建 agent 时预选；「默认」交给模型自己决定。">
@@ -432,7 +418,7 @@ function ModelsSection({ s, save }: { s: SettingsView; save: Save }) {
         </SettingRow>
         <SettingRow wide title="复盘 / 诊断 / 监督用的模型" desc="总结经验、整理记忆、生成回顾，以及诊断出错的任务、监督卡住的任务都用它。建议选稳定、判断力好的模型。">
           <div className="w-60">
-            <ModelSelect value={s.reflectModel} onChange={(v) => void save({ reflectModel: v })} />
+            <ModelSelect label="复盘 / 诊断 / 监督用的模型" value={s.reflectModel} onChange={(v) => void save({ reflectModel: v })} />
           </div>
         </SettingRow>
         <SettingRow wide title="显示名格式" desc="每个模型都绑定一个 provider。同名的模型可以挑一个不带 provider，在下面的模型列表里设置。">
@@ -461,7 +447,6 @@ function ModelsSection({ s, save }: { s: SettingsView; save: Save }) {
                 <span className="flex items-center gap-1.5">
                   {p.name}
                   {p.builtin && <Badge>内置</Badge>}
-                  {c && c !== "busy" && <Badge tone={c.ok ? "ok" : "danger"}>{c.ok ? "正常" : "异常"}</Badge>}
                 </span>
               }
               desc={
@@ -472,16 +457,16 @@ function ModelsSection({ s, save }: { s: SettingsView; save: Save }) {
                 </>
               }
             >
-              <Button size="sm" variant="soft" loading={c === "busy"} onClick={() => void checkProvider(p)}>
+              <Button size="sm" variant="secondary" loading={c === "busy"} onClick={() => void checkProvider(p)}>
                 测试
               </Button>
               {p.builtin ? (
-                <Button size="sm" variant="soft" onClick={() => setAdmin(true)}>
+                <Button size="sm" variant="secondary" onClick={() => setAdmin(true)}>
                   管理令牌
                 </Button>
               ) : (
                 <>
-                  <Button size="sm" variant="soft" onClick={() => setEditing(p)}>
+                  <Button size="sm" variant="secondary" onClick={() => setEditing(p)}>
                     编辑
                   </Button>
                   <Button size="sm" variant="ghost" className="text-danger" onClick={() => void removeProvider(p)}>
@@ -493,7 +478,7 @@ function ModelsSection({ s, save }: { s: SettingsView; save: Save }) {
           );
         })}
         <SettingRow wide title="添加 provider" desc="任何支持 OpenAI Responses API 的地址：另一个 new-api、CLIProxyAPI、OpenRouter 等。Codex 只走 Responses 接口，只支持 Chat Completions 的服务用不了。">
-          <Button size="sm" variant="soft" onClick={() => setEditing("new")}>
+          <Button size="sm" variant="secondary" onClick={() => setEditing("new")}>
             添加
           </Button>
         </SettingRow>
@@ -506,19 +491,12 @@ function ModelsSection({ s, save }: { s: SettingsView; save: Save }) {
             <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="搜索模型" className="flex-1 min-w-0 bg-transparent outline-none text-[13px]" />
           </label>
           {(providers.data?.length ?? 0) > 1 && (
-            <select aria-label="按 provider 筛选" className={selectClass} value={only} onChange={(e) => setOnly(e.target.value)}>
-              <option value="">全部 provider</option>
-              {providers.data?.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
+            <Select label="按 provider 筛选" className="w-36" value={only} onChange={setOnly} options={[{ value: "", label: "全部 provider" }, ...(providers.data ?? []).map((p) => ({ value: p.id, label: p.name }))]} />
           )}
-          <Button size="sm" variant="soft" disabled={!list.length || testing.size > 0} onClick={() => void testModels(list.map((m) => m.ref))}>
+          <Button size="sm" variant="secondary" disabled={!list.length || testing.size > 0} onClick={() => void testModels(list.map((m) => m.ref))}>
             {testing.size > 1 ? `测试中 · 剩 ${testing.size}` : "全部测试"}
           </Button>
-          <Button size="sm" variant="soft" onClick={() => setAdding(only || providers.data?.[0]?.id || "newapi")}>
+          <Button size="sm" variant="secondary" onClick={() => setAdding(only || providers.data?.[0]?.id || "newapi")}>
             添加模型
           </Button>
         </div>
@@ -551,7 +529,7 @@ function ModelsSection({ s, save }: { s: SettingsView; save: Save }) {
               省略 provider
               <Toggle checked={m.bare} onChange={(v) => void setBare(m, v)} label={`${m.label} 显示名省略 provider`} />
             </label>
-            <Button size="sm" variant="soft" loading={testing.has(m.ref)} onClick={() => void testModels([m.ref])}>
+            <Button size="sm" variant="secondary" loading={testing.has(m.ref)} onClick={() => void testModels([m.ref])}>
               测试
             </Button>
             <Button size="sm" variant="ghost" className="text-danger" onClick={() => void removeModel(m)}>
@@ -658,20 +636,15 @@ function AddModelsSheet({ provider, providers, models, onClose, onAdded }: { pro
     <Sheet open={!!provider} onClose={onClose} title="添加模型">
       <div className="space-y-3">
         <Field label="Provider">
-          <select
-            className={inputClass}
+          <Select
+            className="w-full"
             value={pid}
-            onChange={(e) => {
-              setPid(e.target.value);
+            options={providers.map((p) => ({ value: p.id, label: p.name }))}
+            onChange={(v) => {
+              setPid(v);
               setPicked(new Set());
             }}
-          >
-            {providers.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-              </option>
-            ))}
-          </select>
+          />
         </Field>
         <div className="space-y-1.5">
           <div className="flex items-center gap-2">
@@ -923,7 +896,7 @@ function LearningSection({ s, save }: { s: SettingsView; save: Save }) {
         <SettingRow title="立即整理" desc="对所有 agent 跑一遍，可能要几分钟。每一步改动都能在「学习」页查看和撤销。">
           <Button
             size="sm"
-            variant="soft"
+            variant="secondary"
             loading={busy}
             onClick={async () => {
               setBusy(true);
@@ -1113,7 +1086,7 @@ function NotifySection({ s, save }: { s: SettingsView; save: Save }) {
         <SettingRow title={`已登记设备 · ${devices.data?.length ?? 0}`} desc="所有接收推送的设备。">
           <Button
             size="sm"
-            variant="soft"
+            variant="secondary"
             onClick={() => void api.post<{ push: number }>("/api/push/test").then((r) => toast(r.push ? `已发送到 ${r.push} 台设备` : "没有可用的推送设备", r.push ? "ok" : "danger"))}
           >
             发送测试
@@ -1154,7 +1127,7 @@ function NotifySection({ s, save }: { s: SettingsView; save: Save }) {
       </SettingGroup>
       <SettingGroup title="备用渠道">
         <SettingRow title="Telegram" desc={s.telegramConfigured ? `已配置 · chat ${s.telegramChatId}` : "可选：推送失败或紧急提醒时同时发 Telegram。"}>
-          <Button size="sm" variant="soft" onClick={() => setTg(true)}>
+          <Button size="sm" variant="secondary" onClick={() => setTg(true)}>
             {s.telegramConfigured ? "修改" : "设置"}
           </Button>
         </SettingRow>
@@ -1223,7 +1196,7 @@ function SecuritySection({ me }: { me: Me }) {
     <>
       <SettingGroup title="登录">
         <SettingRow title={`通行密钥 · ${me.passkeys.length}`} desc="用指纹 / 面容登录，比密码更安全。">
-          <Button size="sm" variant="soft" onClick={addPasskey}>
+          <Button size="sm" variant="secondary" onClick={addPasskey}>
             添加
           </Button>
         </SettingRow>
@@ -1250,7 +1223,7 @@ function SecuritySection({ me }: { me: Me }) {
           ) : (
             <Button
               size="sm"
-              variant="soft"
+              variant="secondary"
               onClick={async () => {
                 const t = await api.post<{ secret: string; uri: string }>("/api/auth/totp/begin");
                 setTotp({ ...t, qr: await QRCode.toDataURL(t.uri, { margin: 1, width: 220 }) });
@@ -1261,7 +1234,7 @@ function SecuritySection({ me }: { me: Me }) {
           )}
         </SettingRow>
         <SettingRow title="密码">
-          <Button size="sm" variant="soft" onClick={() => setPw({ current: "", next: "" })}>
+          <Button size="sm" variant="secondary" onClick={() => setPw({ current: "", next: "" })}>
             修改密码
           </Button>
         </SettingRow>
@@ -1273,7 +1246,7 @@ function SecuritySection({ me }: { me: Me }) {
             key={sess.id}
             title={
               <span className="flex items-center gap-1.5">
-                {sess.device} {sess.current && <Badge tone="ok">当前</Badge>}
+                {sess.device} {sess.current && <Badge>当前</Badge>}
               </span>
             }
             desc={`${sess.ip} · ${timeAgo(sess.last_seen_at)}`}
@@ -1289,7 +1262,7 @@ function SecuritySection({ me }: { me: Me }) {
       <SettingGroup title="操作记录">
         <AuditList rows={(audit.data ?? []).slice(0, 6)} agents={agents.data ?? []} onOpen={setAuditEntry} />
         <SettingRow title={`最近 ${audit.data?.length ?? 0} 条`} desc="登录、审批、改设置、管理 agent 等操作都会记下来。">
-          <Button size="sm" variant="soft" onClick={() => setAuditOpen(true)}>
+          <Button size="sm" variant="secondary" onClick={() => setAuditOpen(true)}>
             查看全部
           </Button>
         </SettingRow>
@@ -1362,7 +1335,7 @@ function InstancesSection({ s, save }: { s: SettingsView; save: Save }) {
     }
   };
   const c = caps.data;
-  const status = (ok: boolean | undefined) => <Badge tone={ok ? "ok" : "muted"}>{ok ? "可用" : c?.checkedAt ? "不可用" : "检测中"}</Badge>;
+  const status = (ok: boolean | undefined) => (ok ? <StatusText tone="ok">可用</StatusText> : c?.checkedAt ? <StatusText>不可用</StatusText> : <StatusText tone="busy">检测中</StatusText>);
   const backendDesc = (b: "redroid" | "emulator") => {
     const x = c?.android[b];
     if (!x) return "";
@@ -1386,7 +1359,7 @@ function InstancesSection({ s, save }: { s: SettingsView; save: Save }) {
           {status(c?.android.emulator.ok)}
         </SettingRow>
         <SettingRow title="重新检测" desc={`构建了新镜像、或改了宿主设置（binder、KVM）后点一下。${c?.checkedAt ? `上次检测：${timeAgo(c.checkedAt)}` : ""}`}>
-          <Button size="sm" variant="soft" loading={checking || !!c?.checking} onClick={recheck}>
+          <Button size="sm" variant="secondary" loading={checking || !!c?.checking} onClick={recheck}>
             检测
           </Button>
         </SettingRow>
@@ -1522,7 +1495,7 @@ function OfficeGroup() {
         <SettingRow title="卸载" desc={`删除编辑器容器和镜像${o.imageSizeMb ? `，释放约 ${(o.imageSizeMb / 1024).toFixed(1)} GB 磁盘` : ""}。文档本身不受影响。`}>
           <Button
             size="sm"
-            variant="soft"
+            variant="secondary"
             loading={busy}
             disabled={o.pulling.active}
             onClick={() => {
@@ -1550,7 +1523,7 @@ function ImageInput({ value, disabled, onSave }: { value: string; disabled: bool
   return (
     <div className="flex items-center gap-2">
       <input value={v} onChange={(e) => setV(e.target.value)} aria-label="镜像地址" spellCheck={false} className={cx(inputClass, "h-8 w-56 sm:w-72 font-mono text-[12.5px]")} />
-      <Button size="sm" variant="soft" disabled={disabled || !v.trim() || v.trim() === value} onClick={() => onSave(v.trim())}>
+      <Button size="sm" variant="secondary" disabled={disabled || !v.trim() || v.trim() === value} onClick={() => onSave(v.trim())}>
         保存
       </Button>
     </div>
@@ -1578,7 +1551,7 @@ function SystemSection({ s, save }: { s: SettingsView; save: Save }) {
     <>
       <SettingGroup title={`系统 · v${d.version}`}>
         <SettingRow title="new-api" desc={d.newapi.ok ? `${d.newapi.models} 个模型可用` : d.newapi.error}>
-          <Badge tone={d.newapi.ok ? "ok" : "danger"}>{d.newapi.ok ? "正常" : "异常"}</Badge>
+          <StatusText tone={d.newapi.ok ? "ok" : "danger"}>{d.newapi.ok ? "正常" : "异常"}</StatusText>
         </SettingRow>
         <SettingRow title="磁盘与数据库" desc={`剩余 ${d.disk.freeGb} / ${d.disk.totalGb} GB · 数据库 ${d.dbSizeMb} MB`} />
       </SettingGroup>
@@ -1586,7 +1559,7 @@ function SystemSection({ s, save }: { s: SettingsView; save: Save }) {
         <SettingRow title="自动备份" desc={d.backups[0] ? `每天 03:30 · 最近：${d.backups[0].name}（${(d.backups[0].size / 1e6).toFixed(1)} MB）· 现有 ${d.backups.length} 份` : "每天 03:30 自动备份，还没有备份。"}>
           <Button
             size="sm"
-            variant="soft"
+            variant="secondary"
             loading={busy}
             onClick={async () => {
               setBusy(true);
@@ -1628,8 +1601,8 @@ function SystemSection({ s, save }: { s: SettingsView; save: Save }) {
       </SettingGroup>
       <SettingGroup title="容器">
         {d.containers.map((c) => (
-          <SettingRow dense key={c.name} title={<span className="font-mono text-[12.5px] font-normal">{c.name}</span>} desc={c.status}>
-            <Badge tone={c.state === "running" ? "ok" : "muted"}>{c.role}</Badge>
+          <SettingRow dense key={c.name} title={<span className="font-mono text-[12.5px] font-normal">{c.name}</span>} desc={`${c.role} · ${c.status}`}>
+            <StatusText tone={c.state === "running" ? "ok" : "muted"}>{c.state === "running" ? "运行中" : c.state}</StatusText>
           </SettingRow>
         ))}
       </SettingGroup>

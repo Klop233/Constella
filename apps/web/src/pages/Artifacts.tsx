@@ -3,7 +3,7 @@ import { Layers, Search } from "lucide-react";
 import { useDeferredValue, useState } from "react";
 import { useSearchParams } from "react-router";
 import { ArtifactRows } from "../components/ArtifactList";
-import { Empty, Header, Loading, selectClass } from "../components/ui";
+import { Empty, Header, Loading, Select } from "../components/ui";
 import { api } from "../lib/api";
 import { KIND_GROUPS } from "../lib/artifacts";
 import type { Agent, Artifact } from "../lib/types";
@@ -36,21 +36,14 @@ export default function Artifacts() {
             <Search className="size-3.5 text-muted shrink-0" />
             <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="搜索标题或文件名" className="flex-1 min-w-0 bg-transparent outline-none placeholder:text-muted" />
           </label>
-          <select aria-label="类型" value={group} onChange={(e) => setFilter("type", e.target.value === "all" ? "" : e.target.value)} className={selectClass}>
-            {KIND_GROUPS.map((g) => (
-              <option key={g.value} value={g.value}>
-                {g.label}
-              </option>
-            ))}
-          </select>
-          <select aria-label="agent" value={agentId} onChange={(e) => setFilter("agent", e.target.value)} className={selectClass}>
-            <option value="">全部 agent</option>
-            {(agents.data ?? []).map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.emoji} {a.name}
-              </option>
-            ))}
-          </select>
+          <Select label="类型" className="w-32 shrink-0" value={group} options={KIND_GROUPS} onChange={(v) => setFilter("type", v === "all" ? "" : v)} />
+          <Select
+            label="agent"
+            className="w-32 shrink-0"
+            value={agentId}
+            options={[{ value: "", label: "全部 agent" }, ...(agents.data ?? []).map((a) => ({ value: a.id, label: `${a.emoji} ${a.name}` }))]}
+            onChange={(v) => setFilter("agent", v)}
+          />
         </div>
         {list.isLoading ? (
           <Loading />

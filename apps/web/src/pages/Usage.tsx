@@ -4,7 +4,7 @@ import { useState } from "react";
 import { Link } from "react-router";
 import { ActivityHeatmap } from "../components/ActivityHeatmap";
 import { BarChart } from "../components/BarChart";
-import { Card, Empty, Header, Loading, Segmented, StatTile, Tabs, cx, selectClass } from "../components/ui";
+import { Card, Empty, Header, Loading, Segmented, Select, StatTile, Tabs, cx } from "../components/ui";
 import { api } from "../lib/api";
 import { STATUS_TEXT, statusTone, timeAgo, tokens } from "../lib/format";
 import type { RunStatus } from "../lib/types";
@@ -63,32 +63,11 @@ export default function Usage() {
       />
       <div className="px-4 pb-8 space-y-4">
         <div className="flex flex-wrap gap-2 justify-end">
-          <select aria-label="agent" className={selectClass} value={agent} onChange={(e) => setAgent(e.target.value)}>
-            <option value="">全部 agent</option>
-            {d?.filters.agents.map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.emoji} {a.name}
-              </option>
-            ))}
-          </select>
+          <Select label="agent" className="w-36" value={agent} onChange={setAgent} options={[{ value: "", label: "全部 agent" }, ...(d?.filters.agents ?? []).map((a) => ({ value: a.id, label: `${a.emoji} ${a.name}` }))]} />
           {(d?.filters.providers.length ?? 0) > 1 && (
-            <select aria-label="provider" className={selectClass} value={provider} onChange={(e) => setProvider(e.target.value)}>
-              <option value="">全部 provider</option>
-              {d?.filters.providers.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
+            <Select label="provider" className="w-36" value={provider} onChange={setProvider} options={[{ value: "", label: "全部 provider" }, ...(d?.filters.providers ?? []).map((p) => ({ value: p.id, label: p.name }))]} />
           )}
-          <select aria-label="模型" className={selectClass} value={model} onChange={(e) => setModel(e.target.value)}>
-            <option value="">全部模型</option>
-            {d?.filters.models.map((m) => (
-              <option key={m.ref} value={m.ref}>
-                {m.label}
-              </option>
-            ))}
-          </select>
+          <Select label="模型" className="w-44" value={model} onChange={setModel} options={[{ value: "", label: "全部模型" }, ...(d?.filters.models ?? []).map((m) => ({ value: m.ref, label: m.label }))]} />
         </div>
 
         {!d ? (

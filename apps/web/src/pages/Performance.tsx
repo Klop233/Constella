@@ -3,7 +3,7 @@ import { Bot, ChevronDown, RefreshCw, Search, Server } from "lucide-react";
 import { useMemo, useState, type ReactNode } from "react";
 import { Link } from "react-router";
 import { PerfChart, compactBytes, compactRate } from "../components/PerfChart";
-import { Badge, Card, Header, Loading, Section, Segmented, StatTile, cx, inputClass } from "../components/ui";
+import { Badge, Card, Header, Loading, Section, Segmented, Select, StatTile, cx, inputClass } from "../components/ui";
 import { api } from "../lib/api";
 import { timeAgo } from "../lib/format";
 import { KIND_INFO } from "../lib/instances";
@@ -283,9 +283,7 @@ export default function Performance() {
               action={
                 <div className="flex items-center gap-2">
                   <span className="text-xs text-muted">{visibleGroups.length}/{groups.length} 个</span>
-                  <select aria-label="资源排序" value={groupSort} onChange={(e) => setGroupSort(e.target.value as GroupSort)} className="h-7 rounded-md border border-line bg-surface px-1.5 text-xs text-muted outline-none">
-                    {GROUP_SORTS.map((o) => <option key={o.value} value={o.value}>按{o.label}</option>)}
-                  </select>
+                  <Select size="sm" label="资源排序" className="w-24" value={groupSort} onChange={setGroupSort} options={GROUP_SORTS.map((o) => ({ value: o.value, label: `按${o.label}` }))} />
                 </div>
               }
             >

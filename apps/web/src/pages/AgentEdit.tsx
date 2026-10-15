@@ -3,7 +3,7 @@ import { ChevronDown } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router";
 import { AgentAvatar } from "../components/AgentBits";
-import { Button, Card, Field, Header, Loading, Segmented, Toggle, cx, inputClass, toast } from "../components/ui";
+import { Button, Card, Field, Header, Loading, Segmented, Select, Toggle, cx, inputClass, toast } from "../components/ui";
 import { api } from "../lib/api";
 import { KIND_INFO } from "../lib/instances";
 import { useModelLabel, useModels, type ModelEntry } from "../lib/models";
@@ -16,28 +16,29 @@ function rank(p: DesktopPolicy, id: string): number {
   return i < 0 ? Number.MAX_SAFE_INTEGER : i;
 }
 
-/** Model picker for forms: options grouped by provider, ✓ for models whose test passed in settings. */
-export function ModelSelect({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+/** Model picker for forms: options grouped by provider, a green dot on models whose test passed in settings. */
+export function ModelSelect({ value, onChange, label: name }: { value: string; onChange: (v: string) => void; label?: string }) {
   const models = useModels();
   const label = useModelLabel();
   const groups = new Map<string, ModelEntry[]>();
   for (const m of models.data ?? []) groups.set(m.providerName, [...(groups.get(m.providerName) ?? []), m]);
   const known = models.data?.some((m) => m.ref === value);
-  return (
-    <select className={inputClass} value={value} onChange={(e) => onChange(e.target.value)}>
-      {!known && value && <option value={value}>{label(value)}</option>}
-      {[...groups].map(([provider, list]) => (
-        <optgroup key={provider} label={provider}>
-          {list.map((m) => (
-            <option key={m.ref} value={m.ref}>
-              {m.test?.ok ? "✓ " : ""}
-              {m.label}
-            </option>
-          ))}
-        </optgroup>
-      ))}
-    </select>
-  );
+  const options = [
+    ...(!known && value ? [{ value, label: label(value) }] : []),
+    ...[...groups].flatMap(([provider, list]) =>
+      list.map((m) => ({
+        value: m.ref,
+        group: provider,
+        label: (
+          <>
+            {m.label}
+            {m.test?.ok && <span title="测试通过" className="inline-block size-1.5 ml-1.5 align-middle rounded-full bg-[var(--ok)]" />}
+          </>
+        ),
+      })),
+    ),
+  ];
+  return <Select label={name} className="w-full" value={value} options={options} onChange={onChange} />;
 }
 
 export default function AgentEdit() {
