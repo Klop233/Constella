@@ -20,7 +20,9 @@ const fail = (message) => {
 };
 
 const overview = await (await fetch(`${HUB}/api/overview`)).json();
-const agent = (overview.agents ?? []).find((a) => !a.archived) ?? overview.agents?.[0];
+const agents = (overview.agents ?? []).filter((a) => !a.archived);
+// Prefer an agent that isn't already working: the reply has to stream for this demo to mean anything.
+const agent = agents.find((a) => !a.activeRuns?.length) ?? agents[0];
 if (!agent) {
   console.error("no agent configured on this hub");
   process.exit(2);
@@ -86,24 +88,29 @@ const done = new Promise((resolve) => {
   stop = resolve;
 });
 
-const pump = (async () => {
-  for (;;) {
-    const { value, done: ended } = await reader.read();
-    if (ended) break;
-    buffer += decoder.decode(value, { stream: true });
-    let cut;
-    while ((cut = buffer.indexOf("\n\n")) >= 0) {
-      const chunk = buffer.slice(0, cut);
-      buffer = buffer.slice(cut + 2);
-      const name = /^event: (.+)$/m.exec(chunk)?.[1];
-      const data = /^data: (.+)$/m.exec(chunk)?.[1];
-      if (name !== "agent" || !data) continue;
-      try {
-        onEvent(JSON.parse(data).event);
-      } catch {
-        // a half-written frame: the next read completes it
+// Reading the stream in the background; cancelled once the run ends (or the wait times out).
+void (async () => {
+  try {
+    for (;;) {
+      const { value, done: ended } = await reader.read();
+      if (ended) break;
+      buffer += decoder.decode(value, { stream: true });
+      let cut;
+      while ((cut = buffer.indexOf("\n\n")) >= 0) {
+        const chunk = buffer.slice(0, cut);
+        buffer = buffer.slice(cut + 2);
+        const name = /^event: (.+)$/m.exec(chunk)?.[1];
+        const data = /^data: (.+)$/m.exec(chunk)?.[1];
+        if (name !== "agent" || !data) continue;
+        try {
+          onEvent(JSON.parse(data).event);
+        } catch {
+          // a half-written frame: the next read completes it
+        }
       }
     }
+  } catch {
+    // the reader is cancelled when the run ends
   }
 })();
 
@@ -118,7 +125,7 @@ log(`▶ run ${runId} started · 提示：${PROMPT.slice(0, 60)}${PROMPT.length 
 log("▶ 下面是界面被一条条指令搭起来的过程（浏览器的渲染顺序与此完全一致）");
 
 await Promise.race([done, new Promise((resolve) => setTimeout(resolve, TIMEOUT_MS))]);
-await pump.catch(() => {});
+await reader.cancel().catch(() => {});
 
 log("");
 if (!blocks.size) {
