@@ -801,9 +801,15 @@ function TextInput({ p, area }: { p: Record<string, any>; area?: boolean }) {
   );
 }
 
-type Opt = { value: string; label: string; desc?: string; icon?: unknown; badge?: string };
+/** An option: `value` is its string key for the DOM, `raw` what the program gave (handed back as is, numbers stay numbers). */
+type Opt = { value: string; raw: unknown; label: string; desc?: string; icon?: unknown; badge?: string };
 const opts = (v: unknown): Opt[] =>
-  (Array.isArray(v) ? v : []).map((o: any) => (o && typeof o === "object" ? { value: str(o.value ?? o.label), label: str(o.label ?? o.value), desc: o.desc !== undefined ? str(o.desc) : undefined, icon: o.icon, badge: o.badge !== undefined ? str(o.badge) : undefined } : { value: str(o), label: str(o) }));
+  (Array.isArray(v) ? v : []).map((o: any) =>
+    o && typeof o === "object"
+      ? { value: str(o.value ?? o.label), raw: o.value ?? o.label, label: str(o.label ?? o.value), desc: o.desc !== undefined ? str(o.desc) : undefined, icon: o.icon, badge: o.badge !== undefined ? str(o.badge) : undefined }
+      : { value: str(o), raw: o, label: str(o) },
+  );
+const rawOf = (options: Opt[], value: string) => options.find((o) => o.value === value)?.raw ?? value;
 
 function Select({ p }: CompProps) {
   const options = opts(p.options);
@@ -817,7 +823,7 @@ function Select({ p }: CompProps) {
         onChange={(e) => {
           setV(e.target.value);
           done();
-          onChange?.(e.target.value);
+          onChange?.(rawOf(options, e.target.value));
         }}
         className={cx(fieldCls, "pr-7")}
       >
@@ -848,7 +854,7 @@ function Segmented({ p }: CompProps) {
             onClick={() => {
               setV(o.value);
               done();
-              onChange?.(o.value);
+              onChange?.(o.raw);
             }}
             className={cx("h-6 px-2.5 rounded text-[12.5px] whitespace-nowrap inline-flex items-center gap-1.5 border", o.value === v ? "bg-surface border-line" : "border-transparent text-muted hover:text-[var(--text)]")}
           >
@@ -898,7 +904,7 @@ function Choice({ p, ctx }: CompProps) {
     const next = multiple ? (sel.includes(val) ? sel.filter((x) => x !== val) : [...sel, val]) : [val];
     setSel(next);
     done();
-    onChange?.(multiple ? next : val);
+    onChange?.(multiple ? next.map((x) => rawOf(options, x)) : rawOf(options, val));
   };
   const submit = str(p.submit);
   return (

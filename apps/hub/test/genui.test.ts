@@ -129,3 +129,22 @@ describe("isolated runtime", () => {
     expect(rt.trees().at(-1).c[0].c).toEqual(["undefined"]);
   });
 });
+
+describe("compiler repairs", () => {
+  it("quotes object keys that start with a digit", async () => {
+    const { quoteKeys } = await import("../../web/src/lib/genui/compile.ts");
+    expect(quoteKeys("const r = {\n  利率: 1,\n  20年月供: 2,\n  30年: 3, x: a ? 1 : 2\n};")).toBe('const r = {\n  利率: 1,\n  "20年月供": 2,\n  "30年": 3, x: a ? 1 : 2\n};');
+    expect(quoteKeys("{ 20: 1, a: 2 }")).toBe("{ 20: 1, a: 2 }");
+  });
+
+  it("drops only the root that doesn't compile", async () => {
+    const { compileTolerant } = await import("../../web/src/lib/genui/compile.ts");
+    const src = 'const a = 1;\n<Text>ok</Text>\n<Card title="x">\n  <Stat value={a +} />\n</Card>\n<Badge>tail</Badge>';
+    const c = await compileTolerant(src);
+    expect(c.dropped).toBe(1);
+    expect(c.error).toMatch(/第 4 行/);
+    expect(c.code).toContain("h(Badge");
+    expect(c.code).not.toContain("h(Card");
+    await expect(compileTolerant("const a = ;\n<Text>x</Text>")).rejects.toThrow(/第 1 行/);
+  });
+});

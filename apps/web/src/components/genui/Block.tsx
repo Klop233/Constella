@@ -1,6 +1,6 @@
 import { Loader2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { CompileError, compileWidget } from "../../lib/genui/compile";
+import { CompileError, compileTolerant, compileWidget, dropRoots, rootsOf } from "../../lib/genui/compile";
 import { repairPartial } from "../../lib/genui/repair";
 import { BRIDGE, frameSrcdoc } from "../../lib/genui/runtime";
 import { toast } from "../ui";
@@ -25,6 +25,8 @@ let srcdoc: string | null = null;
 
 export interface BlockState {
   error: string | null;
+  /** Roots skipped because they were broken; the rest shows. */
+  dropped: number;
   /** True once a tree has been shown. */
   shown: boolean;
 }
@@ -68,22 +70,34 @@ export function GenUIBlock({ source, streaming, host, onState, reloadKey }: { so
     [post, host.slots],
   );
 
-  // Compile: the finished block as written; while streaming, the part written so far (repaired).
+  // Compile: the finished block as written (skipping roots that don't compile); while streaming,
+  // the part written so far (repaired).
+  const [dropped, setDropped] = useState(0);
+  const degrade = useRef<{ base: Set<number>; next: number } | null>(null);
   useEffect(() => {
     if (host.slots === undefined) return; // wait for saved state
     let cancelled = false;
     const run = async () => {
-      const text = streaming ? repairPartial(source) : source;
-      if (!text) return;
-      try {
-        const { code } = await compileWidget(text);
-        if (!cancelled) {
-          if (!streaming) setError(null);
-          load(code);
+      if (streaming) {
+        const text = repairPartial(source);
+        if (!text) return;
+        try {
+          const { code } = await compileWidget(text);
+          if (!cancelled) load(code);
+        } catch {
+          // half-written code is expected to fail now and then
         }
+        return;
+      }
+      try {
+        const c = await compileTolerant(source);
+        if (cancelled) return;
+        setDropped(c.dropped);
+        setError(c.dropped ? c.error : null);
+        degrade.current = null;
+        load(c.code);
       } catch (err) {
-        if (cancelled || streaming) return; // half-written code is expected to fail now and then
-        setError(err instanceof CompileError ? `代码有误：${err.message}` : String(err));
+        if (!cancelled) setError(err instanceof CompileError ? `代码有误：${err.message}` : String(err));
       }
     };
     const t = setTimeout(run, streaming ? STREAM_COMPILE_MS : 0);
@@ -92,6 +106,25 @@ export function GenUIBlock({ source, streaming, host, onState, reloadKey }: { so
       clearTimeout(t);
     };
   }, [source, streaming, load, host.slots]);
+
+  /** The finished block failed while rendering: try it without one root at a time, last first. */
+  const tryWithoutARoot = useCallback(async () => {
+    const roots = rootsOf(source);
+    const d = (degrade.current ??= { base: new Set(), next: roots.length - 1 });
+    while (d.next >= 0) {
+      const k = d.next--;
+      try {
+        const { code } = await compileWidget(dropRoots(source, new Set([...d.base, k])));
+        setDropped(1);
+        load(code);
+        return true;
+      } catch {
+        // that variant doesn't compile either; try the next
+      }
+    }
+    return false;
+  }, [source, load]);
+  const shownCode = useRef("");
 
   useEffect(() => {
     const onMessage = (e: MessageEvent) => {
@@ -111,12 +144,18 @@ export function GenUIBlock({ source, streaming, host, onState, reloadKey }: { so
           break;
         case "tree":
           setTree((m.tree as Node) ?? null);
-          if (!streamingRef.current) setError(null);
+          shownCode.current = lastCode.current;
+          if (!streamingRef.current && !degrade.current) setError(null);
           break;
-        case "error":
+        case "error": {
+          const message = String(m.message ?? "未知错误");
           // While streaming, a render error usually means the tree isn't complete yet.
-          if (!streamingRef.current || m.phase === "event" || m.phase === "async") setError(String(m.message ?? "未知错误"));
+          if (streamingRef.current && m.phase !== "event" && m.phase !== "async") break;
+          setError(message);
+          // The finished program never rendered: show what does work, without the broken part.
+          if (!streamingRef.current && (m.phase === "render" || m.phase === "load") && shownCode.current !== lastCode.current) void tryWithoutARoot();
           break;
+        }
         case "state":
           if (Array.isArray(m.slots)) {
             clearTimeout(saveTimer.current);
@@ -145,7 +184,7 @@ export function GenUIBlock({ source, streaming, host, onState, reloadKey }: { so
     };
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
-  }, [host, post]);
+  }, [host, post, tryWithoutARoot]);
 
   useEffect(
     () => () => {
@@ -155,7 +194,7 @@ export function GenUIBlock({ source, streaming, host, onState, reloadKey }: { so
     [],
   );
 
-  useEffect(() => onState?.({ error, shown: !!tree }), [error, tree, onState]);
+  useEffect(() => onState?.({ error, dropped, shown: !!tree }), [error, dropped, tree, onState]);
 
   // "Run again": a fresh frame, keeping the state.
   const [gen, setGen] = useState(0);

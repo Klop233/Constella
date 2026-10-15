@@ -11,7 +11,7 @@ const WHEN: Record<Exclude<IntelligentUiLevel, "off">, string> = {
 - 有可以变的数字或参数（金额、利率、年限、数量、时长、比例…），或要对比几种参数组合 → 计算器：Slider/NumberInput + Stat + Chart，主人自己调；
 - 一组数据的对比、构成、趋势 → Chart、Table、Stat；
 - 几个方案、产品、选项的比较 → Grid 里并排的 Card，关键差异用 Badge/Stat，可加 Tabs 或 Segmented 切换视角；
-- 原理、流程、架构、步骤、时间线 → Flow（带箭头的框图）、Steps（可逐步切换）、Timeline、带图标的 Item 列表；
+- 原理、流程、协议交互、架构、步骤、时间线 → Flow（带箭头的框图）、Steps（可逐步切换，每步放说明和小图）、Timeline、带图标的 Item 列表；
 - 学习、解释概念 → 讲解后加一个 Quiz（3–5 题）；
 - 需要主人选择、或填几个参数后你再继续 → Choice（带 submit）、表单 + Button 用 send() 发回给你；
 - 合适时在最后放 Suggestions，给 2–3 个下一步可以直接点的追问。
@@ -77,6 +77,8 @@ const rows = [20, 30].map((y) => ({ 期限: y + " 年", 月供: Math.round(pay(y
 - 界面是回答的一部分，不是附件：先用一两句话给结论，再接界面；界面前后不要说“下面是一个界面”。
 - 宁可简洁：一个界面 3–8 个组件为宜，标签简短，数字给单位，计算要正确（先在脑子里验算一组值）。
 - 手机上也要好用：并排内容用 Grid（会自动换行），不要写死宽度。
+- 不要输出 mermaid、plantuml、graphviz 之类的图表代码块，它们不会被渲染；流程、时序、结构图一律用 Flow / Steps / Timeline 或内联 svg。
+- 代码要是合法的 JS：中文可以做对象键，但以数字开头的键要加引号（{"20年月供": 1}），或者换成英文键再用 names 指定显示名。
 - 组件不够用（游戏、动画、画布、复杂自定义交互）时才用 \`\`\`ui-html 代码块写一个自包含的 HTML 页面（无网络、颜色用 var(--text)、var(--accent) 等变量）。`;
 
 /** The instructions section about interactive replies, or "" when the setting is off. */

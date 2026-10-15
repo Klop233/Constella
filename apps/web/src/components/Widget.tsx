@@ -236,7 +236,7 @@ export function ComponentWidget({ title, source, streaming, stateKey }: { title:
   const [code, setCode] = useState(false);
   const [full, setFull] = useState(false);
   const [reload, setReload] = useState(0);
-  const [state, setState] = useState<BlockState>({ error: null, shown: false });
+  const [state, setState] = useState<BlockState>({ error: null, dropped: 0, shown: false });
   const saved = host ? host.states : {};
   const blockHost = useMemo<BlockHost>(
     () => ({
@@ -256,7 +256,15 @@ export function ComponentWidget({ title, source, streaming, stateKey }: { title:
           <GenUIBlock source={source} streaming={streaming} host={blockHost} onState={setState} reloadKey={reload} />
         </div>
       </div>
-      {state.error && !streaming && <ErrorLine error={state.error} onRetry={() => setReload((r) => r + 1)} onFix={fix} />}
+      {state.error && !streaming && (state.shown && state.dropped ? (
+        <div className="flex items-center gap-2 text-xs text-muted min-w-0">
+          <CircleX className="size-3.5 shrink-0 text-warn" strokeWidth={1.8} />
+          <span className="truncate" title={state.error}>界面有一部分写错了，已跳过：{state.error}</span>
+          {fix && <button className="shrink-0 hover:text-[var(--text)]" onClick={fix}>让 agent 修复</button>}
+        </div>
+      ) : (
+        <ErrorLine error={state.error} onRetry={() => setReload((r) => r + 1)} onFix={fix} />
+      ))}
       {full && (
         <FullScreen title={label} onClose={() => setFull(false)}>
           <div className="h-full overflow-y-auto">
