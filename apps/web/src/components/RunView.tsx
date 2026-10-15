@@ -268,7 +268,11 @@ function stepsSummary(steps: Step[]): { icon: typeof Terminal; text: string; app
 /** One collapsible line per run of consecutive steps, like Claude Code's "Ran 3 commands ›". */
 function StepGroup({ steps, live, ended }: { steps: Step[]; live: boolean; ended: boolean }) {
   const [open, setOpen] = useState(false);
-  const failed = steps.filter((s) => s.kind === "tool" && s.done && !s.ok).length;
+  const finished = steps.filter((s): s is Extract<Step, { kind: "tool" }> => s.kind === "tool" && s.done);
+  const failed = finished.filter((s) => !s.ok).length;
+  const succeeded = finished.length - failed;
+  // A failure the agent has already moved past (a later call succeeded) is history, not an alarm.
+  const recovered = failed > 0 && finished.at(-1)?.ok === true;
   const { icon: Icon, text, approvals } = stepsSummary(steps);
   return (
     <div>
@@ -276,7 +280,8 @@ function StepGroup({ steps, live, ended }: { steps: Step[]; live: boolean; ended
         {live ? <Loader2 className="size-3.5 animate-spin text-accent shrink-0" /> : <Icon className="size-3.5 shrink-0" />}
         <span className="flex items-center gap-1 min-w-0">
           <span className={cx("truncate", live && "font-mono text-[12.5px]")}>{live ? stepLabel(steps.at(-1)!) : [text, approvals].filter(Boolean).join(" · ")}</span>
-          {failed > 0 && <span className="text-danger shrink-0">· {failed} 个失败</span>}
+          {failed > 0 && succeeded > 0 && <span className="text-ok shrink-0">· {succeeded} 个成功</span>}
+          {failed > 0 && <span className={cx("shrink-0", recovered ? "text-muted" : "text-danger")}>· {failed} 个失败</span>}
           <ChevronRight className={cx("size-3.5 shrink-0 transition", open && "rotate-90")} />
         </span>
       </button>
