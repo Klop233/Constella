@@ -527,7 +527,7 @@ export function RunView({ run, approvals, incidents = [], onChanged }: { run: Ru
             if (it.secret)
               return (
                 <StatusLine key={it.id} icon={<KeyRound className="size-3.5" />}>
-                  {it.summary.slice(0, 80)} → {it.resolved === "approve" ? (it.answer === "使用密码库" ? "已允许使用密码库" : "已提供") : it.resolved === "deny" ? (it.by === "policy" ? "没有等到你的输入" : "没有提供") : "已失效"}
+                  {it.summary.split("：")[0]!.slice(0, 60)}的登录信息 → {it.resolved === "approve" ? (it.answer === "使用密码库" ? "已允许使用密码库" : "已提供") : it.resolved === "deny" ? (it.by === "policy" ? "没有等到你的输入" : "没有提供") : "已失效"}
                 </StatusLine>
               );
             return (

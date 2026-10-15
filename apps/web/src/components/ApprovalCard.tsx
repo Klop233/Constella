@@ -170,9 +170,10 @@ function SecretForm({ approval, spec, onDone }: { approval: Approval; spec: Secr
           disabled={!!busy}
           onClick={() => void run("vault", () => api.post(`/api/approvals/${approval.id}`, { decision: "approve" }), "已允许")}
         >
-          使用密码库里的「{spec.vault.name}」{spec.vault.username ? `（${spec.vault.username}）` : ""}
+          使用密码库里的「{spec.vault.name}」
         </Button>
       )}
+      {spec.vault?.username && <div className="-mt-1 text-xs text-muted">密码库条目的用户名：{spec.vault.username}</div>}
       <div className="space-y-2">
         {spec.fields.map((f) => (
           <label key={f.name} className="block space-y-1">
