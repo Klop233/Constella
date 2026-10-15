@@ -420,7 +420,7 @@ function buildServer(agent: AgentRow, d: McpDeps): McpServer {
     "schedule_create",
     {
       description:
-        "创建定时任务。cron 为 5 段 cron 表达式（时区 Asia/Shanghai）。message 不为空时只推送这条消息（适合提醒）；否则在时间到时让你执行 prompt。",
+        `创建定时任务。cron 为 5 段 cron 表达式（时区 ${config.timezone}）。message 不为空时只推送这条消息（适合提醒）；否则在时间到时让你执行 prompt。`,
       inputSchema: {
         name: z.string().max(60),
         cron: z.string().max(60),

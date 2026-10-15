@@ -21,5 +21,5 @@
 
 ## 结论
 
-- **不使用 cua-driver**：它随 旧工具 一起删除了，而且它的 60 个工具对模型来说太多。改为容器内的 xdotool 控制服务（计划中的后备方案）；对 agent 只开放一组精选工具，由 hub 的 MCP 网关提供。
+- **不使用 cua-driver**：它的 60 个工具对模型来说太多。改为容器内的 xdotool 控制服务；对 agent 只开放一组精选工具，由 hub 的 MCP 网关提供。
 - 网页任务优先走 `browser_*`（DOM / 无障碍树），需要像素级操作时再用 `desktop_*`。端到端测试中，模型只靠 `browser_open` 加 `browser_snapshot` 就完成了网页任务。
