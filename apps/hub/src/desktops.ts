@@ -89,6 +89,32 @@ export interface RepairResult {
   after: InstanceHealth;
 }
 
+/** A lifecycle operation under way on an instance, as the UI shows it. */
+export type InstanceOp = "starting" | "stopping" | "restarting" | "pausing" | "repairing" | "resetting";
+
+const OP_VERB: Record<InstanceOp, string> = { starting: "启动", stopping: "停止", restarting: "重启", pausing: "暂停", repairing: "修复", resetting: "清空重建" };
+
+/** How the last failed operation went, kept until the next one starts or the instance is running again. */
+export interface InstanceOpError {
+  op: InstanceOp;
+  message: string;
+  at: string;
+}
+
+/** How long a container-state read is reused: the list, the overview and the thumbnails of one burst share it. */
+const STATE_TTL_MS = 2_000;
+
+/** An instance as the API lists it. */
+export type InstanceView = Omit<DesktopRow, "options"> & {
+  options: DesktopOptions;
+  state: string;
+  leaseInfo: DesktopLease;
+  agentIds: string[];
+  viewers: number;
+  op: InstanceOp | null;
+  error: InstanceOpError | null;
+};
+
 /** Log lines worth showing when an instance misbehaves. */
 const TELLING = /FATAL|ERROR|panic|Killed|Out of memory|hanging thread|timed out/i;
 
@@ -143,6 +169,11 @@ export class Desktops {
   /** Instances being started or repaired right now (a booting instance isn't broken). */
   #starting = new Set<string>();
   #repairs = new Map<string, Promise<RepairResult>>();
+  /** Owner-triggered operations under way (one per instance), so a second click joins the first instead of racing it. */
+  #ops = new Map<string, { op: InstanceOp; since: string; job: Promise<unknown> }>();
+  #opErrors = new Map<string, InstanceOpError>();
+  /** Recent container-state reads for lists and thumbnails; dropped whenever an instance changes. */
+  #stateCache = new Map<string, { at: number; value: Promise<string> }>();
   #timer: NodeJS.Timeout | null = null;
 
   constructor(deps: {
@@ -252,17 +283,84 @@ export class Desktops {
     }
   }
 
-  async list(): Promise<(Omit<DesktopRow, "options"> & { options: DesktopOptions; state: string; leaseInfo: DesktopLease; agentIds: string[]; viewers: number })[]> {
-    return Promise.all(
-      this.rows().map(async (r) => ({
-        ...r,
-        options: this.options(r),
-        state: await this.state(r.id),
-        leaseInfo: JSON.parse(r.lease),
-        agentIds: this.agentIds(r.id),
-        viewers: this.#viewers.get(r.id) ?? 0,
-      })),
-    );
+  async list(): Promise<InstanceView[]> {
+    return Promise.all(this.rows().map((r) => this.#view(r)));
+  }
+
+  /** One instance, as `list()` shows it. */
+  async get(id: string): Promise<InstanceView> {
+    return this.#view(this.row(id));
+  }
+
+  async #view(r: DesktopRow): Promise<InstanceView> {
+    const state = await this.#cachedState(r.id);
+    return {
+      ...r,
+      options: this.options(r),
+      state,
+      leaseInfo: JSON.parse(r.lease),
+      agentIds: this.agentIds(r.id),
+      viewers: this.#viewers.get(r.id) ?? 0,
+      op: this.op(r.id),
+      // A failure only matters while the instance isn't working.
+      error: state === "running" ? null : (this.#opErrors.get(r.id) ?? null),
+    };
+  }
+
+  /** What is being done to an instance right now: an owner-triggered operation, else a start or repair from anywhere. */
+  op(id: string): InstanceOp | null {
+    return this.#ops.get(id)?.op ?? (this.#repairs.has(id) ? "repairing" : this.#starting.has(id) ? "starting" : null);
+  }
+
+  /**
+   * Run a lifecycle operation with its progress and failure on record. One at a time per instance: the same operation
+   * again joins the running one, a different one is refused. The caller may await the result or let it run in the
+   * background (a failure then shows up in `list()` and the audit log).
+   */
+  operate<T>(id: string, op: InstanceOp, fn: () => Promise<T>, actor = "system"): Promise<T> {
+    const r = this.row(id);
+    const cur = this.#ops.get(id);
+    if (cur) {
+      if (cur.op === op) return cur.job as Promise<T>;
+      throw new DesktopError(`${this.describe(r)}正在${OP_VERB[cur.op]}，等它结束再操作`, "busy");
+    }
+    this.#opErrors.delete(id);
+    const entry = { op, since: nowIso(), job: undefined as unknown as Promise<unknown> };
+    this.#ops.set(id, entry);
+    entry.job = (async () => {
+      try {
+        return await fn();
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        this.#opErrors.set(id, { op, message, at: nowIso() });
+        audit(this.#db, actor, "instance.op_failed", { id, name: r.name, op, error: message.slice(0, 300) });
+        throw err;
+      } finally {
+        this.#ops.delete(id);
+        this.#changed(id);
+      }
+    })();
+    this.#changed(id);
+    return entry.job as Promise<T>;
+  }
+
+  /** The state changed (or is about to): forget the cached read and tell the clients. */
+  #changed(id: string, extra: Record<string, unknown> = {}): void {
+    this.#stateCache.delete(id);
+    this.#events.publish("desktop", { id, ...extra });
+  }
+
+  /** `state()` for lists and thumbnails: concurrent and back-to-back reads share one docker inspect. */
+  #cachedState(id: string): Promise<string> {
+    const hit = this.#stateCache.get(id);
+    if (hit && Date.now() - hit.at < STATE_TTL_MS) return hit.value;
+    const value = this.state(id);
+    const entry = { at: Date.now(), value };
+    this.#stateCache.set(id, entry);
+    value.catch(() => {
+      if (this.#stateCache.get(id) === entry) this.#stateCache.delete(id);
+    });
+    return value;
   }
 
   /** Container state of the instance's screen (for Android: the bridge; a stopped device shows up as not running). */
@@ -295,15 +393,20 @@ export class Desktops {
     this.#db
       .prepare("INSERT INTO desktops (id, name, kind, options, lease, pinned_agent_id, created_at, last_used_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
       .run(row.id, row.name, row.kind, row.options, row.lease, row.pinned_agent_id, row.created_at, row.last_used_at);
-    this.#events.publish("desktop", { id: row.id });
+    this.#changed(row.id);
     return row;
   }
 
   /**
    * Change name and/or options. A running instance restarts to apply new options. Switching Google Play on an
    * emulator instance replaces its virtual device (data is lost) and needs `confirmDataLoss`.
+   * `background`: save at once and let the restart run (progress shows on the instance) instead of waiting for it.
    */
-  async update(id: string, patch: { name?: string; options?: DesktopOptions }, opts: { confirmDataLoss?: boolean } = {}): Promise<{ restarted: boolean; wiped: boolean }> {
+  async update(
+    id: string,
+    patch: { name?: string; options?: DesktopOptions },
+    opts: { confirmDataLoss?: boolean; background?: boolean; actor?: string } = {},
+  ): Promise<{ restarted: boolean; wiped: boolean }> {
     const r = this.row(id);
     if (patch.name !== undefined) this.#db.prepare("UPDATE desktops SET name = ? WHERE id = ?").run(patch.name, id);
     let restarted = false;
@@ -318,16 +421,21 @@ export class Desktops {
       this.#db.prepare("UPDATE desktops SET options = ? WHERE id = ?").run(JSON.stringify(next), id);
       const changed = JSON.stringify(before) !== JSON.stringify(after);
       const state = await this.state(id);
-      if (wiped) {
-        await this.stop(id);
-        fs.rmSync(path.join(config.desktopsDir, id, "avd"), { recursive: true, force: true });
-      }
-      if (changed && (state === "running" || state === "paused" || state === "starting")) {
-        await this.restart(id);
-        restarted = true;
+      restarted = changed && (state === "running" || state === "paused" || state === "starting");
+      if (wiped || restarted) {
+        const apply = async () => {
+          if (wiped) {
+            await this.stop(id);
+            fs.rmSync(path.join(config.desktopsDir, id, "avd"), { recursive: true, force: true });
+          }
+          if (restarted) await this.restart(id);
+        };
+        const job = this.operate(id, "restarting", apply, opts.actor);
+        if (opts.background) void job.catch(() => {});
+        else await job;
       }
     }
-    this.#events.publish("desktop", { id });
+    this.#changed(id);
     return { restarted, wiped };
   }
 
@@ -352,6 +460,7 @@ export class Desktops {
     await this.#containers.remove(this.#containers.desktopName(id));
     if (r.kind === "android") await this.#containers.remove(this.#containers.androidName(id));
     this.setAgents(id, []);
+    this.#opErrors.delete(id);
     this.#db.prepare("DELETE FROM desktops WHERE id = ?").run(id);
     for (const cur of this.#current.values()) for (const f of ["screen", "web"] as const) if (cur[f] === id) delete cur[f];
     try {
@@ -359,21 +468,24 @@ export class Desktops {
     } catch (err) {
       console.error(`remove instance data ${id}`, err);
     }
-    this.#events.publish("desktop", { id, removed: true });
+    this.#changed(id, { removed: true });
   }
 
   async start(id: string): Promise<void> {
     const r = this.row(id);
     this.#starting.add(id);
+    // Clients see "starting" right away, not only when it is over.
+    this.#changed(id);
     try {
       await this.#clearLocksIfDown(r);
       await this.#containers.ensureDesktop(this.spec(r));
       this.#touch(id);
       await this.#waitHealthy(id, r.kind === "android" ? 240 : 30);
+      this.#opErrors.delete(id);
     } finally {
       this.#starting.delete(id);
+      this.#changed(id);
     }
-    this.#events.publish("desktop", { id });
   }
 
   /** `keepFrame: false` skips saving the last screen (pointless, and slow, when the instance isn't answering). */
@@ -383,7 +495,7 @@ export class Desktops {
     if (opts.keepFrame !== false) await this.#keepFrame(id);
     await this.#containers.stop(this.#containers.desktopName(id));
     if (r.kind === "android") await this.#containers.stop(this.#containers.androidName(id), ANDROID_STOP_SECONDS);
-    this.#events.publish("desktop", { id });
+    this.#changed(id);
   }
 
   /** The emulator's virtual device directory, for emulator-backed Android instances. */
@@ -402,7 +514,13 @@ export class Desktops {
 
   /** Being started or repaired right now. */
   busy(id: string): boolean {
-    return this.#starting.has(id) || this.#repairs.has(id);
+    return this.#starting.has(id) || this.#repairs.has(id) || this.#ops.has(id);
+  }
+
+  /** Refuse (409-style) when something other than `allow` is under way on the instance. */
+  assertIdle(id: string, allow?: InstanceOp): void {
+    const op = this.op(id);
+    if (op && op !== allow) throw new DesktopError(`${this.describe(this.row(id))}正在${OP_VERB[op]}，等它结束再操作`, "busy");
   }
 
   /**
@@ -475,67 +593,86 @@ export class Desktops {
    * and wait until it answers; if that doesn't do it, recreate its containers (the data lives in mounted
    * directories). One repair per instance at a time.
    */
-  repair(id: string): Promise<RepairResult> {
+  repair(id: string, actor = "system"): Promise<RepairResult> {
     const running = this.#repairs.get(id);
     if (running) return running;
-    const job = (async (): Promise<RepairResult> => {
-      const r = this.row(id);
-      const before = await this.diagnose(id);
-      const steps: string[] = [];
-      const attempt = async () => {
-        try {
-          await this.start(id);
-          return true;
-        } catch (err) {
-          steps.push(`启动后没有恢复：${err instanceof Error ? err.message : String(err)}`);
-          return false;
-        }
-      };
-      await this.stop(id, { keepFrame: before.ok });
-      steps.push(r.kind === "android" ? "停止了实例（给安卓留足时间正常关机）" : "停止了实例");
-      const locks = await this.#clearLocksIfDown(r);
-      if (locks.length) steps.push(`清理了上次强制停止留下的锁文件（${locks.join("、")}）`);
-      let ok = await attempt();
-      if (ok) steps.push("重新启动，确认已经可以正常使用");
-      else {
-        await this.#closeBrowser(id);
-        await this.#containers.remove(this.#containers.desktopName(id));
-        if (r.kind === "android") await this.#containers.remove(this.#containers.androidName(id));
-        steps.push("删除并重建了实例的容器（数据保留）");
-        ok = await attempt();
-        if (ok) steps.push("重建后确认已经可以正常使用");
-      }
-      const after = await this.diagnose(id);
-      audit(this.#db, "system", ok ? "instance.repair" : "instance.repair_failed", { id, name: r.name, problem: before.problem ?? null, steps });
-      this.#events.publish("desktop", { id });
-      return { ok: ok && after.ok, steps, before, after };
-    })();
+    const job = this.#runRepair(id, actor).catch((err) => {
+      // The steps themselves report their failures in the result; this is for what they couldn't handle (Docker errors).
+      this.#opErrors.set(id, { op: "repairing", message: err instanceof Error ? err.message : String(err), at: nowIso() });
+      throw err;
+    });
     this.#repairs.set(id, job);
-    return job.finally(() => this.#repairs.delete(id));
+    this.#changed(id);
+    return job.finally(() => {
+      this.#repairs.delete(id);
+      this.#changed(id);
+    });
+  }
+
+  async #runRepair(id: string, actor: string): Promise<RepairResult> {
+    const r = this.row(id);
+    const before = await this.diagnose(id);
+    const steps: string[] = [];
+    const attempt = async () => {
+      try {
+        await this.start(id);
+        return true;
+      } catch (err) {
+        steps.push(`启动后没有恢复：${err instanceof Error ? err.message : String(err)}`);
+        return false;
+      }
+    };
+    await this.stop(id, { keepFrame: before.ok });
+    steps.push(r.kind === "android" ? "停止了实例（给安卓留足时间正常关机）" : "停止了实例");
+    const locks = await this.#clearLocksIfDown(r);
+    if (locks.length) steps.push(`清理了上次强制停止留下的锁文件（${locks.join("、")}）`);
+    let ok = await attempt();
+    if (ok) steps.push("重新启动，确认已经可以正常使用");
+    else {
+      await this.#closeBrowser(id);
+      await this.#containers.remove(this.#containers.desktopName(id));
+      if (r.kind === "android") await this.#containers.remove(this.#containers.androidName(id));
+      steps.push("删除并重建了实例的容器（数据保留）");
+      ok = await attempt();
+      if (ok) steps.push("重建后确认已经可以正常使用");
+    }
+    const after = await this.diagnose(id);
+    audit(this.#db, actor, ok ? "instance.repair" : "instance.repair_failed", { id, name: r.name, problem: before.problem ?? null, steps });
+    if (ok && after.ok) this.#opErrors.delete(id);
+    else this.#opErrors.set(id, { op: "repairing", message: after.problem ?? steps.at(-1) ?? "修复没有成功", at: nowIso() });
+    return { ok: ok && after.ok, steps, before, after };
   }
 
   /** Start an Android instance over from a clean system (its apps and data are lost). Only the owner decides this. */
   async reset(id: string, actor: string): Promise<RepairResult> {
     const r = this.row(id);
     if (r.kind !== "android") throw new DesktopError(`${this.describe(r)}不是安卓实例，不能清空重建`, "invalid");
-    const before = await this.diagnose(id);
-    await this.stop(id, { keepFrame: false });
-    await this.#containers.remove(this.#containers.desktopName(id));
-    await this.#containers.remove(this.#containers.androidName(id));
-    fs.rmSync(path.join(config.desktopsDir, id, this.spec(r).backend === "emulator" ? "avd" : "data"), { recursive: true, force: true });
-    const steps = ["删除了实例的容器和安卓数据（装过的 App 和登录状态都清空了）"];
-    let ok = true;
-    try {
-      await this.start(id);
-      steps.push("从全新的系统启动，确认已经可以正常使用");
-    } catch (err) {
-      ok = false;
-      steps.push(`全新启动后仍没有恢复：${err instanceof Error ? err.message : String(err)}`);
-    }
-    const after = await this.diagnose(id);
-    audit(this.#db, actor, "instance.reset", { id, name: r.name, steps });
-    this.#events.publish("desktop", { id });
-    return { ok: ok && after.ok, steps, before, after };
+    return this.operate(
+      id,
+      "resetting",
+      async () => {
+        const before = await this.diagnose(id);
+        await this.stop(id, { keepFrame: false });
+        await this.#containers.remove(this.#containers.desktopName(id));
+        await this.#containers.remove(this.#containers.androidName(id));
+        fs.rmSync(path.join(config.desktopsDir, id, this.spec(r).backend === "emulator" ? "avd" : "data"), { recursive: true, force: true });
+        const steps = ["删除了实例的容器和安卓数据（装过的 App 和登录状态都清空了）"];
+        let ok = true;
+        try {
+          await this.start(id);
+          steps.push("从全新的系统启动，确认已经可以正常使用");
+        } catch (err) {
+          ok = false;
+          steps.push(`全新启动后仍没有恢复：${err instanceof Error ? err.message : String(err)}`);
+        }
+        const after = await this.diagnose(id);
+        audit(this.#db, actor, "instance.reset", { id, name: r.name, steps });
+        // operate() clears the error when the operation begins; a reset that ended unhealthy leaves its own.
+        if (!(ok && after.ok)) this.#opErrors.set(id, { op: "resetting", message: after.problem ?? steps.at(-1) ?? "清空重建没有成功", at: nowIso() });
+        return { ok: ok && after.ok, steps, before, after };
+      },
+      actor,
+    );
   }
 
   /** Freeze the instance's containers; memory stays allocated and it resumes in seconds. */
@@ -545,7 +682,7 @@ export class Desktops {
     await this.#keepFrame(id);
     await this.#containers.pause(this.#containers.desktopName(id));
     if (r.kind === "android") await this.#containers.pause(this.#containers.androidName(id));
-    this.#events.publish("desktop", { id });
+    this.#changed(id);
   }
 
   /** Thaw a paused instance (no-op otherwise). */
@@ -554,7 +691,7 @@ export class Desktops {
     if (r.kind === "android") await this.#containers.unpause(this.#containers.androidName(id));
     await this.#containers.unpause(this.#containers.desktopName(id));
     this.#touch(id);
-    this.#events.publish("desktop", { id });
+    this.#changed(id);
   }
 
   /** Stop and start again, picking up changed options; the way out when an instance is stuck. */
@@ -719,7 +856,7 @@ export class Desktops {
 
   /** Thumbnail for lists: live when running, otherwise the frame kept when it was last paused or stopped. */
   async thumbnail(id: string, width: number): Promise<Buffer | null> {
-    if ((await this.state(id)) === "running") return (await this.screenshot(id, { width, quality: 60 })).data;
+    if ((await this.#cachedState(id)) === "running") return (await this.screenshot(id, { width, quality: 60 })).data;
     try {
       return fs.readFileSync(this.#framePath(id));
     } catch {

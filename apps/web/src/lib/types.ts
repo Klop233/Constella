@@ -167,6 +167,22 @@ export interface Desktop {
   agentIds: string[];
   viewers: number;
   last_used_at: string;
+  /** What is being done to it right now (an operation, a start or a repair), if anything. */
+  op: InstanceOp | null;
+  /** Why the last operation failed, while it isn't running. */
+  error: { op: InstanceOp; message: string; at: string } | null;
+}
+
+export type InstanceOp = "starting" | "stopping" | "restarting" | "pausing" | "repairing" | "resetting";
+
+/** What the hub found out about an instance (`GET /api/desktops/:id/health`). */
+export interface InstanceHealth {
+  ok: boolean;
+  state: "running" | "paused" | "stopped" | "missing" | "starting" | "broken";
+  problem?: string;
+  crashLoop: boolean;
+  detail: string;
+  op: InstanceOp | null;
 }
 
 export interface Availability {

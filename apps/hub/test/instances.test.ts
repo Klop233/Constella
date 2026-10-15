@@ -4,7 +4,7 @@ import path from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import Fastify from "fastify";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "constella-inst-"));
 process.env.CONSTELLA_DATA_DIR = tmp;
@@ -494,4 +494,140 @@ describe("instance health and repair", () => {
       Date.now = real;
     }
   }, 20_000);
+});
+
+describe("instance operations in progress", () => {
+  /** A promise the test settles by hand. */
+  function gate<T = void>() {
+    let resolve!: (v: T) => void;
+    let reject!: (e: unknown) => void;
+    const promise = new Promise<T>((res, rej) => ((resolve = res), (reject = rej)));
+    return { promise, resolve, reject };
+  }
+
+  async function withHealthy<T>(fn: () => Promise<T>): Promise<T> {
+    const real = globalThis.fetch;
+    globalThis.fetch = (async () => new Response(JSON.stringify({ ok: true, ready: true }))) as any;
+    try {
+      return await fn();
+    } finally {
+      globalThis.fetch = real;
+    }
+  }
+
+  it("shows what is being done, joins a repeated request and refuses a different one", async () => {
+    const s = setup({ caps: caps() });
+    const r = await s.desktops.create({ name: "浏览器", kind: "browser" });
+    const g = gate();
+    let runs = 0;
+    const first = s.desktops.operate(r.id, "restarting", async () => (runs++, await g.promise));
+    const again = s.desktops.operate(r.id, "restarting", async () => void runs++);
+    expect(runs).toBe(1);
+    expect(s.desktops.op(r.id)).toBe("restarting");
+    expect((await s.desktops.list())[0]).toMatchObject({ op: "restarting", error: null });
+    expect(() => s.desktops.operate(r.id, "stopping", async () => {})).toThrow(/正在重启/);
+    expect(s.desktops.busy(r.id)).toBe(true);
+    g.resolve();
+    await Promise.all([first, again]);
+    expect(runs).toBe(1);
+    expect(s.desktops.op(r.id)).toBeNull();
+    expect(s.desktops.busy(r.id)).toBe(false);
+  });
+
+  it("keeps a failure for an instance that isn't working, until it starts or the next operation begins", async () => {
+    const containers = fakeContainers("running");
+    const s = setup({ containers, caps: caps() });
+    const up = await s.desktops.create({ name: "在线", kind: "browser" });
+    const down = await s.desktops.create({ name: "离线", kind: "browser" });
+    containers.states.set(`constella-desktop-${down.id}`, "stopped");
+
+    await expect(s.desktops.operate(down.id, "starting", async () => Promise.reject(new Error("镜像不存在")), "owner")).rejects.toThrow("镜像不存在");
+    expect(s.desktops.op(down.id)).toBeNull();
+    expect((await s.desktops.get(down.id)).error).toMatchObject({ op: "starting", message: "镜像不存在" });
+    expect(s.db.prepare("SELECT 1 FROM audit WHERE action = 'instance.op_failed'").get()).toBeTruthy();
+
+    // A failure doesn't matter on an instance that is working.
+    await expect(s.desktops.operate(up.id, "restarting", async () => Promise.reject(new Error("超时")))).rejects.toThrow("超时");
+    expect((await s.desktops.get(up.id)).error).toBeNull();
+
+    // Starting it successfully clears the failure.
+    containers.states.set(`constella-desktop-${down.id}`, "running");
+    await withHealthy(() => s.desktops.start(down.id));
+    expect((await s.desktops.get(down.id)).error).toBeNull();
+  });
+
+  it("starts the next operation from a clean slate", async () => {
+    const containers = fakeContainers("stopped");
+    const s = setup({ containers, caps: caps() });
+    const r = await s.desktops.create({ name: "x", kind: "browser" });
+    await expect(s.desktops.operate(r.id, "starting", async () => Promise.reject(new Error("失败")))).rejects.toThrow("失败");
+    const g = gate();
+    const job = s.desktops.operate(r.id, "stopping", () => g.promise);
+    expect((await s.desktops.get(r.id)).error).toBeNull();
+    g.resolve();
+    await job;
+  });
+
+  it("reports a start from anywhere as starting, and clears an earlier failure once it works", async () => {
+    const containers = fakeContainers("stopped");
+    const g = gate();
+    containers.ensureDesktop = async (spec: { desktopId: string }) => {
+      containers.calls.push(`ensure ${spec.desktopId}`);
+      await g.promise;
+      containers.states.set(`constella-desktop-${spec.desktopId}`, "running");
+    };
+    const s = setup({ containers, caps: caps() });
+    const r = await s.desktops.create({ name: "浏览器", kind: "browser" });
+    await withHealthy(async () => {
+      const job = s.desktops.start(r.id);
+      expect(s.desktops.op(r.id)).toBe("starting");
+      g.resolve();
+      await job;
+    });
+    expect(s.desktops.op(r.id)).toBeNull();
+    expect((await s.desktops.get(r.id)).state).toBe("running");
+  });
+
+  it("shares one container-state read between lists in quick succession, and re-reads after a change", async () => {
+    const containers = fakeContainers("running");
+    let reads = 0;
+    const read = containers.state;
+    containers.state = async (name: string) => (reads++, read(name));
+    const s = setup({ containers, caps: caps() });
+    await s.desktops.create({ name: "a", kind: "browser" });
+    await s.desktops.list();
+    await s.desktops.list();
+    await Promise.all([s.desktops.list(), s.desktops.get(s.desktops.rows()[0]!.id)]);
+    expect(reads).toBe(1);
+    const id = s.desktops.rows()[0]!.id;
+    await s.desktops.operate(id, "pausing", async () => s.desktops.pause(id));
+    expect((await s.desktops.get(id)).state).toBe("paused");
+    expect(reads).toBeGreaterThan(1);
+  });
+
+  it("saves changed options at once and restarts in the background when asked to", async () => {
+    const containers = fakeContainers("running");
+    const g = gate();
+    const stop = containers.stop;
+    containers.stop = async (name: string) => (await g.promise, stop(name));
+    const s = setup({ containers, caps: caps() });
+    const r = await s.desktops.create({ name: "x", kind: "browser" });
+    await withHealthy(async () => {
+      const out = await s.desktops.update(r.id, { options: { width: 1440, height: 900 } }, { background: true });
+      expect(out).toEqual({ restarted: true, wiped: false });
+      // Saved, and the restart is still waiting on the container to stop.
+      expect(s.desktops.options(s.desktops.row(r.id))).toMatchObject({ width: 1440, height: 900 });
+      expect(s.desktops.op(r.id)).toBe("restarting");
+      g.resolve();
+      await vi.waitFor(() => expect(s.desktops.op(r.id)).toBeNull());
+    });
+    expect(containers.calls).toContain(`ensure ${r.id}`);
+  });
+
+  it("only resets Android", async () => {
+    const s = setup({ caps: caps() });
+    const b = await s.desktops.create({ name: "浏览器", kind: "browser" });
+    await expect(s.desktops.reset(b.id, "owner")).rejects.toThrow(DesktopError);
+    expect(s.desktops.op(b.id)).toBeNull();
+  });
 });

@@ -5,7 +5,7 @@ import { useNavigate } from "react-router";
 import { InstanceFields, type InstanceDraft } from "../components/InstanceFields";
 import { InstanceThumb } from "../components/InstanceThumb";
 import { Badge, Button, Card, Empty, Header, IconButton, Loading, Segmented, Sheet, toast } from "../components/ui";
-import { api } from "../lib/api";
+import { api, errorMessage } from "../lib/api";
 import { setAppearance, useAppearance } from "../lib/appearance";
 import { timeAgo } from "../lib/format";
 import { KIND_INFO, leaseText } from "../lib/instances";
@@ -18,7 +18,10 @@ export default function Desktops() {
   const nav = useNavigate();
   const view = useAppearance().instanceView;
   const qc = useQueryClient();
-  const list = useQuery({ queryKey: ["desktops"], queryFn: () => api.get<Desktop[]>("/api/desktops"), refetchInterval: 20_000 });
+  const list = useQuery({ queryKey: ["desktops"], queryFn: () => api.get<Desktop[]>("/api/desktops"),
+    // Changes arrive over SSE; this is the safety net, and a faster check while something is starting or being repaired.
+    refetchInterval: (q) => (q.state.data?.some((d) => d.op) ? 2_000 : 60_000),
+  });
   const agents = useQuery({ queryKey: ["agents"], queryFn: () => api.get<Agent[]>("/api/agents") });
   const perf = useQuery({ queryKey: ["perf", "now"], queryFn: () => api.get<PerfData>("/api/perf?history=0"), refetchInterval: 10_000 });
   const caps = useQuery({ queryKey: ["hostcaps"], queryFn: () => api.get<HostCaps>("/api/desktops/capabilities"), refetchInterval: (q) => (q.state.data?.checkedAt ? false : 3000) });
@@ -41,7 +44,7 @@ export default function Desktops() {
       void qc.invalidateQueries({ queryKey: ["agents"] });
       nav(`/instances/${d.id}`);
     } catch (err) {
-      toast(err instanceof Error ? err.message : String(err), "danger");
+      toast(errorMessage(err), "danger");
     } finally {
       setBusy(false);
     }

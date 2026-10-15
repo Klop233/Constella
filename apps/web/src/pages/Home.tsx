@@ -8,7 +8,7 @@ import { InstanceThumb } from "../components/InstanceThumb";
 import { AgentAvatar, AgentStatus } from "../components/AgentBits";
 import { Badge, Card, Empty, Header, IconButton, Loading, Section, Sheet, cx } from "../components/ui";
 import { api } from "../lib/api";
-import { KIND_INFO } from "../lib/instances";
+import { KIND_INFO, leaseText } from "../lib/instances";
 import { STATUS_TEXT, statusTone, timeAgo } from "../lib/format";
 import { useLiveStatus } from "../lib/live";
 import { useModelLabel } from "../lib/models";
@@ -123,6 +123,11 @@ export default function Home() {
                         return <Icon className="size-3.5 text-muted shrink-0" />;
                       })()}
                       <span className="truncate">{d.name}</span>
+                      {(d.op || d.error) && (
+                        <Badge tone={leaseText(d, undefined).tone} className="ml-auto shrink-0">
+                          {leaseText(d, undefined).text}
+                        </Badge>
+                      )}
                     </div>
                   </Card>
                 ))}

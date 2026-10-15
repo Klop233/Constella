@@ -15,7 +15,7 @@ import { config, nowIso } from "./config.ts";
 import { auditRefs, changesOf } from "./audit.ts";
 import { describeDevice } from "./auth.ts";
 import { audit, kvSet } from "./db.ts";
-import { DesktopError, type DesktopAction } from "./desktops.ts";
+import { DesktopError, type DesktopAction, type InstanceOp } from "./desktops.ts";
 import { requestSource } from "./request-source.ts";
 import { isTrusted } from "./trusted.ts";
 import { loadUsage, rangeStart, usageStats } from "./usage.ts";
@@ -781,7 +781,12 @@ export function registerRoutes(hub: Hub): void {
       return { name: r.name, options: desktops.options(r), agentIds: desktops.agentIds(r.id) };
     };
     const before = snapshot();
-    const out = await desktops.update(id(req), { name: b.name, options: b.options }, { confirmDataLoss: b.confirmDataLoss });
+    // `?wait=0`: save now, restart in the background (an Android reboot outlasts a proxy's request timeout).
+    const out = await desktops.update(id(req), { name: b.name, options: b.options }, {
+      confirmDataLoss: b.confirmDataLoss,
+      background: (req.query as { wait?: string }).wait === "0",
+      actor: actor(req),
+    });
     if (b.agentIds) desktops.setAgents(id(req), b.agentIds);
     const after = snapshot();
     audit(db, actor(req), "desktop.update", { id: id(req), name: after.name, changes: changesOf(before, after, ["name", "options", "agentIds"]), ...out });
@@ -793,28 +798,62 @@ export function registerRoutes(hub: Hub): void {
     audit(db, actor(req), "desktop.delete", { id: id(req), name });
     return { ok: true };
   });
-  app.post("/api/desktops/:id/start", async (req) => {
-    await desktops.start(id(req));
+  app.get("/api/desktops/:id", async (req) => desktops.get(id(req)));
+  /**
+   * Start / stop / restart / pause wait for the result by default (scripts, e2e). `?wait=0` answers 202 at once and
+   * lets the operation run: its progress and any failure then show up on the instance (`op`, `error`, SSE `desktop`),
+   * so a slow Android boot never hangs on a proxy's request timeout.
+   */
+  const lifecycle = async (req: FastifyRequest, reply: FastifyReply, op: InstanceOp, run: () => Promise<unknown>) => {
+    const job = desktops.operate(id(req), op, run, actor(req));
+    if ((req.query as { wait?: string }).wait === "0") {
+      void job.catch(() => {});
+      return reply.code(202).send({ ok: true, pending: true });
+    }
+    await job;
     return { ok: true };
-  });
-  app.post("/api/desktops/:id/stop", async (req) => {
+  };
+  app.post("/api/desktops/:id/start", async (req, reply) => lifecycle(req, reply, "starting", () => desktops.start(id(req))));
+  app.post("/api/desktops/:id/stop", async (req, reply) => {
     if (desktops.lease(id(req)).holder !== "none") throw new HttpError(409, "实例正在使用中");
-    await desktops.stop(id(req));
-    return { ok: true };
+    return lifecycle(req, reply, "stopping", () => desktops.stop(id(req)));
   });
-  app.post("/api/desktops/:id/pause", async (req) => {
+  app.post("/api/desktops/:id/pause", async (req, reply) => {
     if (desktops.lease(id(req)).holder !== "none") throw new HttpError(409, "实例正在使用中");
-    await desktops.pause(id(req));
-    return { ok: true };
+    return lifecycle(req, reply, "pausing", () => desktops.pause(id(req)));
   });
   app.post("/api/desktops/:id/resume", async (req) => {
     await desktops.resume(id(req));
     return { ok: true };
   });
-  app.post("/api/desktops/:id/restart", async (req) => {
-    await desktops.restart(id(req));
-    audit(db, actor(req), "desktop.restart", { id: id(req), name: desktops.row(id(req)).name });
-    return { ok: true };
+  app.post("/api/desktops/:id/restart", async (req, reply) => {
+    const did = id(req);
+    const name = desktops.row(did).name;
+    return lifecycle(req, reply, "restarting", async () => {
+      await desktops.restart(did);
+      audit(db, actor(req), "desktop.restart", { id: did, name });
+    });
+  });
+  /** What is wrong with an instance, with the evidence (container states, restart counts, the control service, telling log lines). */
+  app.get("/api/desktops/:id/health", async (req) => ({ ...(await desktops.diagnose(id(req))), op: desktops.op(id(req)) }));
+  /** The owner's repair: stop properly, clear leftovers, start again, recreate the containers if needed (data stays). Runs in the background. */
+  app.post("/api/desktops/:id/repair", async (req, reply) => {
+    const did = id(req);
+    desktops.row(did);
+    desktops.assertIdle(did, "repairing");
+    void desktops.repair(did, actor(req)).catch(() => {});
+    return reply.code(202).send({ ok: true, pending: true });
+  });
+  /** Android only: start over from a clean system. Apps and data are lost, so it needs `confirmDataLoss`. Runs in the background. */
+  app.post("/api/desktops/:id/reset", async (req, reply) => {
+    const b = z.object({ confirmDataLoss: z.boolean().optional() }).parse(req.body ?? {});
+    const did = id(req);
+    const r = desktops.row(did);
+    if (r.kind !== "android") throw new DesktopError(`${desktops.describe(r)}不是安卓实例，不能清空重建`, "invalid");
+    if (!b.confirmDataLoss) throw new DesktopError("清空重建会删掉这台安卓里的 App、数据和登录状态，需要确认", "confirm");
+    desktops.assertIdle(did, "resetting");
+    void desktops.reset(did, actor(req)).catch(() => {});
+    return reply.code(202).send({ ok: true, pending: true });
   });
   app.get("/api/desktops/:id/screenshot", async (req, reply) => {
     const w = Number((req.query as { width?: string }).width ?? 480);

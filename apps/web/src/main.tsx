@@ -34,7 +34,8 @@ const ArtifactViewer = lazy(() => import("./components/ArtifactViewer"));
 const qc = new QueryClient({
   defaultOptions: {
     queries: {
-      retry: (n, err) => !(err instanceof ApiError && err.status < 500) && n < 2,
+      // Client errors won't change on retry; network failures and gateway hiccups might.
+      retry: (n, err) => !(err instanceof ApiError && err.kind === "app" && err.status < 500) && n < 2,
       staleTime: 10_000,
       refetchOnWindowFocus: true,
     },

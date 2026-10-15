@@ -1,5 +1,5 @@
 import { Globe, Monitor, Smartphone, type LucideIcon } from "lucide-react";
-import type { Agent, Desktop, DesktopKind, IdleAction } from "./types";
+import type { Agent, Desktop, DesktopKind, IdleAction, InstanceOp } from "./types";
 
 export const KINDS: DesktopKind[] = ["browser", "desktop", "android"];
 
@@ -30,8 +30,30 @@ export const SIZE_PRESETS: Record<DesktopKind, { label: string; width: number; h
   ],
 };
 
-/** Who is on an instance, or what state it is in, for badges. */
-export function leaseText(d: Desktop, agents: Agent[] | undefined): { text: string; tone: "ok" | "warn" | "accent" | "muted" } {
+/** What an operation under way is called, in progressive form. */
+export const OP_LABEL: Record<InstanceOp, string> = {
+  starting: "启动中",
+  stopping: "停止中",
+  restarting: "重启中",
+  pausing: "暂停中",
+  repairing: "修复中",
+  resetting: "重建中",
+};
+
+/** The operation as a plain noun-verb, for "…没有成功". */
+export const OP_NAME: Record<InstanceOp, string> = {
+  starting: "启动",
+  stopping: "停止",
+  restarting: "重启",
+  pausing: "暂停",
+  repairing: "修复",
+  resetting: "清空重建",
+};
+
+/** Who is on an instance, or what state it is in, for badges. An operation under way and a failure come first. */
+export function leaseText(d: Desktop, agents: Agent[] | undefined): { text: string; tone: "ok" | "warn" | "accent" | "muted" | "danger" } {
+  if (d.op) return { text: OP_LABEL[d.op], tone: "muted" };
+  if (d.error) return { text: "出错了", tone: "danger" };
   const l = d.leaseInfo;
   if (l.holder === "human") return { text: "你在操作", tone: "warn" };
   if (l.holder === "agent") {

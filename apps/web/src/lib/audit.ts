@@ -33,6 +33,7 @@ export const AUDIT_ACTION: Record<string, string> = {
   "instance.repair": "修复实例",
   "instance.repair_failed": "修复实例没有成功",
   "instance.reset": "清空重建实例",
+  "instance.op_failed": "实例操作没有成功",
   "schedule.create": "新建定时任务",
   "schedule.update": "修改定时任务",
   "schedule.delete": "删除定时任务",

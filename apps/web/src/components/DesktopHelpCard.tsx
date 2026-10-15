@@ -1,7 +1,7 @@
 import { ArrowUp, Hand, Monitor } from "lucide-react";
 import { useState } from "react";
 import { useNavigate } from "react-router";
-import { api } from "../lib/api";
+import { api, errorMessage } from "../lib/api";
 import { openInstanceWindow } from "../lib/instanceWindow";
 import { Button, Card, cx, toast } from "./ui";
 
@@ -29,7 +29,7 @@ export function DesktopHelpCard({ help }: { help: DesktopHelp }) {
       await api.post(`/api/desktops/${help.desktopId}/takeover`);
       open();
     } catch (err) {
-      toast(err instanceof Error ? err.message : String(err), "danger");
+      toast(errorMessage(err), "danger");
     } finally {
       setBusy(null);
     }
@@ -40,7 +40,7 @@ export function DesktopHelpCard({ help }: { help: DesktopHelp }) {
       await api.post(`/api/desktops/${help.desktopId}/handback`, { note: note.trim() });
       toast("已交还，agent 继续操作");
     } catch (err) {
-      toast(err instanceof Error ? err.message : String(err), "danger");
+      toast(errorMessage(err), "danger");
     } finally {
       setBusy(null);
     }

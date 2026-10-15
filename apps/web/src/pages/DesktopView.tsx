@@ -1,14 +1,14 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Activity, ChevronLeft, ClipboardPaste, Hand, Keyboard, Maximize, MoreVertical, Pause, Play, Power, RotateCcw, Settings2, Undo2 } from "lucide-react";
+import { Activity, ChevronLeft, ClipboardPaste, Eraser, Hand, Keyboard, Loader2, Maximize, MoreVertical, Pause, Play, Power, RotateCcw, Settings2, Stethoscope, Undo2, Wrench } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router";
 import { InstanceFields, type InstanceDraft } from "../components/InstanceFields";
 import { PerfChart, compactBytes, compactCores, compactRate, type PerfSeriesDef } from "../components/PerfChart";
 import { Button, Empty, Field, Loading, Segmented, Sheet, StatTile, cx, inputClass, toast } from "../components/ui";
-import { api } from "../lib/api";
-import { KIND_INFO, leaseText } from "../lib/instances";
+import { ApiError, api, errorMessage } from "../lib/api";
+import { KIND_INFO, OP_LABEL, OP_NAME, leaseText } from "../lib/instances";
 import { RANGES, ROLE_LABEL, bytes, cores, rate, type InstancePerf, type PerfPoint, type PerfRange } from "../lib/perf";
-import type { Agent, Desktop, HostCaps } from "../lib/types";
+import type { Agent, Desktop, HostCaps, InstanceHealth } from "../lib/types";
 import { useVnc } from "../lib/vnc";
 
 const PERF_METRICS: { value: "cpu" | "mem" | "net"; label: string }[] = [
@@ -57,12 +57,15 @@ export default function DesktopView() {
   const [perfOpen, setPerfOpen] = useState(false);
   const [perfRange, setPerfRange] = useState<PerfRange>("1h");
   const [perfMetric, setPerfMetric] = useState<"cpu" | "mem" | "net">("cpu");
+  const [healthOpen, setHealthOpen] = useState(false);
   const resuming = useRef(false);
 
   const desktop = useQuery({
     queryKey: ["desktops", id],
-    queryFn: async () => (await api.get<Desktop[]>("/api/desktops")).find((d) => d.id === id) ?? null,
-    refetchInterval: 10_000,
+    queryFn: () => api.get<Desktop>(`/api/desktops/${id}`),
+    // Changes arrive over SSE; this is the safety net, faster while something is starting or being repaired.
+    refetchInterval: (q) => (q.state.data?.op ? 2_000 : 60_000),
+    retry: (n, err) => !(err instanceof ApiError && err.status === 404) && n < 2,
   });
   const agents = useQuery({ queryKey: ["agents"], queryFn: () => api.get<Agent[]>("/api/agents") });
   const caps = useQuery({ queryKey: ["hostcaps"], queryFn: () => api.get<HostCaps>("/api/desktops/capabilities"), enabled: !!editing });
@@ -73,12 +76,24 @@ export default function DesktopView() {
     enabled: perfOpen && !!id,
     refetchInterval: 10_000,
   });
+  // What the hub found wrong (container states, restart counts, the control service, telling log lines), fetched when asked for.
+  const health = useQuery({
+    queryKey: ["desktop-health", id],
+    queryFn: () => api.get<InstanceHealth>(`/api/desktops/${id}/health`),
+    enabled: healthOpen && !!id,
+    staleTime: 0,
+    refetchInterval: (q) => (q.state.data?.op ? 3_000 : false),
+  });
   const d = desktop.data;
+  const gone = desktop.error instanceof ApiError && desktop.error.status === 404;
   const mine = d?.leaseInfo.holder === "human";
   const running = d?.state === "running";
   const android = d?.kind === "android";
+  const op = d?.op ?? null;
+  // While it is being restarted or repaired the screen is on its way out; don't chase it.
+  const live = running && !op;
 
-  const { rfb, state: connState, connect } = useVnc(id, running, screen);
+  const { rfb, state: connState, connect } = useVnc(id, live, screen);
 
   // Opening a paused instance thaws it: the screen should be live while someone looks at it.
   useEffect(() => {
@@ -87,7 +102,7 @@ export default function DesktopView() {
     void api
       .post(`/api/desktops/${id}/resume`)
       .then(() => qc.invalidateQueries({ queryKey: ["desktops"] }))
-      .catch((err) => toast(err instanceof Error ? err.message : String(err), "danger"))
+      .catch((err) => toast(errorMessage(err), "danger"))
       .finally(() => (resuming.current = false));
   }, [d?.state, id, qc]);
 
@@ -103,17 +118,39 @@ export default function DesktopView() {
   }, [fit, mine, connState]);
 
   const refresh = () => qc.invalidateQueries({ queryKey: ["desktops"] });
-  const act = async (fn: () => Promise<unknown>, ok?: string) => {
+  /** Runs a request with the busy state and a toast; resolves whether it worked. */
+  const act = async (fn: () => Promise<unknown>, ok?: string): Promise<boolean> => {
     setBusy(true);
     try {
       await fn();
       if (ok) toast(ok);
       await refresh();
+      return true;
     } catch (err) {
-      toast(err instanceof Error ? err.message : String(err), "danger");
+      toast(errorMessage(err), "danger");
+      return false;
     } finally {
       setBusy(false);
     }
+  };
+  /**
+   * Start / stop / restart / pause / repair run on the hub in the background: the request answers at once and the
+   * progress (and a failure's reason) shows on the instance, so a slow Android boot can't hit a proxy's timeout.
+   */
+  const background = (action: "start" | "stop" | "restart" | "pause" | "repair", started: string) =>
+    act(() => api.post(`/api/desktops/${id}/${action}${action === "repair" ? "" : "?wait=0"}`), started);
+  const confirmAgent = (what: string) => d?.leaseInfo.holder !== "agent" || confirm(`agent 正在使用这个实例，${what}会打断它的操作。继续吗？`);
+  const repair = () => {
+    if (!confirmAgent("修复")) return;
+    setHealthOpen(false);
+    setMenu(false);
+    void background("repair", "开始修复，数据会保留");
+  };
+  const reset = () => {
+    if (!confirm(`清空重建会删掉「${d?.name ?? ""}」里的 App、数据和登录状态，无法恢复。继续吗？`)) return;
+    setHealthOpen(false);
+    setMenu(false);
+    void act(() => api.post(`/api/desktops/${id}/reset`, { confirmDataLoss: true }), "开始清空重建");
   };
 
   const sendKey = (sym: number, code?: string) => {
@@ -148,10 +185,10 @@ export default function DesktopView() {
   /** Android: text goes in through the device's input method (any language), not as VNC key presses. */
   const typeText = (text: string) => {
     if (!text) return;
-    api.post(`/api/desktops/${id}/clipboard`, { text }).catch((err) => toast(err instanceof Error ? err.message : String(err), "danger"));
+    api.post(`/api/desktops/${id}/clipboard`, { text }).catch((err) => toast(errorMessage(err), "danger"));
   };
   const androidKey = (keys: string) => {
-    api.post(`/api/desktops/${id}/action`, { type: "key", keys }).catch((err) => toast(err instanceof Error ? err.message : String(err), "danger"));
+    api.post(`/api/desktops/${id}/action`, { type: "key", keys }).catch((err) => toast(errorMessage(err), "danger"));
   };
   const openSettings = () => {
     if (!d) return;
@@ -162,20 +199,20 @@ export default function DesktopView() {
     if (!editing || !d) return;
     try {
       setBusy(true);
-      const r = await api.patch<{ restarted: boolean; wiped: boolean }>(`/api/desktops/${id}`, {
+      const r = await api.patch<{ restarted: boolean; wiped: boolean }>(`/api/desktops/${id}?wait=0`, {
         name: editing.name.trim() || d.name,
         options: editing.options,
         agentIds: editing.agentIds,
         confirmDataLoss,
       });
-      toast(r.restarted ? "已保存，实例已重启" : "已保存");
+      toast(r.restarted ? "已保存，正在重启实例" : "已保存");
       setEditing(null);
       await qc.invalidateQueries({ queryKey: ["desktops"] });
       void qc.invalidateQueries({ queryKey: ["agents"] });
     } catch (err) {
       const e = err as Error & { code?: string };
       if (e.code === "confirm" && confirm(`${e.message}。继续吗？`)) return saveSettings(true);
-      toast(e.message ?? String(err), "danger");
+      toast(errorMessage(err), "danger");
     } finally {
       setBusy(false);
     }
@@ -195,11 +232,11 @@ export default function DesktopView() {
             </div>
             <div className="text-[11px] opacity-70 truncate">
               {l?.text}
-              {connState === "connecting" && running && " · 连接中…"}
-              {connState === "disconnected" && running && " · 已断开"}
+              {connState === "connecting" && live && " · 连接中…"}
+              {connState === "disconnected" && live && " · 已断开"}
             </div>
           </div>
-          {running && !mine && (
+          {live && !mine && (
             <Button size="sm" variant="primary" loading={busy} onClick={() => act(() => api.post(`/api/desktops/${id}/takeover`), "已接管，agent 暂停操作")}>
               <Hand className="size-4" /> 接管
             </Button>
@@ -216,28 +253,73 @@ export default function DesktopView() {
       </div>
 
       <div className="flex-1 relative overflow-hidden">
-        {running ? (
+        {live ? (
           <div ref={screen} className="absolute inset-0" />
         ) : (
-          <div className="absolute inset-0 grid place-items-center">
-            <div className="text-center space-y-3">
-              <div className="opacity-70 text-sm">{desktop.isLoading ? "加载中…" : d?.state === "paused" ? "正在恢复…" : d?.state === "starting" ? "正在启动…" : "实例未运行"}</div>
-              {!desktop.isLoading && d?.state !== "paused" && (
-                <Button variant="primary" loading={busy} onClick={() => act(() => api.post(`/api/desktops/${id}/start`), "已启动")}>
-                  <Play className="size-4" /> 启动{android ? "（安卓需要一两分钟）" : ""}
-                </Button>
+          <div className="absolute inset-0 grid place-items-center px-6">
+            <div className="text-center space-y-3 max-w-sm">
+              {gone ? (
+                <>
+                  <div className="opacity-80 text-sm">这个实例不存在，可能已经被删除</div>
+                  <Button onClick={() => nav("/instances", { replace: true })}>回到实例列表</Button>
+                </>
+              ) : desktop.isError && !d ? (
+                <>
+                  <div className="opacity-80 text-sm">{errorMessage(desktop.error)}</div>
+                  <Button onClick={() => void desktop.refetch()}>重试</Button>
+                </>
+              ) : (
+                <>
+                  <div className="flex items-center justify-center gap-2 opacity-80 text-sm">
+                    {(desktop.isLoading || op || d?.state === "paused" || d?.state === "starting") && <Loader2 className="size-4 animate-spin" />}
+                    {desktop.isLoading
+                      ? "加载中…"
+                      : op
+                        ? `${OP_LABEL[op]}…${android && op !== "stopping" && op !== "pausing" ? "（安卓需要一两分钟）" : ""}`
+                        : d?.state === "paused"
+                          ? "正在恢复…"
+                          : d?.state === "starting"
+                            ? "正在启动…"
+                            : "实例未运行"}
+                  </div>
+                  {d?.error && !op && (
+                    <div className="text-xs text-left rounded-lg bg-[color-mix(in_oklab,var(--danger)_25%,transparent)] px-3 py-2 whitespace-pre-wrap break-words">
+                      {OP_NAME[d.error.op]}没有成功：{d.error.message}
+                    </div>
+                  )}
+                  {d && !op && d.state !== "paused" && (
+                    <div className="flex flex-wrap justify-center gap-2">
+                      <Button variant="primary" loading={busy} onClick={() => void background("start", "开始启动")}>
+                        <Play className="size-4" /> {d.error ? "重试启动" : "启动"}
+                      </Button>
+                      {d.error && (
+                        <Button loading={busy} onClick={repair}>
+                          <Wrench className="size-4" /> 修复
+                        </Button>
+                      )}
+                      <Button onClick={() => setHealthOpen(true)}>
+                        <Stethoscope className="size-4" /> 诊断
+                      </Button>
+                    </div>
+                  )}
+                  {d && !op && d.error && android && (
+                    <button type="button" className="text-xs underline opacity-70 hover:opacity-100" onClick={reset}>
+                      还是不行？清空重建（会丢掉 App 和数据）
+                    </button>
+                  )}
+                </>
               )}
             </div>
           </div>
         )}
-        {running && connState === "disconnected" && (
+        {live && connState === "disconnected" && (
           <div className="absolute inset-x-0 bottom-6 flex justify-center">
-            <Button variant="secondary" onClick={() => connect()}>
+            <Button variant="secondary" onClick={() => void connect()}>
               重新连接
             </Button>
           </div>
         )}
-        {running && !mine && d?.leaseInfo.holder === "agent" && (
+        {live && !mine && d?.leaseInfo.holder === "agent" && (
           <div className="absolute top-2 inset-x-2 text-center text-xs bg-black/55 rounded-xl px-3 py-2">agent 正在操作，你在旁观。需要你登录、输入验证码或扫码时点「接管」。</div>
         )}
       </div>
@@ -345,37 +427,86 @@ export default function DesktopView() {
               Google 设备登记
             </Button>
           )}
+          <Button className="w-full" onClick={() => (setMenu(false), setHealthOpen(true))}>
+            <Stethoscope className="size-4" /> 诊断
+          </Button>
           {running && d?.leaseInfo.holder === "none" && (
-            <Button className="w-full" onClick={() => act(() => api.post(`/api/desktops/${id}/pause`), "已暂停").then(() => setMenu(false))}>
+            <Button className="w-full" disabled={!!op} onClick={() => void background("pause", "开始暂停").then(() => setMenu(false))}>
               <Pause className="size-4" /> 暂停（保留内存）
             </Button>
           )}
           {(running || d?.state === "paused") && (
             <Button
               className="w-full"
+              disabled={!!op}
               onClick={() => {
-                if (d?.leaseInfo.holder === "agent" && !confirm("agent 正在使用这个实例，重启会打断它的操作。继续吗？")) return;
-                void act(() => api.post(`/api/desktops/${id}/restart`), "已重启").then(() => setMenu(false));
+                if (!confirmAgent("重启")) return;
+                void background("restart", "开始重启").then(() => setMenu(false));
               }}
             >
               <RotateCcw className="size-4" /> 重启
             </Button>
           )}
           {(running || d?.state === "paused") && d?.leaseInfo.holder === "none" && (
-            <Button className="w-full" onClick={() => act(() => api.post(`/api/desktops/${id}/stop`), "已停止").then(() => setMenu(false))}>
+            <Button className="w-full" disabled={!!op} onClick={() => void background("stop", "开始停止").then(() => setMenu(false))}>
               <Power className="size-4" /> 停止
             </Button>
           )}
           <Button
             variant="danger"
             className="w-full"
+            disabled={!!op}
             onClick={() => {
               if (!confirm(`删除「${d?.name ?? ""}」？里面的${android ? "App 和数据" : "浏览器登录状态和文件"}会一并删除，分给它的 agent 也会解除绑定。`)) return;
-              void act(() => api.del(`/api/desktops/${id}`), "已删除").then(() => nav("/desktops", { replace: true }));
+              void act(() => api.del(`/api/desktops/${id}`), "已删除").then((ok) => ok && nav("/instances", { replace: true }));
             }}
           >
             删除
           </Button>
+        </div>
+      </Sheet>
+
+      <Sheet open={healthOpen} onClose={() => setHealthOpen(false)} title={`诊断 · ${d?.name ?? "实例"}`}>
+        <div className="space-y-3 text-[var(--text)]">
+          {health.isLoading ? (
+            <Loading />
+          ) : health.isError ? (
+            <div className="text-sm text-danger">{errorMessage(health.error)}</div>
+          ) : health.data ? (
+            <>
+              <div className="text-sm font-medium">
+                {health.data.op
+                  ? `${OP_LABEL[health.data.op]}…`
+                  : health.data.ok
+                    ? health.data.state === "running"
+                      ? "运行正常"
+                      : health.data.state === "paused"
+                        ? "已暂停（用到时自动恢复）"
+                        : "已停止（用到时自动启动）"
+                    : (health.data.problem ?? "有问题")}
+              </div>
+              {d?.error && !health.data.op && (
+                <div className="text-xs rounded-lg bg-[color-mix(in_oklab,var(--danger)_12%,transparent)] text-danger px-3 py-2 whitespace-pre-wrap break-words">
+                  上次{OP_NAME[d.error.op]}没有成功：{d.error.message}
+                </div>
+              )}
+              <pre className="text-[11.5px] leading-relaxed bg-surface-2 rounded-lg px-3 py-2 whitespace-pre-wrap break-words max-h-64 overflow-y-auto">{health.data.detail || "没有更多信息"}</pre>
+              <div className="grid grid-cols-2 gap-2">
+                <Button variant="primary" disabled={!!op || !!health.data.op} onClick={repair}>
+                  <Wrench className="size-4" /> 修复
+                </Button>
+                <Button loading={health.isFetching} onClick={() => void health.refetch()}>
+                  重新检查
+                </Button>
+              </div>
+              <div className="text-xs text-muted">修复会先正常停止实例、清理上次强制停止留下的锁文件再启动；还不行就重建容器。浏览器登录状态、文件和安卓数据都会保留。</div>
+              {android && (
+                <Button variant="danger" className="w-full" disabled={!!op || !!health.data.op} onClick={reset}>
+                  <Eraser className="size-4" /> 清空重建（丢掉 App 和数据）
+                </Button>
+              )}
+            </>
+          ) : null}
         </div>
       </Sheet>
 
@@ -444,7 +575,8 @@ export default function DesktopView() {
             className="w-full"
             loading={busy}
             onClick={() =>
-              act(() => api.post(`/api/desktops/${id}/handback`, { note }), "已交还").then(() => {
+              act(() => api.post(`/api/desktops/${id}/handback`, { note }), "已交还").then((ok) => {
+                if (!ok) return;
                 setHandback(false);
                 setNote("");
               })

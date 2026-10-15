@@ -2,7 +2,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Hand, Loader2, Maximize2, PictureInPicture2, X } from "lucide-react";
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { useLocation, useNavigate } from "react-router";
-import { api } from "../lib/api";
+import { api, errorMessage } from "../lib/api";
 import { closeInstanceWindow, useInstanceWindow } from "../lib/instanceWindow";
 import { KIND_INFO, leaseText } from "../lib/instances";
 import type { Agent, Desktop } from "../lib/types";
@@ -84,7 +84,13 @@ const pipSupported = typeof document !== "undefined" && document.pictureInPictur
 export function InstanceWindow() {
   const id = useInstanceWindow();
   const loc = useLocation();
-  const list = useQuery({ queryKey: ["desktops"], queryFn: () => api.get<Desktop[]>("/api/desktops"), enabled: !!id, refetchInterval: 20_000 });
+  const list = useQuery({
+    queryKey: ["desktops"],
+    queryFn: () => api.get<Desktop[]>("/api/desktops"),
+    enabled: !!id,
+    // Changes arrive over SSE; this is the safety net, faster while the instance is starting or being repaired.
+    refetchInterval: (q) => (q.state.data?.some((x) => x.id === id && x.op) ? 2_000 : 60_000),
+  });
   const d = id ? list.data?.find((x) => x.id === id) : undefined;
   useEffect(() => {
     // Deleted while open.
@@ -100,7 +106,9 @@ function Window({ d }: { d: Desktop }) {
   const agents = useQuery({ queryKey: ["agents"], queryFn: () => api.get<Agent[]>("/api/agents") });
   const screen = useRef<HTMLDivElement>(null);
   const running = d.state === "running";
-  const { state, connect } = useVnc(d.id, running, screen);
+  // Not while it is being restarted or repaired: that would only chase a screen that is going away.
+  const live = running && !d.op;
+  const { state, connect } = useVnc(d.id, live, screen);
   const [geo, setGeo] = useState<Geo>(() => clampGeo(d, loadGeo() ?? defaultGeo(d)));
   const [, relayout] = useState(0);
   const [busy, setBusy] = useState(false);
@@ -177,7 +185,7 @@ function Window({ d }: { d: Desktop }) {
       await qc.invalidateQueries({ queryKey: ["desktops"] });
       open();
     } catch (err) {
-      toast(err instanceof Error ? err.message : String(err), "danger");
+      toast(errorMessage(err), "danger");
     } finally {
       setBusy(false);
     }
@@ -210,11 +218,13 @@ function Window({ d }: { d: Desktop }) {
         { once: true },
       );
     } catch (err) {
-      toast(`没能打开系统小窗：${err instanceof Error ? err.message : String(err)}`, "danger");
+      toast(`没能打开系统小窗：${errorMessage(err)}`, "danger");
     }
   };
 
-  const status = !running
+  const status = d.op || d.error
+    ? leaseText(d, agents.data).text
+    : !running
     ? d.state === "paused"
       ? "已暂停"
       : d.state === "starting"
@@ -243,12 +253,12 @@ function Window({ d }: { d: Desktop }) {
             <span className="font-medium">{d.name}</span>
             <span className="ml-1.5 text-muted">{status}</span>
           </div>
-          {pipSupported && running && state === "connected" && !pip && (
+          {pipSupported && live && state === "connected" && !pip && (
             <WinButton label="系统小窗（切到别的标签页也能看）" onClick={() => void popOut()}>
               <PictureInPicture2 className="size-3.5" />
             </WinButton>
           )}
-          {running && d.leaseInfo.holder !== "human" && (
+          {live && d.leaseInfo.holder !== "human" && (
             <WinButton label="接管" onClick={() => void takeover()} disabled={busy}>
               {busy ? <Loader2 className="size-3.5 animate-spin" /> : <Hand className="size-3.5" />}
             </WinButton>
@@ -262,10 +272,10 @@ function Window({ d }: { d: Desktop }) {
         </div>
       </div>
       <div className="relative bg-[#0b0d18]" style={{ height: h }}>
-        {running ? <div ref={screen} className="absolute inset-0" /> : <InstanceThumb d={d} width={480} className="absolute inset-0" />}
+        {live ? <div ref={screen} className="absolute inset-0" /> : <InstanceThumb d={d} width={480} className="w-full h-full" />}
         {/* Above the (view-only) screen: drag to move, double-click to open the full page. */}
         <div className="absolute inset-0 cursor-grab active:cursor-grabbing touch-none" onPointerDown={(e) => track(e, "move")} onDoubleClick={open} />
-        {running && state === "disconnected" && (
+        {live && state === "disconnected" && (
           <div className="absolute inset-0 grid place-items-center">
             <button type="button" onClick={() => void connect()} className="h-7 px-2.5 rounded-md bg-white/15 text-white text-xs hover:bg-white/25">
               重新连接
