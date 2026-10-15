@@ -284,6 +284,64 @@ describe("questions to the owner", () => {
   });
 });
 
+describe("logins the owner types in", () => {
+  const spec = { fields: [{ name: "login.username", label: "用户名", secret: false }, { name: "login.password", label: "密码", secret: true }], target: "example.com" };
+
+  it("hands the typed values to the waiting call only: not to events, rows or the audit trail", async () => {
+    const t = setup();
+    const r = await t.runs.send({ agentId: "ag1", text: "登录" });
+    await tick();
+    const q = t.runs.requestSecret(r.runId, "登录 example.com：需要你提供用户名、密码", spec, 60_000);
+    expect(t.runs.get(r.runId)!.status).toBe("waiting_approval");
+    expect(t.notes.at(-1)).toContain("需要你提供密码");
+    const ap = t.db.prepare("SELECT id, kind, options FROM approvals").get() as { id: string; kind: string; options: string };
+    expect(ap.kind).toBe("secret");
+    expect(JSON.parse(ap.options)).toEqual(spec);
+    await expect(async () => t.runs.provideSecret(ap.id, { "login.username": "me" }, "user")).rejects.toThrow("密码");
+    t.runs.provideSecret(ap.id, { "login.username": "me@x.com", "login.password": "p4ss-w0rd-Z" }, "user");
+    await expect(q).resolves.toEqual({ status: "provided", values: { "login.username": "me@x.com", "login.password": "p4ss-w0rd-Z" }, actor: "user" });
+    expect(t.runs.get(r.runId)!.status).toBe("running");
+    const dump = JSON.stringify([t.db.prepare("SELECT * FROM approvals").all(), t.db.prepare("SELECT * FROM audit").all(), t.events.forRun(r.runId)]);
+    expect(dump).not.toContain("p4ss-w0rd-Z");
+    expect(dump).toContain("secret.provide");
+    expect(t.events.forRun(r.runId).find((e) => e.type === "approval.resolved")).toMatchObject({ decision: "approve", answer: "已输入" });
+  });
+
+  it("closes the request when the owner declines or doesn't come, so a late answer can't reach anything", async () => {
+    const t = setup();
+    const r = await t.runs.send({ agentId: "ag1", text: "登录" });
+    await tick();
+    const declined = t.runs.requestSecret(r.runId, "登录", spec, 60_000);
+    const first = t.db.prepare("SELECT id FROM approvals ORDER BY created_at DESC LIMIT 1").get() as { id: string };
+    await t.runs.resolveApproval(first.id, "deny", "user");
+    await expect(declined).resolves.toEqual({ status: "declined" });
+    expect(t.runs.get(r.runId)!.status).toBe("running");
+
+    const late = t.runs.requestSecret(r.runId, "登录", spec, 20);
+    await expect(late).resolves.toEqual({ status: "timeout" });
+    const row = t.db.prepare("SELECT id, status FROM approvals ORDER BY created_at DESC, rowid DESC LIMIT 1").get() as { id: string; status: string };
+    expect(row.status).toBe("expired");
+    expect(() => t.runs.provideSecret(row.id, { "login.username": "a", "login.password": "b" }, "user")).toThrow("已经处理或过期");
+    expect(t.runs.get(r.runId)!.status).toBe("running");
+  });
+
+  it("lets the owner allow the matching vault item instead of typing", async () => {
+    const t = setup();
+    const r = await t.runs.send({ agentId: "ag1", text: "登录" });
+    await tick();
+    const q = t.runs.requestSecret(r.runId, "登录", { ...spec, vault: { name: "Example", username: "me" } }, 60_000);
+    const ap = t.db.prepare("SELECT id FROM approvals").get() as { id: string };
+    await t.runs.resolveApproval(ap.id, "approve", "user");
+    await expect(q).resolves.toEqual({ status: "vault", actor: "user" });
+
+    const plain = t.runs.requestSecret(r.runId, "登录", spec, 60_000);
+    const ap2 = t.db.prepare("SELECT id FROM approvals WHERE status = 'pending'").get() as { id: string };
+    await expect(t.runs.resolveApproval(ap2.id, "approve", "user")).rejects.toThrow("没有可用的密码库条目");
+    await t.runs.resolveApproval(ap2.id, "deny", "user");
+    await expect(plain).resolves.toEqual({ status: "declined" });
+  });
+});
+
 describe("recovery helpers", () => {
   it("accepts only valid diagnosis options", () => {
     const raw = {
@@ -634,6 +692,22 @@ describe("ending review: a turn that ends unfinished gets pulled back", () => {
     expect(t.recovery.list()[0]).toMatchObject({ kind: "panic", status: "auto", title: "Panic：问了你问题，没等回答就停下了" });
     expect(t.notes).toContain("助理 panic：任务没做完就停下了");
     expect(t.notes.some((n) => n.includes("完成了任务"))).toBe(false);
+  });
+
+  it("stopping because the owner didn't supply a login is waiting, not a panic", async () => {
+    const t = reviewed({ ending: new Error("not asked"), help: new Error("not asked") });
+    const r = await t.runs.send({ agentId: "ag1", text: "登录后台导出报表", source: "schedule" });
+    await tick();
+    const q = t.runs.requestSecret(r.runId, "登录 example.com：需要你提供用户名、密码", { fields: [{ name: "login.password", label: "密码", secret: true }], target: "example.com" }, 1);
+    await expect(q).resolves.toEqual({ status: "timeout" });
+    t.runs.onRunnerEvent("ag1", { type: "message.completed", runId: r.runId, messageId: "m", text: "没有 example.com 的密码，登录不了，暂时没法导出报表。" });
+    t.runs.engineDone(r.runId, "done");
+    await tick(30);
+    expect(t.asked).toEqual([]);
+    expect(t.starts()).toHaveLength(1);
+    expect(t.recovery.list()).toHaveLength(0);
+    expect(t.notes.some((n) => n.includes("panic"))).toBe(false);
+    expect(t.events.forRun(r.runId).some((e) => e.type === "system.notice" && e.text.includes("不算 panic"))).toBe(true);
   });
 
   it("without a judgement, a reply that sounds unfinished still counts as a panic", async () => {

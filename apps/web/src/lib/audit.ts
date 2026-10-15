@@ -69,6 +69,24 @@ export const AUDIT_ACTION: Record<string, string> = {
   "artifact.edit": "编辑成果",
   "artifact.restore": "恢复成果的旧版本",
   "artifact.delete": "删除成果",
+  "credentials.connection.create": "添加凭据连接",
+  "credentials.connection.delete": "删除凭据连接",
+  "credentials.settings": "指定凭据审批 agent",
+  "credentials.unlock": "解锁密码库",
+  "credentials.unlock.failed": "解锁密码库失败",
+  "credentials.lock": "锁定密码库",
+  "credentials.sync": "同步密码库",
+  "credentials.request": "agent 申请凭据",
+  "credentials.review.started": "审批 agent 开始审核凭据申请",
+  "credentials.approve": "批准凭据访问",
+  "credentials.deny": "拒绝凭据访问",
+  "credentials.revoke": "撤销凭据访问",
+  "credentials.read": "读取凭据",
+  "credentials.read.failed": "读取凭据失败",
+  "credentials.fill": "agent 登录时填入凭据",
+  "secret.provide": "输入了 agent 需要的登录信息",
+  "secret.vault": "允许 agent 使用密码库条目登录",
+  "secret.decline": "拒绝提供 agent 需要的登录信息",
 };
 
 /** Field names in the `fields` / `changes` of settings.update and agent.update details, and other detail keys. */
@@ -116,6 +134,14 @@ export const AUDIT_FIELD: Record<string, string> = {
   agentIds: "分给的 agent",
   hostAccess: "宿主机权限",
   budgetDailyUsd: "每日预算",
+  item: "凭据条目",
+  connection: "凭据连接",
+  requestId: "凭据请求",
+  "login.username": "用户名",
+  "login.password": "登录密码",
+  "login.totp": "验证码",
+  purpose: "用途",
+  target: "使用目标",
   cron: "时间",
   tz: "时区",
   enabled: "启用",
@@ -220,6 +246,9 @@ export const INCIDENT_STATUS: Record<string, string> = { analyzing: "分析中",
 
 export const APPROVAL_STATUS: Record<string, string> = { pending: "待处理", approved: "已批准", denied: "已拒绝" };
 
+/** Credential access requests: the same statuses the 凭据与隐私 page shows. */
+export const CREDENTIAL_REQUEST_STATUS: Record<string, string> = { pending: "待审批", approved: "已批准", denied: "已拒绝", expired: "已过期", consumed: "已读取", revoked: "已撤销" };
+
 const ACTOR: Record<string, string> = { system: "系统", supervisor: "监督员", helper: "维修员", watchdog: "超时保护", policy: "自动审批" };
 
 export interface AuditChange {
@@ -285,7 +314,7 @@ export function auditVia(detail: Record<string, unknown>): { ip?: string; device
   return v && typeof v === "object" ? (v as { ip?: string; device?: string }) : null;
 }
 
-const LEAD_KEYS = ["name", "title", "device"];
+const LEAD_KEYS = ["name", "title", "item", "device"];
 const TAIL_KEYS = ["problem", "assessment", "diagnosis", "did", "option", "answer", "note", "reason", "error", "ref"];
 
 const clip = (s: string, n = 80) => (s.length > n ? `${s.slice(0, n)}…` : s);

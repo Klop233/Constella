@@ -1,6 +1,6 @@
 import { startRegistration } from "@simplewebauthn/browser";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Activity, Bell, Boxes, Brain, ChevronRight, ClipboardCheck, Gauge, Layers, LogOut, Monitor, Palette, Search, Server, Settings2, Shield, ShieldCheck, Sparkles, type LucideIcon } from "lucide-react";
+import { Activity, Bell, Boxes, Brain, ChevronRight, ClipboardCheck, Gauge, KeyRound, Layers, LogOut, Monitor, Palette, Search, Server, Settings2, Shield, ShieldCheck, Sparkles, type LucideIcon } from "lucide-react";
 import QRCode from "qrcode";
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
@@ -171,6 +171,11 @@ export default function Settings() {
                 <button onClick={() => nav("/audit")} className="w-full flex items-center gap-3 h-9 px-2.5 rounded-md text-left hover:bg-surface-2">
                   <ClipboardCheck className="size-4 text-muted" strokeWidth={1.8} />
                   <span className="flex-1">审计</span>
+                  <ChevronRight className="size-4 text-muted" />
+                </button>
+                <button onClick={() => nav("/credentials")} className="w-full flex items-center gap-3 h-9 px-2.5 rounded-md text-left hover:bg-surface-2">
+                  <KeyRound className="size-4 text-muted" strokeWidth={1.8} />
+                  <span className="flex-1">凭据与隐私</span>
                   <ChevronRight className="size-4 text-muted" />
                 </button>
                 <button onClick={() => nav("/usage")} className="w-full flex items-center gap-3 h-9 px-2.5 rounded-md text-left hover:bg-surface-2">
@@ -958,6 +963,7 @@ const SIDEBAR_ITEMS = [
   { to: "/tasks", label: "任务" },
   { to: "/learning", label: "学习" },
   { to: "/artifacts", label: "成果" },
+  { to: "/credentials", label: "凭据" },
   { to: "/audit", label: "审计" },
   { to: "/usage", label: "用量" },
   { to: "/perf", label: "性能" },

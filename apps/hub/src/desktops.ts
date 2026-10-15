@@ -223,7 +223,7 @@ export class Desktops {
       `    instance_list 查看实例和状态；instance_use 切换当前操作的实例；instance_create 新建实例（自动绑定给你${creatable.length ? `，这台服务器能建：${creatable.join("、")}` : "；这台服务器目前建不了任何实例"}）；instance_update 修改配置；instance_restart 修复卡住或没响应的实例（重启并确认恢复，不需要审批）。新建和修改可能需要主人审批。`,
       "    实例没响应、截图或 android_ui 超时、报错里带「实例诊断」时：先 instance_restart；修不好就 get_help（平台维修员能看到容器日志并动手修），或用 instance_create / instance_use 换一台继续。不要因为实例出故障就结束任务。",
       "    browser_*：操作浏览器或 Linux 桌面实例里的浏览器（按页面结构，更可靠），网页任务优先用它。desktop_*：截图和键鼠操作当前实例的屏幕（安卓上 click 是点按、drag 是滑动，key 支持 back/home/recents）。android_ui 读取安卓界面结构，android_apps 列出或安装 App。",
-      "    遇到登录、验证码、扫码、支付等必须由用户本人完成的步骤，调用 desktop_request_help。",
+      "    登录需要用户名、密码或一次性验证码时用 credentials_fill（密码库里有就取，没有就请用户在聊天里输入，不要自己要密码）。遇到验证码图片、扫码、支付等必须由用户本人完成的步骤，调用 desktop_request_help。",
     ].join("\n");
   }
 

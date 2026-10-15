@@ -107,7 +107,7 @@ const REPAIR_BACKOFF_MS = 60 * 60_000;
 /** Checks in a row an instance has to look broken before the patrol repairs it (a crash loop needs just one). */
 const BROKEN_CHECKS = 3;
 /** Tools that legitimately wait on the owner; a run inside one isn't stuck. */
-const WAITING_ON_OWNER = new Set(["constella.desktop_request_help", "constella.ask_user"]);
+const WAITING_ON_OWNER = new Set(["constella.desktop_request_help", "constella.ask_user", "constella.credentials_fill"]);
 
 const DIAGNOSE_SYSTEM = `你是 Constella 平台的"诊断员"。某个 agent 的任务出错停下了，系统没法自动处理。请根据材料写一份简短的诊断报告，并给出主人可以一键采用的方案。
 只输出一个 JSON 对象：
@@ -137,7 +137,8 @@ const SUPERVISE_SYSTEM = `你是 Constella 平台的"监督员"。你从外部�
 const ENDING_SYSTEM = `你是 Constella 平台的"监督员"。规矩是：agent 只有在主人要的事情做完了才能结束一轮。一个 agent 刚结束了一轮，请判断它是不是真的做完了。只输出一个 JSON 对象：
 {"verdict":"completed|needs_owner|gave_up","assessment":"一两句话：结论和依据","text":"不是 completed 时，直接对 agent 说的指示"}
 - completed：主人要的结果已经做到并交付了（东西装好了、文件发了、问题答了、改动生效了）；或者剩下的部分客观上不可能做到（目标不存在、网站已下线），并且说清楚了。只是"做了一部分""给了建议""说明了原因"不算。
-- needs_owner：停下来是为了等主人本人做某一步（登录、验证码、扫码、付款）或者等主人拍板（会花钱、会丢数据、目标不明确的取舍）。这也不该结束这一轮：应该用 desktop_request_help 请主人接管实例、用 ask_user 请主人选，在这一轮里等，等的时候先做不依赖主人的部分。
+- needs_owner：停下来是为了等主人本人做某一步（验证码、扫码、付款）或者等主人拍板（会花钱、会丢数据、目标不明确的取舍）。这也不该结束这一轮：应该用 desktop_request_help 请主人接管实例、用 ask_user 请主人选，在这一轮里等，等的时候先做不依赖主人的部分。
+- 缺少登录用的用户名、密码或验证码，用 credentials_fill 向密码库取或请主人在聊天里输入后，主人仍然没有提供：这是在等主人，不算 gave_up，按 completed 处理。
 - gave_up：没做完就停了，而挡住它的是 agent 或平台自己能处理的事：工具报错或超时、实例没响应、网络或下载失败、页面变了、一种做法行不通、"建议稍后重试"、问主人"要不要继续"、把自己能做的步骤推给主人等。
 text：指出它停在哪里、接下来具体怎么做（重试、instance_restart 修实例、get_help 找平台维修员、instance_create / instance_use 换实例、换工具、换做法；要主人的步骤用 desktop_request_help / ask_user 在这一轮里等），要求它把任务做完再结束。用中文。
 主人只是聊天或提问、回答已经给了，就是 completed。`;
@@ -918,6 +919,15 @@ export class Recovery {
     // comes, reaches it as a new message and the task goes on from there).
     if (this.#d.db.prepare("SELECT 1 FROM approvals WHERE run_id = ? AND kind = 'decision' AND status = 'pending'").get(run.id)) {
       this.#panic(run, { title: "Panic：问了你问题，没等回答就停下了", summary: "你回答后它会接着做。", actions: [] });
+      return Promise.resolve(false);
+    }
+    // It needed a login and the owner didn't supply one (declined, or didn't come in time): that is waiting on
+    // the owner, not giving up. No panic and no pull-back; asking again is the owner's "continue".
+    const lastSecret = this.#d.db.prepare("SELECT status FROM approvals WHERE run_id = ? AND kind = 'secret' ORDER BY created_at DESC, rowid DESC LIMIT 1").get(run.id) as
+      | { status: string }
+      | undefined;
+    if (lastSecret && (lastSecret.status === "expired" || lastSecret.status === "denied")) {
+      this.#d.runs.notice(run.id, "supervisor", "监督员：这一轮在等你提供登录信息（用户名、密码或验证码），没有就停下来是对的，不算 panic。让它继续时会再次请你输入。");
       return Promise.resolve(false);
     }
     const events = this.#d.events.forRun(run.id);

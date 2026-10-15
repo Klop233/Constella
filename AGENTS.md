@@ -23,7 +23,7 @@
 | `images/{hub,agent,desktop}` | 三个镜像；桌面镜像里的控制服务是 `images/desktop/control.py` |
 | `deploy` | `docker-compose.yml`、`.env.example` |
 | `scripts/e2e` | 端到端测试（起一个临时 hub，用真实模型跑） |
-| `docs` | `design.md`、`design-system.md`（前端规范）、`roadmap.md`、`decisions/`（ADR）、`spikes/` |
+| `docs` | `design.md`、`design-system.md`（前端规范）、`credentials.md`（凭据连接与授权边界）、`roadmap.md`、`decisions/`（ADR）、`spikes/` |
 
 ### hub（`apps/hub/src`）
 
@@ -37,7 +37,8 @@
 | `agents.ts` | agent 配置、凭据、引擎配置文件、注入给 agent 的 instructions |
 | `containers.ts` | dockerode：agent / desktop 容器的创建、重建、休眠 |
 | `desktops.ts` | 桌面池、租约（同一时刻只有一方操作）、接管/交还、VNC 桥接与输入过滤、实例健康诊断（`diagnose`）与修复（`repair`） |
-| `mcp.ts` | 给 agent 的工具：`memory_*`、`ask_user`、`get_help`、`notify_user`、`schedule_*`、`send_file`、`artifact_*`、`desktop_*`、`browser_*`、`host_exec` |
+| `mcp.ts` | 给 agent 的工具：`memory_*`、`ask_user`、`get_help`、`notify_user`、`schedule_*`、`send_file`、`artifact_*`、`desktop_*`、`browser_*`、`credentials_*`（含登录时填入的 `credentials_fill`）、`host_exec` |
+| `credentials.ts` / `credential-provider.ts` / `credential-routes.ts` | 凭据与隐私：密码库连接与解锁会话、agent 的访问申请、指定审批 agent 的审核与限时单次授权、`/api/credentials`；provider 接口的 Bitwarden 实现在 `credential-provider.ts`，官方区和第三方 / 自托管（Vaultwarden 等，可带自签名证书）共用（见 [docs/credentials.md](docs/credentials.md)）；登录输入框是 `approvals` 里 `kind = 'secret'` 的一类（`runs.ts` 的 `requestSecret` / `provideSecret`，值只在内存里交给等待中的 `credentials_fill`，前端 `ApprovalCard.tsx` 的 `SecretForm`） |
 | `artifacts.ts` | 成果：agent 交付到对话里的文件和文档，带版本，可预览、可原地编辑 |
 | `knowledge.ts` / `learning.ts` / `reflect.ts` | 记忆与技能（git，可撤销；含从别的助手导入记忆）/ 复盘与每周整理 / 回顾统计 |
 | `models.ts` / `newapi.ts` / `catalog.ts` | 模型提供方与 `model@provider` 引用 / new-api 管理接口 / 各模型支持的推理强度 |
@@ -54,6 +55,7 @@
 - `components/ui.tsx`：通用组件（Button、Card、Sheet、Field…），新页面优先用它，不重新发明。
 - `components/RunView.tsx`：把一个 run 的事件流渲染成对话（工具调用折叠、审批内联、成果卡片）。
 - `pages/Artifacts.tsx`、`components/Artifact*.tsx`、`lib/artifacts.ts`：成果库与预览/编辑。
+- `pages/Credentials.tsx`：凭据与隐私页（`/credentials`）：密码库连接、解锁、审批 agent、访问请求与访问历史。
 - `pages/Performance.tsx`、`components/PerfChart.tsx`、`lib/perf.ts`：性能页（宿主机 + 实例/agent/服务）；`components/LineChart.tsx`：时间序列曲线。
 - `lib/audit.ts`、`components/AuditDetail.tsx`：操作记录的动作/字段中文名、一行摘要，和点开的详情面板（设置页与审计页共用）。
 - `lib/api.ts`：fetch 封装；`lib/live.ts`：SSE；`lib/types.ts`：前端用的类型（事件类型从 protocol 引）；`sw.ts`：Service Worker 与推送。
@@ -71,6 +73,7 @@
 | 新增会写审计的操作 | 调用处 `audit(db, actor, action, detail)`：`detail` 里记对象的名字，改动类再加 `changes: changesOf(前, 后, 字段)`（不记密钥明文）；中文名登记到 web `lib/audit.ts`；新的对象类型在 `audit.ts` 的 `auditRefs` 里加解析 |
 | 加表或列 | `db.ts`，见下面的「数据库迁移」 |
 | 改智能界面（交互式回复块） | 解析 `packages/protocol/src/widgets.ts` → 给 agent 的说明 `apps/hub/src/widgets.ts` → 加组件：先在 `packages/protocol/src/genui.ts` 的 `GENUI_SCHEMA` 写属性，再在 `apps/web/src/components/genui/components.tsx` 的 `COMPONENTS` 加渲染（单测会核对两边一致，给 agent 的说明自动带上）→ 运行时 `lib/genui/`；界面出问题会记进 `widget_issues` 供复盘；测试 `apps/hub/test/genui.test.ts`；设置项 `intelligentUi` |
+| 接新的凭据提供方（别的密码库） | 实现 `apps/hub/src/credential-provider.ts` 的 `CredentialProvider`（连接状态、解锁/锁定、同步、条目摘要、按字段读取），在 `credentials.ts` 里注册；申请、审批和授权消费不用改 |
 | 接新的 agent 引擎 | `apps/runner/src/engines/` 新增适配器，事件统一成 protocol 事件 |
 | 改桌面镜像或桌面控制 | `images/desktop/`；hub 侧在 `desktops.ts` 和 `mcp.ts` 的 `desktop_*` |
 | 改前端样式 | 先读 `docs/design-system.md`，新的通用样式写回规范 |

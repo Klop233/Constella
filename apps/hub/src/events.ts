@@ -1,3 +1,4 @@
+import { redact } from "./secrets.ts";
 import { EventEmitter } from "node:events";
 import type { AgentEvent, RunnerEvent } from "@constella/protocol";
 import { newId, nowIso } from "./config.ts";
@@ -22,7 +23,22 @@ export class EventStore {
     this.bus.setMaxListeners(0);
   }
 
+  secretValues: () => Iterable<string> = () => [];
+
+  /** Redact values, never JSON syntax or routing identity fields. */
+  sanitize<T>(value: T): T {
+    const values = [...this.secretValues()].filter(Boolean).sort((a,b) => b.length-a.length);
+    const visit = (v: unknown, key = ""): unknown => {
+      if (typeof v === "string") return /^(id|.*Id|type|status|ts|kind)$/.test(key) ? v : redact(v, values);
+      if (Array.isArray(v)) return v.map(x => visit(x));
+      if (v && typeof v === "object") return Object.fromEntries(Object.entries(v).map(([k,x]) => [k,visit(x,k)]));
+      return v;
+    };
+    return visit(value) as T;
+  }
+
   append(agentId: string, conversationId: string, ev: RunnerEvent): AgentEvent {
+    ev = this.sanitize(ev);
     const seq = this.#nextSeq(ev.runId);
     const event = { ...ev, id: newId("ev"), agentId, seq, ts: nowIso() } as AgentEvent;
     const { id, runId, type, ts } = event;

@@ -1,6 +1,6 @@
-import type { AgentEvent, AndroidBackend, ArtifactKind, DesktopKind, DesktopLease, DesktopOptions, DesktopPolicy, IdleAction, RunStatus } from "@constella/protocol";
+import type { AgentEvent, AndroidBackend, ArtifactKind, DesktopKind, DesktopLease, DesktopOptions, DesktopPolicy, IdleAction, RunStatus, SecretSpec } from "@constella/protocol";
 
-export type { AgentEvent, AndroidBackend, ArtifactKind, DesktopKind, DesktopLease, DesktopOptions, DesktopPolicy, IdleAction, RunStatus };
+export type { AgentEvent, AndroidBackend, ArtifactKind, DesktopKind, DesktopLease, DesktopOptions, DesktopPolicy, IdleAction, RunStatus, SecretSpec };
 
 /** Codex reasoning level ("low", "medium", "high", "xhigh", "max", …); which ones apply depends on the model. */
 export type Effort = string;
@@ -75,13 +75,15 @@ export interface Approval {
   id: string;
   run_id: string;
   agent_id: string;
-  /** "decision" is a multiple-choice question from the agent (ask_user); the rest are approvals. */
+  /** "decision" is a multiple-choice question from the agent (ask_user), "secret" a request for a login; the rest are approvals. */
   kind: string;
   summary: string;
   detail: string | null;
   status: string;
   created_at: string;
   options?: DecisionOption[] | null;
+  /** kind=secret: the inputs the owner is asked to fill. */
+  secret?: SecretSpec | null;
   recommended?: number | null;
   conversation_id?: string;
   agent_name?: string;
@@ -145,6 +147,7 @@ export interface AuditRefs {
   schedule?: { id: string; name: string; cron: string; enabled: boolean };
   incident?: { id: string; title: string; kind: string; status: string };
   artifact?: { id: string; title: string; filename: string; version: number };
+  credentialRequest?: { id: string; item: string; fields: string[]; status: string; agentId: string; createdAt: string };
 }
 
 export interface AuditEntryDetail extends AuditEntry {

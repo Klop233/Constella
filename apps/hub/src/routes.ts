@@ -1,3 +1,4 @@
+import { registerCredentialRoutes } from "./credential-routes.ts";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -88,6 +89,7 @@ export function registerRoutes(hub: Hub): void {
     req.sessionId = s.sessionId;
   });
 
+  registerCredentialRoutes(hub);
   const actor = (req: FastifyRequest) => req.userId ?? "anonymous";
   const authLimit = { config: { rateLimit: { max: 10, timeWindow: "1 minute" } } };
 
@@ -710,6 +712,14 @@ export function registerRoutes(hub: Hub): void {
     return { ok: true };
   });
 
+  // What the owner typed into a "secret" card (an agent's login). Its own route so the values are never part of
+  // an answer, an audit record or an event: they are handed to the waiting tool call and nothing else.
+  app.post("/api/approvals/:id/secret", async (req) => {
+    const b = z.object({ values: z.record(z.string().max(200), z.string().min(1).max(2000)) }).parse(req.body);
+    runs.provideSecret(id(req), b.values, actor(req));
+    return { ok: true };
+  });
+
   // ── incidents (diagnosis reports, supervisor interventions) ─
   const incidentViews = (list: ReturnType<typeof recovery.list>) => {
     const names = new Map(agents.list(true).map((a) => [a.id, a]));
@@ -1232,7 +1242,10 @@ function contentDisposition(type: "inline" | "attachment", name: string): string
 
 /** Approval rows with a question's options parsed. */
 function approvalView(row: Record<string, any>) {
-  return { ...row, options: row.options ? JSON.parse(row.options) : null };
+  const parsed = row.options ? JSON.parse(row.options) : null;
+  // A secret request keeps its inputs in the same column; the card reads them from `secret`.
+  if (row.kind === "secret") return { ...row, options: null, secret: parsed };
+  return { ...row, options: parsed };
 }
 
 function id(req: FastifyRequest): string {
