@@ -146,12 +146,16 @@ export default function AgentEdit() {
         )}
         <div className="flex items-end gap-3">
           <AgentAvatar emoji={emoji || "✨"} size="lg" />
-          <Field label="名字">
-            <input className={inputClass} value={name} onChange={(e) => setName(e.target.value)} maxLength={40} />
-          </Field>
-          <Field label="图标">
-            <input className={cx(inputClass, "w-16 text-center")} value={emoji} onChange={(e) => setEmoji(e.target.value)} maxLength={8} />
-          </Field>
+          <div className="flex-1 min-w-0">
+            <Field label="名字">
+              <input className={inputClass} value={name} onChange={(e) => setName(e.target.value)} maxLength={40} />
+            </Field>
+          </div>
+          <div className="w-20 shrink-0">
+            <Field label="图标">
+              <input className={cx(inputClass, "text-center")} value={emoji} onChange={(e) => setEmoji(e.target.value)} maxLength={8} />
+            </Field>
+          </div>
         </div>
         <Field label="模型" hint="✓ 表示在「设置 → 模型」里测试通过">
           <ModelSelect value={model} onChange={setModel} />
