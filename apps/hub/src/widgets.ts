@@ -1,4 +1,4 @@
-import type { IntelligentUiLevel } from "@constella/protocol";
+import { GENUI_ICONS, genuiReference, type IntelligentUiLevel } from "@constella/protocol";
 
 // What agents are told about interactive replies (智能界面). The web app compiles ```ui blocks and
 // runs them isolated (apps/web/src/lib/genui), then renders the result with its own components
@@ -45,33 +45,46 @@ const rows = [20, 30].map((y) => ({ 期限: y + " 年", 月供: Math.round(pay(y
 - 回到你：send("完整的一句话，带上界面里的当前取值") 以主人的名义发一条新消息（只能在主人点击时触发）；copy(文字)、openUrl(https 链接)。界面里的滑动、切换、输入都在本地完成，不经过你。
 - 没有网络，也没有 DOM：数据直接写进代码，不要用 document、fetch、alert。
 
-## 组件（属性都可省略，除非标了必填）
-布局
-- <Col gap> 竖排（默认），<Row gap align justify wrap> 横排，<Grid cols={2|3|4} 或 min={160}> 自适应网格（手机上自动变一列），<Box padding border background="subtle|accent|ok|warn|danger" direction gap>，<Divider label>，<Spacer>
-- <Card title subtitle icon badge tone selected onClick>…</Card> 细边框卡片
-- <Caption left="图示名称" right="说明" /> 放在一个界面块上方的小字标签
-文字
-- <Heading level={2|3|4}>，<Text size="xs|sm|md|lg|xl|2xl" tone="muted|accent|ok|warn|danger" bold mono align>，<Markdown text>（长段落），<Badge tone icon>，<Icon name size tone>，<Code lang code>，<Callout tone="info|tip|ok|warn|danger" title>
-- 字符串里可以用 **粗体**、\`代码\`、[链接](https://…)
-数据
-- <Stat label value sub delta icon tone />，<Progress label value max tone />，<KeyValue items={[{label, value}]} />
-- <Table columns={["列"] 或 [{key,label,align,format}]} rows={[[…]] 或 [{…}]} highlight={行号} />
-- <Chart type="bar|line|area|pie|donut|scatter" data={[{…}]} x="键" y={["键"]} 或 labels={[…]} series={[{name, data}]} stacked horizontal format="number|money|percent|compact" unit height highlight title />
-结构
-- <Flow direction="vertical|horizontal"><Node icon title desc items={["小标签"]} tone highlight />…</Flow> 带箭头的框图（架构、流程、数据流）
-- <List><Item icon title desc right send="点了发给你的话" />…</List> 带图标的说明列表；<List items={["…"]} ordered /> 普通列表
-- <Steps title><Step title desc>…</Step>…</Steps> 可逐步切换的分步演示，每步可以放任意组件
-- <Timeline><Event time title desc done active />…</Timeline>
-- <Tabs><Tab label icon>…</Tab>…</Tabs>，<Accordion><Details summary icon>…</Details></Accordion>
-- <Quiz title questions={[{question, options:["…"], answer: 正确选项序号(从0开始), explain}]} />（自带判分、讲解错题按钮）
-- <Image src="https://…" alt caption ratio="16:9" />
-- 需要画示意图时，可以直接写 <svg viewBox="0 0 300 160">…</svg>（path、circle、rect、line、text、g 等），颜色用 "var(--series-1)"…"var(--series-6)"、"var(--muted)"、"var(--border)"、"currentColor"，可以跟状态联动
-输入（给了 value 和 onChange 就由你的状态控制）
-- <Slider label value min max step unit format onChange />，<NumberInput label value unit onChange />，<Input label value placeholder onChange onSubmit />，<TextArea>
-- <Select label value options={["a"] 或 [{value,label}]} onChange />，<Segmented options value onChange />，<Switch label checked onChange />，<Checkbox>
-- <Choice options={[{value, label, desc, badge}]} multiple recommended="值" submit="我选：" />（submit 会加一个按钮，把选择发给你）
-- <Button variant="primary|secondary|ghost" icon onClick send="发给你的话" copy="要复制的文字" href>文字</Button>，<Link href>，<Suggestions items={["追问1", "追问2"]} />
-- 图标名（icon）：calculator, chart, line-chart, pie-chart, trending-up, trending-down, lightbulb, brain, brain-circuit, bot, cpu, server, database, network, workflow, layers, code, terminal, globe, map-pin, route, plane, train, car, home, building, wallet, coins, credit-card, percent, scale, target, trophy, star, heart, heart-pulse, shield-check, lock, key, clock, timer, calendar, user, users, book-open, graduation-cap, flask, sparkles, zap, rocket, check-circle, alert, info, help, search, settings, wrench, package, cart, utensils, coffee, leaf, sun, moon, cloud, camera, image, music, film, message, send, mail, phone, smartphone, laptop, monitor, gauge, activity, list-checks, file-text, folder, flag, gift, puzzle, compass, mountain
+## 组件（属性都可省略，除非标了必填；不在下面的组件和属性会被忽略）
+${genuiReference()}
+- 也可以直接写内联 svg 画示意图（path、circle、rect、line、text、g 等），颜色用 "var(--series-1)"…"var(--series-6)"、"var(--muted)"、"var(--border)"、"currentColor"，可以跟状态联动。
+- 字符串里可以用 **粗体**、\`代码\`、[链接](https://…)。
+- 图标名（icon）：${GENUI_ICONS.join(", ")}
+
+## 更多示例
+讲原理（结论 → 框图 → 分步 → 测验）：
+\`\`\`ui DNS 解析过程
+<Caption left="一次 DNS 查询" right="从浏览器到权威服务器" />
+<Flow>
+  <Node icon="globe" title="浏览器" desc="先查自己的缓存" />
+  <Node icon="server" title="递归解析器" desc="运营商或 8.8.8.8，替你跑完整个查询" tone="accent" highlight />
+  <Node icon="network" title="根 → 顶级域 → 权威服务器" items={["根：告诉你 .com 在哪", ".com：告诉你 example.com 在哪", "权威：给出 IP"]} />
+</Flow>
+<Steps title="逐步看">
+  <Step title="1 · 查缓存" desc="浏览器、系统、路由器依次查"><Progress label="命中率" value={80} valueLabel="大多数请求到这里就结束" /></Step>
+  <Step title="2 · 递归查询" desc="解析器从根服务器开始问"><List items={["问根服务器 → 得到 .com 的地址", "问 .com → 得到 example.com 的权威服务器", "问权威服务器 → 得到 IP"]} ordered /></Step>
+  <Step title="3 · 缓存结果" desc="按 TTL 缓存，下次直接用"><Stat label="典型 TTL" value="300 秒" /></Step>
+</Steps>
+<Quiz questions={[{ question: "谁替你完成整个查询？", options: ["浏览器", "递归解析器", "根服务器"], answer: 1, explain: "递归解析器一路问到权威服务器再把结果给你。" }]} />
+\`\`\`
+
+帮主人做选择（并排对比 → 让主人挑）：
+\`\`\`ui 三款耳机怎么选
+const items = [
+  { id: "a", name: "AirPods Pro 2", price: 1899, good: "降噪好、和苹果设备无缝", bad: "安卓功能少" },
+  { id: "b", name: "Sony WF-1000XM5", price: 1699, good: "音质和降噪都强", bad: "体积偏大" },
+  { id: "c", name: "小米 Buds 5 Pro", price: 1099, good: "价格低、续航长", bad: "降噪一般" },
+];
+<Grid cols={3}>
+  {items.map((it) => (
+    <Card key={it.id} title={it.name} badge={fmt.money(it.price)}>
+      <Text size="sm"><Badge tone="ok">优点</Badge> {it.good}</Text>
+      <Text size="sm"><Badge tone="warn">不足</Badge> {it.bad}</Text>
+    </Card>
+  ))}
+</Grid>
+<Choice label="你更看重什么？" options={[{ value: "anc", label: "降噪" }, { value: "sound", label: "音质" }, { value: "price", label: "价格" }]} multiple submit="我更看重：" />
+\`\`\`
 
 ## 原则
 - 界面是回答的一部分，不是附件：先用一两句话给结论，再接界面；界面前后不要说“下面是一个界面”。

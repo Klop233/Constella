@@ -133,6 +133,11 @@ const ENSURE = `
     key TEXT PRIMARY KEY, conversation_id TEXT NOT NULL, data TEXT NOT NULL, updated_at TEXT NOT NULL
   );
   CREATE INDEX IF NOT EXISTS widget_state_conversation ON widget_state(conversation_id);
+  CREATE TABLE IF NOT EXISTS widget_issues (
+    key TEXT PRIMARY KEY, conversation_id TEXT NOT NULL, run_id TEXT NOT NULL, title TEXT NOT NULL,
+    kind TEXT NOT NULL, detail TEXT NOT NULL, created_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS widget_issues_run ON widget_issues(run_id);
 `;
 
 export type Db = DatabaseSync;

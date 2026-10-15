@@ -8,6 +8,10 @@ import { KnowledgeOps, MEMORY_LIMIT, type ImportPlanItem, type Knowledge, type L
 import type { ModelRegistry } from "./models.ts";
 import type { RunRow } from "./runs.ts";
 
+/** How long reflection waits for the page to report problems with interactive blocks in a reply. */
+const UI_REPORT_WAIT_MS = 30_000;
+const UI_ISSUE_KIND: Record<string, string> = { error: "出错", dropped: "有一部分写错被跳过", diagnostics: "属性不对", interrupted: "没写完" };
+
 const REFLECT_SYSTEM = `你是一个 AI 助手团队的"复盘员"。你会读到某个 agent 刚完成的一次任务记录，判断其中有没有值得长期保存的知识。
 只输出一个 JSON 对象，格式：
 {
@@ -107,18 +111,34 @@ export class Learning {
   maybeReflect(run: RunRow): void {
     if (run.reflected) return;
     const auto = this.#auto();
+    if (run.status === "cancelled") return;
     const worth = run.feedback !== null || (auto.enabled && run.status === "done" && run.tool_calls >= auto.minToolCalls);
-    if (!worth || run.status === "cancelled") return;
-    this.#queue = this.#queue.then(() => this.reflect(run.id).then(() => undefined)).catch((err) => {
-      console.error("reflection failed", err);
-    });
+    const hasUi = this.#events.forRun(run.id).some((e) => e.type === "message.completed" && /(`{3,}|~{3,})[ \t]*ui\b/.test(e.text));
+    // A reply with interactive blocks is also worth a look when the page reported problems with them.
+    if (!worth && !(hasUi && auto.enabled && run.status === "done")) return;
+    const enqueue = () => {
+      if (!worth && !this.#hasUiIssues(run.id)) return;
+      this.#queue = this.#queue.then(() => this.reflect(run.id).then(() => undefined)).catch((err) => {
+        console.error("reflection failed", err);
+      });
+    };
+    // The page checks those blocks when it renders them; give it a moment to report (outside the queue).
+    if (hasUi && run.feedback === null) setTimeout(enqueue, UI_REPORT_WAIT_MS).unref?.();
+    else enqueue();
+  }
+
+  #hasUiIssues(runId: string): boolean {
+    return !!this.#db.prepare("SELECT 1 FROM widget_issues WHERE run_id = ? LIMIT 1").get(runId);
   }
 
   async reflect(runId: string): Promise<LearningEvent[]> {
     const run = this.#db.prepare("SELECT * FROM runs WHERE id = ?").get(runId) as RunRow | undefined;
     if (!run || run.reflected) return [];
     this.#db.prepare("UPDATE runs SET reflected = 1 WHERE id = ?").run(runId);
-    const transcript = transcriptFor(run, this.#events.forRun(runId));
+    const issues = this.#db.prepare("SELECT title, kind, detail FROM widget_issues WHERE run_id = ? ORDER BY created_at").all(runId) as { title: string; kind: string; detail: string }[];
+    const transcript =
+      transcriptFor(run, this.#events.forRun(runId)) +
+      (issues.length ? `\n界面问题（回复里的交互界面渲染时发现的，值得总结成以后避免的经验）：\n${issues.map((i) => `- 「${i.title}」${UI_ISSUE_KIND[i.kind] ?? i.kind}：${i.detail.slice(0, 400)}`).join("\n")}` : "");
     const skillList = this.#knowledge.skills(run.agent_id);
     const skills = skillList.map((s) => `- ${s.name}（${s.scope === "shared" ? "共享" : "自有"}，已使用 ${s.uses} 次）：${s.description}`);
     const memory = this.#knowledge.memory(run.agent_id);

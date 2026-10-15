@@ -1,4 +1,5 @@
 import vm from "node:vm";
+import fs from "node:fs";
 import { describe, expect, it } from "vitest";
 // The web app's component-block pipeline (compile, streaming repair, isolated runtime), tested here
 // because the hub is where the unit tests live; these files have no DOM dependencies.
@@ -117,6 +118,15 @@ describe("isolated runtime", () => {
     expect(rt.out.find((m) => m.type === "send")).toEqual({ type: "send", text: "就按这个" });
   });
 
+  it("treats built-ins used as tags (<Map>, <Date>) as unknown components, not as calls", async () => {
+    const rt = runtime();
+    const { code } = await compileWidget("<Map center={[1, 2]}>地图</Map>");
+    rt.send({ type: "load", code, slots: [] });
+    await rt.settle();
+    expect(rt.out.filter((m) => m.type === "error")).toEqual([]);
+    expect(rt.trees().at(-1).c[0]).toMatchObject({ t: "Map", c: ["地图"] });
+  });
+
   it("reports errors instead of throwing, and has no network", async () => {
     const rt = runtime();
     const { code } = await compileWidget(`const x = typeof fetch;\n<Text>{x}</Text>\n<Text>{missing.value}</Text>`);
@@ -146,5 +156,109 @@ describe("compiler repairs", () => {
     expect(c.code).toContain("h(Badge");
     expect(c.code).not.toContain("h(Card");
     await expect(compileTolerant("const a = ;\n<Text>x</Text>")).rejects.toThrow(/第 1 行/);
+  });
+});
+
+describe("component schema is the one list", async () => {
+  const { GENUI_SCHEMA, GENUI_ICONS, GENUI_COMPONENTS } = await import("@constella/protocol");
+  const { COMPONENTS } = await import("../../web/src/lib/genui/runtime.ts");
+
+  it("every schema component has a renderer and nothing else does", () => {
+    // Read the keys of the renderer map statically (importing it needs a DOM): the names that start
+    // each top-level property of the object literal.
+    const src = fs.readFileSync(new URL("../../web/src/components/genui/components.tsx", import.meta.url), "utf8");
+    const start = src.indexOf("{", src.indexOf("= {", src.indexOf("export const COMPONENTS")));
+    const keys: string[] = [];
+    let depth = 0;
+    let expectKey = true;
+    for (let i = start; i < src.length; i++) {
+      const ch = src[i]!;
+      if (ch === "/" && src[i + 1] === "/") i = src.indexOf("\n", i);
+      else if (ch === '"' || ch === "'" || ch === "`") i = src.indexOf(ch, i + 1);
+      else if ("{([".includes(ch)) (depth++, (expectKey = depth === 1));
+      else if ("})]".includes(ch)) {
+        if (--depth === 0) break;
+      } else if (depth === 1 && ch === ",") expectKey = true;
+      else if (depth === 1 && expectKey && /[A-Za-z]/.test(ch)) {
+        const name = /^[A-Za-z]\w*/.exec(src.slice(i))![0];
+        keys.push(name);
+        i += name.length - 1;
+        expectKey = false;
+      }
+    }
+    expect(new Set(keys)).toEqual(new Set(Object.keys(GENUI_SCHEMA)));
+    expect(COMPONENTS).toEqual(GENUI_COMPONENTS);
+  });
+
+  it("every icon name the agent may use renders", async () => {
+    const { ICONS } = await import("../../web/src/components/genui/icons.ts");
+    expect(new Set(Object.keys(ICONS))).toEqual(new Set(GENUI_ICONS));
+  });
+});
+
+describe("validator", async () => {
+  const { validateTree } = await import("../../web/src/components/genui/validate.ts");
+  const el = (t: string, p: Record<string, unknown> = {}, c: unknown[] = []) => ({ t, p, c });
+
+  it("converts what it safely can and drops what it can't, with diagnostics", () => {
+    const { tree, diagnostics } = validateTree(
+      el("Fragment", {}, [
+        el("Chart", { type: "radar", height: "200", stacked: "true", data: [] }),
+        el("Slider", { value: "abc", onChange: { $fn: 1 }, color: "red" }),
+        el("Map", { center: [1, 2] }, ["里面的字"]),
+        el("Step", { title: "孤立的一步" }),
+        el("Stat", { label: "缺值" }),
+        el("svg", { viewBox: "0 0 10 10" }, [el("circle", { r: 2 })]),
+      ]),
+    );
+    const [chart, slider, unknown, , , svg] = tree!.c as any[];
+    expect(chart.p).toEqual({ height: 200, stacked: true, data: [] });
+    expect(slider.p).toEqual({ onChange: { $fn: 1 } });
+    expect(unknown).toEqual({ t: "Fragment", p: {}, c: ["里面的字"] });
+    expect(svg.t).toBe("svg");
+    expect(diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/Chart 的 type 不能是「radar」/),
+        expect.stringMatching(/Slider 的 value 应该是数字/),
+        "Slider 没有属性 color",
+        expect.stringMatching(/未知组件 Map/),
+        "Step 要放在 Steps 里",
+        "Stat 缺少 value",
+      ]),
+    );
+  });
+
+  it("accepts aliases, children that stand in for required text, and nested element props", () => {
+    const { diagnostics } = validateTree(el("Fragment", {}, [el("Grid", { columns: 3 }), el("Code", {}, ["x = 1"]), el("Table", { data: [], columns: ["a"] }), el("Tabs", {}, [el("Tab", { title: "一" })])]));
+    expect(diagnostics).toEqual([]);
+  });
+});
+
+describe("prompt examples are valid programs", () => {
+  it("every ui example in the instructions compiles, renders and has no diagnostics", async () => {
+    const { intelligentUiNote } = await import("../src/widgets.ts");
+    const { validateTree } = await import("../../web/src/components/genui/validate.ts");
+    const note = intelligentUiNote("rich");
+    const blocks = [...note.matchAll(/```ui [^\n]*\n([\s\S]*?)\n```/g)].map((m) => m[1]!);
+    expect(blocks.length).toBeGreaterThanOrEqual(3);
+    for (const src of blocks) {
+      const rt = runtime();
+      const { code } = await compileWidget(src);
+      rt.send({ type: "load", code, slots: [] });
+      await rt.settle();
+      expect(rt.out.filter((m) => m.type === "error")).toEqual([]);
+      expect(validateTree(rt.trees().at(-1)).diagnostics).toEqual([]);
+    }
+  });
+});
+
+describe("interrupted replies", () => {
+  it("render the part that was written", async () => {
+    const cut = calculator.slice(0, calculator.indexOf("<Stat"));
+    const fixed = repairPartial(cut)!;
+    const rt = runtime();
+    rt.send({ type: "load", code: (await compileWidget(fixed)).code, slots: [] });
+    await rt.settle();
+    expect(rt.trees().at(-1).c[0]).toMatchObject({ t: "Card", c: [{ t: "Slider" }] });
   });
 });

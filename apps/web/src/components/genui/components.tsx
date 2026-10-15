@@ -1,3 +1,4 @@
+import { GENUI_HTML_TAGS, GENUI_SVG_TAGS } from "@constella/protocol";
 import DOMPurify from "dompurify";
 import { marked } from "marked";
 import { ArrowDown, ArrowRight, Check, ChevronDown, ChevronLeft, ChevronRight, Copy, RotateCcw, Send, X } from "lucide-react";
@@ -1010,9 +1011,9 @@ export const COMPONENTS: Record<string, (props: CompProps) => ReactNode> = {
   Tab: ({ children }) => <>{children}</>,
 };
 
-/** Plain HTML and SVG tags the program may use, rendered with these attributes only. */
-export const HTML_TAGS = new Set(["b", "strong", "i", "em", "u", "s", "del", "br", "code", "small", "sub", "sup", "mark", "span", "div", "p", "ul", "ol", "li", "h1", "h2", "h3", "h4", "hr", "blockquote", "pre", "table", "thead", "tbody", "tr", "th", "td"]);
-export const SVG_TAGS = new Set(["svg", "g", "path", "circle", "rect", "line", "polyline", "polygon", "ellipse", "text", "tspan", "defs", "linearGradient", "radialGradient", "stop", "marker", "title", "clipPath", "mask", "pattern", "use", "symbol"]);
+/** Plain HTML and SVG tags the program may use, rendered with filtered attributes only. */
+export const HTML_TAGS = new Set<string>(GENUI_HTML_TAGS);
+export const SVG_TAGS = new Set<string>(GENUI_SVG_TAGS);
 
 /** Children helper for components that render their raw kids. */
 export const count = (n: ReactNode) => Children.count(n);

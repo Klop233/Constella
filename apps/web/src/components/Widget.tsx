@@ -6,7 +6,7 @@ import { useArtifactPanel } from "../lib/artifacts";
 import { BRIDGE, buildSrcdoc, chartScriptUrl, themeSnapshot, usesChart, type WidgetTheme } from "../lib/widget-runtime";
 import { Markdown } from "./Markdown";
 import { MenuDivider, MenuItem, Popover, cx, toast } from "./ui";
-import { GenUIBlock, type BlockHost, type BlockState } from "./genui/Block";
+import { GenUIBlock, type BlockHost, type BlockMode, type BlockState, type Saved } from "./genui/Block";
 
 /** What the conversation page lends interactive blocks: sending a message, and the saved block states. */
 export interface WidgetHost {
@@ -15,6 +15,16 @@ export interface WidgetHost {
   /** Saved states by block key; undefined while loading. */
   states: Record<string, Record<string, unknown>> | undefined;
   saveState: (key: string, data: Record<string, unknown>) => void;
+  /** Records a block that broke, was cut off or needed fixing, so reflection can learn from it. */
+  reportIssue?: (issue: WidgetIssue) => void;
+}
+
+export interface WidgetIssue {
+  key: string;
+  runId: string;
+  title: string;
+  kind: "error" | "dropped" | "diagnostics" | "interrupted";
+  detail: string;
 }
 
 const HostContext = createContext<WidgetHost | null>(null);
@@ -49,9 +59,9 @@ export const RichMessage = memo(function RichMessage({ text, streaming, keyBase,
         p.kind === "md" ? (
           <Markdown key={i} text={p.text} className={className} noHeadingEmoji={noHeadingEmoji} />
         ) : p.format === "components" ? (
-          <ComponentWidget key={i} title={p.title} source={p.source} streaming={!p.closed && streaming} stateKey={`${keyBase}:${n++}`} />
+          <ComponentWidget key={i} title={p.title} source={p.source} mode={p.closed ? "final" : streaming ? "streaming" : "interrupted"} stateKey={`${keyBase}:${n++}`} runId={runId} />
         ) : p.closed || !streaming ? (
-          <Widget key={i} title={p.title} source={p.source} stateKey={`${keyBase}:${n++}`} runId={runId} />
+          <Widget key={i} title={p.title} source={p.source} stateKey={`${keyBase}:${n++}`} runId={runId} interrupted={!p.closed} />
         ) : (
           <WidgetSkeleton key={i} title={p.title} lines={p.source.split("\n").length} />
         ),
@@ -182,12 +192,15 @@ function Frame({
 }
 
 /** Hover tools for a block (desktop): source, full screen, run again, and more. Blocks have no frame of their own, like ChatGPT. */
-function BlockTools({ code, onCode, onFull, onReload, source, onSave, saving }: { code: boolean; onCode: () => void; onFull: () => void; onReload: () => void; source: string; onSave?: () => void; saving?: boolean }) {
+function BlockTools({ code, onCode, onFull, onReload, source, onSave, saving, badge }: { code: boolean; onCode: () => void; onFull: () => void; onReload: () => void; source: string; onSave?: () => void; saving?: boolean; badge?: number }) {
   const copySource = () => void navigator.clipboard.writeText(source).then(() => toast("已复制源码"), () => toast("复制失败", "danger"));
   return (
     <div className={cx("absolute -top-3 right-0 z-10 flex items-center gap-0.5 rounded-lg border border-line bg-surface p-0.5 shadow-sm transition-opacity", "opacity-0 group-hover/block:opacity-100 focus-within:opacity-100 pointer-coarse:hidden", code && "opacity-100")}>
-      <ToolButton label={code ? "看界面" : "看源码"} onClick={onCode} active={code}>
-        <Code2 className="size-3.5" strokeWidth={1.8} />
+      <ToolButton label={code ? "看界面" : badge ? `看源码（${badge} 处诊断）` : "看源码"} onClick={onCode} active={code}>
+        <span className="relative">
+          <Code2 className="size-3.5" strokeWidth={1.8} />
+          {!!badge && <span className="absolute -right-1 -top-1 size-1.5 rounded-full bg-warn" />}
+        </span>
       </ToolButton>
       <ToolButton label="全屏" onClick={onFull}>
         <Maximize2 className="size-3.5" strokeWidth={1.8} />
@@ -230,32 +243,74 @@ function ErrorLine({ error, onRetry, onFix }: { error: string; onRetry: () => vo
 }
 
 /** A component block (```ui): rendered natively in the flow of the reply, from the first lines on. */
-export function ComponentWidget({ title, source, streaming, stateKey }: { title: string; source: string; streaming: boolean; stateKey: string }) {
+export function ComponentWidget({ title, source, mode, stateKey, runId }: { title: string; source: string; mode: BlockMode; stateKey: string; runId: string }) {
   const host = useContext(HostContext);
   const label = title || "交互界面";
   const [code, setCode] = useState(false);
   const [full, setFull] = useState(false);
   const [reload, setReload] = useState(0);
-  const [state, setState] = useState<BlockState>({ error: null, dropped: 0, shown: false });
-  const saved = host ? host.states : {};
+  const [state, setState] = useState<BlockState>({ error: null, dropped: 0, diagnostics: [], shown: false });
+  const states = host ? host.states : {};
   const blockHost = useMemo<BlockHost>(
     () => ({
       send: (text) => (host ? void host.send(text) : toast("在对话页里才能从界面发消息", "danger")),
-      slots: saved === undefined ? undefined : ((saved[stateKey]?.slots as unknown[] | undefined) ?? null),
-      saveSlots: (slots) => host?.saveState(stateKey, { slots }),
+      saved: states === undefined ? undefined : ((states[stateKey] as Saved | undefined) ?? null),
+      save: (data) => host?.saveState(stateKey, data as Record<string, unknown>),
     }),
-    [host, saved, stateKey],
+    [host, states, stateKey],
   );
-  const fix = host && state.error ? () => void host.send(`刚才的「${label}」界面运行出错：${state.error}。请修复后重新给出这个界面。`) : undefined;
+  const streaming = mode === "streaming";
+  const interrupted = mode === "interrupted";
+
+  // Tell the hub once per problem, after the block has settled.
+  const reported = useRef(new Set<string>());
+  useEffect(() => {
+    if (streaming || !host?.reportIssue) return;
+    const issues: WidgetIssue[] = [];
+    const base = { runId, title: label };
+    if (interrupted) issues.push({ ...base, key: `${stateKey}:interrupted`, kind: "interrupted", detail: "回答在界面写完之前中断" });
+    if (state.error) issues.push({ ...base, key: `${stateKey}:${state.dropped ? "dropped" : "error"}`, kind: state.dropped ? "dropped" : "error", detail: state.error });
+    if (state.diagnostics.length) issues.push({ ...base, key: `${stateKey}:diagnostics`, kind: "diagnostics", detail: state.diagnostics.join("；") });
+    const t = setTimeout(() => {
+      for (const it of issues) {
+        if (reported.current.has(it.key)) continue;
+        reported.current.add(it.key);
+        host.reportIssue?.(it);
+      }
+    }, 1500);
+    return () => clearTimeout(t);
+  }, [streaming, interrupted, state.error, state.dropped, state.diagnostics, host, stateKey, runId, label]);
+
+  const problems = [state.error, ...state.diagnostics].filter(Boolean).join("；");
+  const fix = host && problems ? () => void host.send(`刚才的「${label}」界面有问题：${problems}。请修复后重新给出这个界面。`) : undefined;
+  const finish = host ? () => void host.send(`刚才的「${label}」界面没写完就中断了，请把它补全。`) : undefined;
   return (
     <div className="space-y-1.5">
       <div className="relative group/block">
-        {!streaming && <BlockTools code={code} onCode={() => setCode((c) => !c)} onFull={() => setFull(true)} onReload={() => setReload((r) => r + 1)} source={source} />}
-        {code && <pre className="max-h-[28rem] overflow-auto rounded-xl border border-line bg-surface-2 px-3.5 py-2.5 font-mono text-[12.5px] leading-5 whitespace-pre-wrap break-all">{source}</pre>}
+        {!streaming && <BlockTools code={code} onCode={() => setCode((c) => !c)} onFull={() => setFull(true)} onReload={() => setReload((r) => r + 1)} source={source} badge={state.diagnostics.length} />}
+        {code && (
+          <div className="rounded-xl border border-line bg-surface-2 overflow-hidden">
+            {state.diagnostics.length > 0 && (
+              <ul className="px-3.5 py-2 border-b border-line text-xs text-warn space-y-0.5">
+                {state.diagnostics.map((d) => (
+                  <li key={d}>· {d}</li>
+                ))}
+              </ul>
+            )}
+            <pre className="max-h-[28rem] overflow-auto px-3.5 py-2.5 font-mono text-[12.5px] leading-5 whitespace-pre-wrap break-all">{source}</pre>
+          </div>
+        )}
         <div className={cx(code && "hidden")}>
-          <GenUIBlock source={source} streaming={streaming} host={blockHost} onState={setState} reloadKey={reload} />
+          <GenUIBlock source={source} mode={mode} host={blockHost} onState={setState} reloadKey={reload} />
         </div>
       </div>
+      {interrupted && (
+        <div className="flex items-center gap-2 text-xs text-muted min-w-0">
+          <CircleX className="size-3.5 shrink-0 text-warn" strokeWidth={1.8} />
+          <span className="truncate">回答中断了，界面只显示了已生成的部分</span>
+          {finish && <button className="shrink-0 hover:text-[var(--text)]" onClick={finish}>让 agent 补全</button>}
+        </div>
+      )}
       {state.error && !streaming && (state.shown && state.dropped ? (
         <div className="flex items-center gap-2 text-xs text-muted min-w-0">
           <CircleX className="size-3.5 shrink-0 text-warn" strokeWidth={1.8} />
@@ -269,7 +324,7 @@ export function ComponentWidget({ title, source, streaming, stateKey }: { title:
         <FullScreen title={label} onClose={() => setFull(false)}>
           <div className="h-full overflow-y-auto">
             <div className="max-w-3xl mx-auto px-4 sm:px-6 py-5">
-              <GenUIBlock source={source} streaming={false} host={blockHost} />
+              <GenUIBlock source={source} mode={mode === "streaming" ? "final" : mode} host={blockHost} eager />
             </div>
           </div>
         </FullScreen>
@@ -279,7 +334,7 @@ export function ComponentWidget({ title, source, streaming, stateKey }: { title:
 }
 
 /** The escape hatch (```ui-html): a self-contained page in a sandboxed frame, for what the components can't do. */
-export function Widget({ title, source, stateKey, runId }: { title: string; source: string; stateKey: string; runId: string }) {
+export function Widget({ title, source, stateKey, runId, interrupted }: { title: string; source: string; stateKey: string; runId: string; interrupted?: boolean }) {
   const host = useContext(HostContext);
   const { open: openArtifact } = useArtifactPanel();
   const [error, setError] = useState<string | null>(null);
@@ -328,6 +383,13 @@ export function Widget({ title, source, stateKey, runId }: { title: string; sour
           <Frame key={gen} source={source} title={label} stateKey={stateKey} onError={onError} onReady={onReady} />
         </div>
       </div>
+      {interrupted && (
+        <div className="flex items-center gap-2 text-xs text-muted min-w-0">
+          <CircleX className="size-3.5 shrink-0 text-warn" strokeWidth={1.8} />
+          <span className="truncate">回答中断了，界面可能不完整</span>
+          {host && <button className="shrink-0 hover:text-[var(--text)]" onClick={() => void host.send(`刚才的「${label}」界面没写完就中断了，请把它补全。`)}>让 agent 补全</button>}
+        </div>
+      )}
       {error && <ErrorLine error={error} onRetry={reload} onFix={fix} />}
       {full && (
         <FullScreen title={label} onClose={() => setFull(false)}>

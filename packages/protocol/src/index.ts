@@ -205,3 +205,4 @@ export type LegacyDesktopPolicy = z.infer<typeof LegacyDesktopPolicy>;
 export * from "./attachments.ts";
 export * from "./runner.ts";
 export * from "./widgets.ts";
+export * from "./genui.ts";

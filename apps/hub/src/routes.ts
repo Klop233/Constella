@@ -395,6 +395,7 @@ export function registerRoutes(hub: Hub): void {
     db.prepare("DELETE FROM approvals WHERE run_id IN (SELECT id FROM runs WHERE conversation_id = ?)").run(conv.id);
     db.prepare("DELETE FROM runs WHERE conversation_id = ?").run(conv.id);
     db.prepare("DELETE FROM widget_state WHERE conversation_id = ?").run(conv.id);
+    db.prepare("DELETE FROM widget_issues WHERE conversation_id = ?").run(conv.id);
     db.prepare("DELETE FROM conversations WHERE id = ?").run(conv.id);
     return { ok: true };
   });
@@ -660,6 +661,24 @@ export function registerRoutes(hub: Hub): void {
     db.prepare(
       "INSERT INTO widget_state (key, conversation_id, data, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(key) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at",
     ).run(key, b.conversationId, data, nowIso());
+    return { ok: true };
+  });
+
+  // A block that broke, was cut off or needed its props fixed; kept so reflection can learn from it.
+  app.post("/api/widget-issues", { bodyLimit: 16 * 1024 }, async (req) => {
+    const b = z
+      .object({
+        conversationId: z.string(),
+        runId: z.string(),
+        key: z.string().min(1).max(200),
+        title: z.string().max(120),
+        kind: z.enum(["error", "dropped", "diagnostics", "interrupted"]),
+        detail: z.string().max(4000),
+      })
+      .parse(req.body);
+    const run = db.prepare("SELECT id FROM runs WHERE id = ? AND conversation_id = ?").get(b.runId, b.conversationId);
+    if (!run) throw new HttpError(404, "run not found");
+    db.prepare("INSERT OR IGNORE INTO widget_issues (key, conversation_id, run_id, title, kind, detail, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)").run(b.key, b.conversationId, b.runId, b.title, b.kind, b.detail, nowIso());
     return { ok: true };
   });
 

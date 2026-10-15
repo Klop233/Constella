@@ -188,6 +188,7 @@ export default function Chat() {
               qc.setQueryData<Record<string, Record<string, unknown>>>(["widget-state", conversationId], (cur) => ({ ...cur, [key]: value }));
               api.put(`/api/widget-state/${encodeURIComponent(key)}`, { conversationId, data: value }).catch((e) => toast(e instanceof Error ? e.message : String(e), "danger"));
             },
+            reportIssue: (issue) => void api.post("/api/widget-issues", { conversationId, ...issue }).catch(() => {}),
             send: async (body) => {
               try {
                 const res = await api.post<{ steered: boolean }>(`/api/conversations/${conversationId}/messages`, { text: body });

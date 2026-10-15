@@ -9,16 +9,12 @@
 // Runtime → host:  {type:"tree", tree} · {type:"state", slots} · {type:"idle"}
 //                  {type:"send"|"copy"|"open", …} · {type:"error", message, phase}
 
+import { GENUI_COMPONENTS } from "@constella/protocol";
+
 export const BRIDGE = "constella-genui";
 
-/** Component names the program may use; anything else that's capitalized must be its own function. */
-export const COMPONENTS = [
-  "Box", "Row", "Col", "Stack", "Grid", "Card", "Divider", "Spacer", "Caption",
-  "Text", "Heading", "Markdown", "Code", "Icon", "Badge", "Kbd",
-  "Stat", "Progress", "Table", "Chart", "KeyValue", "List", "Item", "Flow", "Node", "Timeline", "Event",
-  "Steps", "Step", "Tabs", "Tab", "Accordion", "Details", "Callout", "Quiz", "Image", "Suggestions",
-  "Slider", "NumberInput", "Input", "TextArea", "Select", "Segmented", "Switch", "Checkbox", "Choice", "Button", "Link",
-] as const;
+/** Component names the program may use (the schema is the one list); anything else capitalized must be its own function. */
+export const COMPONENTS = GENUI_COMPONENTS;
 
 /** The worker program: everything the agent's code can see. Kept as plain JS (it runs in the frame). */
 export const RUNTIME = String.raw`
@@ -121,6 +117,8 @@ function __genui(post, listen) {
     if (typeof v === "function") { const id = ++fnSeq; fns.set(id, v); return { $fn: id }; }
     if (Array.isArray(v)) return v.map((x) => ser(x, depth + 1));
     if (v && v.$el) {
+      // A built-in like Map or Date used as a tag is a typo for a component, not the program's own.
+      if (typeof v.t === "function" && /\[native code\]/.test(Function.prototype.toString.call(v.t))) v = Object.assign({}, v, { t: v.t.name || "Unknown" });
       if (typeof v.t === "function") {
         const props = Object.assign({}, v.p, { children: v.c.length === 1 ? v.c[0] : v.c });
         return ser(v.t(props), depth + 1);
