@@ -98,7 +98,7 @@ Android（PWA，装到主屏幕）
 - **宿主能力检测**（`hostcaps.ts`）：hub 用临时容器检测 binder 能否挂载、特权容器能否改内核参数、`/dev/kvm` 能否使用、uid 映射是否够大，以及各镜像是否已构建、带了哪些组件（镜像 LABEL）。不能用的类型在 App 里置灰并写明原因；安卓后端在设置里选「自动 / Redroid / 模拟器 / 关闭」，每台安卓实例创建时定下后端，以后不变。
 - 专有组件（libndk_translation、MindTheGapps、Android SDK 系统镜像）只在用户本地用 `scripts/build-android-images.sh` 构建时按显式参数下载，不随项目分发。
 - 只连接内部网络 `constella-net`，不对外暴露任何端口。
-- **agent 和实例**：每个 agent 绑定零个或多个实例（`agents.desktop_policy = {desktopIds}`，顺序即优先级），一个实例可以绑给多个 agent。agent 能用 `instance_create` / `instance_update` / `instance_restart` 自己新建（自动绑定给自己）、修改、修复绑定的实例，不能删除；新建和修改是否要主人同意在设置里分别开关，开着时一律交给主人，不走审批方式的自动判断。修复（重启、重建容器，数据保留）不需要同意：等主人批准的时间里任务只能干等。
+- **agent 和实例**：每个 agent 绑定零个或多个实例（`agents.desktop_policy = {desktopIds}`，顺序即优先级），一个实例可以绑给多个 agent。agent 能用 `instance_create` / `instance_update` / `instance_restart` 自己新建（自动绑定给自己）、修改、修复绑定的实例，不能删除；新建和修改是否要主人同意在「设置 → 权限」里分别设置（默认自动批准），选了每次问我就一律交给主人。修复（重启、重建容器，数据保留）不需要同意：等主人批准的时间里任务只能干等。
 - **当前实例**：每个任务记住 desktop_* 和 browser_* 各自正在操作的实例；没有时按「本任务已租用 → 绑定顺序里第一个空闲」挑选，browser_* 只用带浏览器的实例并优先纯浏览器。`instance_use` 切换。一个任务可以同时租用多个实例。
 - **租约**：持有者只能是 `agent:<id>`、`human` 或空，任何时刻只有一方能操作。
   - 你在 App 里点"接管"后，agent 的工具调用等你交还，run 进入 `paused_by_user`。

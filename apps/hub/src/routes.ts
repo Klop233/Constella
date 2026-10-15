@@ -1097,14 +1097,22 @@ export function registerRoutes(hub: Hub): void {
     maxAutoResumes: z.number().int().min(1).max(10).optional(),
     runTimeoutMinutes: minutes(RUN_TIMEOUTS).optional(),
     runWatchdogMinutes: minutes([0, 5, 10, 20, 30, 60]).optional(),
-    approvalMode: z.enum(["ask", "smart", "auto"]).optional(),
+    permissions: z
+      .object({
+        command: z.enum(["auto", "smart", "ask"]),
+        file_change: z.enum(["auto", "ask"]),
+        host_access: z.enum(["auto", "smart", "ask"]),
+        instance_create: z.enum(["auto", "ask"]),
+        instance_update: z.enum(["auto", "ask"]),
+      })
+      .partial()
+      .optional(),
     agentIdleMinutes: minutes([0, 10, 30, 60, 120, 360]).optional(),
     desktopIdleMinutes: minutes([0, 10, 30, 60, 120, 360]).optional(),
     desktopIdleAction: IdleAction.optional(),
     androidBackend: z.enum(["auto", "redroid", "emulator", "off"]).optional(),
     maxInstances: z.number().int().min(1).max(50).optional(),
     maxAndroidInstances: z.number().int().min(0).max(20).optional(),
-    instanceApproval: z.object({ create: z.boolean(), update: z.boolean() }).partial().optional(),
     autoReflect: z.boolean().optional(),
     reflectMinToolCalls: z.number().int().min(1).max(50).optional(),
     notifyOn: z.object({ done: z.boolean(), failed: z.boolean(), approval: z.boolean(), stuck: z.boolean(), panic: z.boolean() }).partial().optional(),
@@ -1118,14 +1126,14 @@ export function registerRoutes(hub: Hub): void {
     checkModel(b.defaultModel);
     checkModel(b.reflectModel);
     const set = (key: string, v: unknown) => v !== undefined && kvSet(db, `settings.${key}`, String(v));
-    for (const key of ["approvalMode", "autoResume", "endingReview", "browserHtml", "intelligentUi", "emojiUse", "plainHeadings", "maxAutoResumes", "runTimeoutMinutes", "runWatchdogMinutes", "agentIdleMinutes", "desktopIdleMinutes", "desktopIdleAction", "androidBackend", "maxInstances", "maxAndroidInstances", "autoReflect", "reflectMinToolCalls", "backupKeep", "modelNameFormat"] as const)
+    for (const key of ["autoResume", "endingReview", "browserHtml", "intelligentUi", "emojiUse", "plainHeadings", "maxAutoResumes", "runTimeoutMinutes", "runWatchdogMinutes", "agentIdleMinutes", "desktopIdleMinutes", "desktopIdleAction", "androidBackend", "maxInstances", "maxAndroidInstances", "autoReflect", "reflectMinToolCalls", "backupKeep", "modelNameFormat"] as const)
       set(key, b[key]);
     if (b.defaultModel) kvSet(db, "settings.defaultModel", b.defaultModel);
     if (b.reflectModel) kvSet(db, "settings.reflectModel", b.reflectModel);
     if (b.defaultEffort !== undefined) kvSet(db, "settings.defaultEffort", b.defaultEffort ?? "");
     for (const [k, v] of Object.entries(b.notifyOn ?? {})) set(`notify.${k}`, v);
     for (const [k, v] of Object.entries(b.quietHours ?? {})) set(`quiet.${k}`, v);
-    for (const [k, v] of Object.entries(b.instanceApproval ?? {})) set(`instanceApproval.${k}`, v);
+    for (const [k, v] of Object.entries(b.permissions ?? {})) set(`permission.${k}`, v);
     if (b.newapiAdminToken !== undefined) b.newapiAdminToken ? hub.secrets.set("settings", "newapiAdminToken", b.newapiAdminToken) : hub.secrets.delete("settings", "newapiAdminToken");
     if (b.newapiAdminUserId) kvSet(db, "settings.newapiAdminUserId", b.newapiAdminUserId);
     if (b.telegramBotToken !== undefined) b.telegramBotToken ? hub.secrets.set("settings", "telegramBotToken", b.telegramBotToken) : hub.secrets.delete("settings", "telegramBotToken");

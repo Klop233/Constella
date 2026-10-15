@@ -70,8 +70,8 @@ export interface RunDeps {
   autoResume?(): boolean;
   /** Run length / stall limits and how many automatic continuations in a row to allow. */
   limits?(): RunLimits;
-  /** How approval requests are decided: always ask, ask only for destructive actions, or approve all. */
-  approvalMode?(): ApprovalMode;
+  /** How approval requests of this kind are decided: always ask, ask only for destructive actions, or approve. */
+  permission?(kind: string): ApprovalMode;
   /** Bring back an agent whose runner can't be reached (recreate its container); resolves with what was done. */
   repairRunner?(agentId: string, error: string): Promise<string[]>;
   /** Record something that went wrong; unresolved ones are diagnosed and offered to the owner with options. */
@@ -415,7 +415,7 @@ export class RunManager {
       db.prepare(
         "INSERT INTO approvals (id, run_id, agent_id, kind, summary, detail, status, created_at, source) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, 'engine')",
       ).run(ev.approvalId, run.id, agentId, ev.kind, ev.summary, ev.detail ?? null, nowIso());
-      const { approve, why } = decideApproval(this.#d.approvalMode?.() ?? "ask", ev.kind, ev.summary);
+      const { approve, why } = decideApproval(this.#d.permission?.(ev.kind) ?? "ask", ev.kind, ev.summary);
       if (approve) {
         void this.resolveApproval(ev.approvalId, "approve", "policy", "policy");
         return;
@@ -686,7 +686,7 @@ export class RunManager {
   }
 
   /** Approval raised by a hub-side tool (e.g. host_exec); resolves when the user decides. */
-  /** `ownerOnly`: the owner explicitly asked to decide these (e.g. agents creating instances), so the approval mode's policy doesn't. */
+  /** `ownerOnly`: the owner explicitly asked to decide these (e.g. agents creating instances), so the permission policy doesn't. */
   requestHubApproval(runId: string, kind: "host_access" | "desktop" | "other", summary: string, detail?: string, opts: { ownerOnly?: boolean } = {}): Promise<boolean> {
     const run = this.get(runId);
     if (!run || isTerminal(run.status)) return Promise.resolve(false);
@@ -698,7 +698,7 @@ export class RunManager {
       .run(approvalId, runId, run.agent_id, kind, summary, detail ?? null, nowIso());
     this.#append(run, { type: "approval.requested", runId, approvalId, kind, summary, detail });
     const decided = new Promise<boolean>((resolve) => this.#hubApprovals.set(approvalId, { resolve: (r) => resolve(r.approved), runId }));
-    const { approve, why } = opts.ownerOnly ? { approve: false, why: null } : decideApproval(this.#d.approvalMode?.() ?? "ask", kind, summary);
+    const { approve, why } = opts.ownerOnly ? { approve: false, why: null } : decideApproval(this.#d.permission?.(kind) ?? "ask", kind, summary);
     if (approve) {
       void this.resolveApproval(approvalId, "approve", "policy", "policy");
       return decided;

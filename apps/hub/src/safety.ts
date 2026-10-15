@@ -6,6 +6,12 @@
 
 export type ApprovalMode = "ask" | "smart" | "auto";
 
+/** Agent behaviours the owner sets an approval mode for (设置 → 权限). */
+export const PERMISSION_KINDS = ["command", "file_change", "host_access", "instance_create", "instance_update"] as const;
+export type PermissionKind = (typeof PERMISSION_KINDS)[number];
+/** Only commands can be told apart as destructive, so only they take "smart". */
+export const SMART_KINDS: readonly PermissionKind[] = ["command", "host_access"];
+
 interface Rule {
   re: RegExp;
   why: string;

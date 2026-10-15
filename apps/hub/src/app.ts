@@ -30,7 +30,7 @@ import { RunManager, type NotifyKind, type RunLimits } from "./runs.ts";
 import { Scheduler } from "./scheduler.ts";
 import { intelligentUiNote } from "./widgets.ts";
 import { Reflect } from "./reflect.ts";
-import type { ApprovalMode } from "./safety.ts";
+import { PERMISSION_KINDS, SMART_KINDS, type ApprovalMode, type PermissionKind } from "./safety.ts";
 import { OfficeService } from "./office.ts";
 import { PerfMonitor } from "./perf.ts";
 import { registerOfficeProxy } from "./office-proxy.ts";
@@ -233,11 +233,35 @@ export class Settings {
     return use + headings;
   }
 
-  /** How approvals are decided; "smart" (ask only for destructive actions) unless chosen otherwise. */
-  approvalMode(): ApprovalMode {
-    const v = kvGet(this.#db, "settings.approvalMode");
-    if (v === "ask" || v === "smart" || v === "auto") return v;
-    return kvGet(this.#db, "settings.autoApprove") === "true" ? "auto" : "smart";
+  /**
+   * How one kind of agent action is approved (设置 → 权限); everything is approved unless chosen otherwise.
+   * Values the owner set explicitly under the older settings (one global mode, instance switches) still hold.
+   */
+  permission(kind: string): ApprovalMode {
+    if (!(PERMISSION_KINDS as readonly string[]).includes(kind)) return "ask";
+    const k = kind as PermissionKind;
+    const valid = (v: string | undefined): v is ApprovalMode => v === "auto" || v === "ask" || (v === "smart" && SMART_KINDS.includes(k));
+    const v = kvGet(this.#db, `settings.permission.${k}`);
+    if (valid(v)) return v;
+    if (k === "host_access") {
+      const legacy = kvGet(this.#db, "settings.approvalMode");
+      if (valid(legacy)) return legacy;
+      if (kvGet(this.#db, "settings.autoApprove") === "true") return "auto";
+    }
+    if (k === "instance_create" || k === "instance_update") {
+      const legacy = kvGet(this.#db, `settings.instanceApproval.${k.slice("instance_".length)}`);
+      if (legacy !== undefined) return legacy === "true" ? "ask" : "auto";
+    }
+    return "auto";
+  }
+
+  permissions(): Record<PermissionKind, ApprovalMode> {
+    return Object.fromEntries(PERMISSION_KINDS.map((k) => [k, this.permission(k)])) as Record<PermissionKind, ApprovalMode>;
+  }
+
+  /** The engine only asks the hub about commands / file edits when some of those need a decision. */
+  engineApprovalPolicy(): "auto" | "ask" {
+    return this.permission("command") === "auto" && this.permission("file_change") === "auto" ? "auto" : "ask";
   }
 
   /** Idle minutes before an agent container / desktop is stopped (0 = keep running). */
@@ -272,7 +296,7 @@ export class Settings {
 
   /** Whether agents need the owner's approval to create / change instances (repairing one never does). */
   instanceApproval(): { create: boolean; update: boolean } {
-    return { create: this.#bool("instanceApproval.create", true), update: this.#bool("instanceApproval.update", true) };
+    return { create: this.permission("instance_create") === "ask", update: this.permission("instance_update") === "ask" };
   }
 
   reflection(): { enabled: boolean; minToolCalls: number } {
@@ -335,14 +359,13 @@ export class Settings {
       intelligentUi: this.intelligentUi(),
       emojiUse: this.emojiUse(),
       plainHeadings: this.plainHeadings(),
-      approvalMode: this.approvalMode(),
+      permissions: this.permissions(),
       agentIdleMinutes: this.agentIdleMinutes(),
       desktopIdleMinutes: this.desktopIdleMinutes(),
       desktopIdleAction: this.desktopIdleAction(),
       androidBackend: this.androidBackend(),
       maxInstances: this.instanceLimits().total,
       maxAndroidInstances: this.instanceLimits().android,
-      instanceApproval: this.instanceApproval(),
       autoReflect: this.reflection().enabled,
       reflectMinToolCalls: this.reflection().minToolCalls,
       notifyOn: this.notifyOn(),
@@ -420,7 +443,7 @@ export async function createHub(opts: { dbPath?: string; webDist?: string; logge
         model: a.model,
         effort: a.effort ?? undefined,
         instructions: agents.instructions(a, { desktopNote, uiNote: intelligentUiNote(settings.intelligentUi()), styleNote: settings.emojiNote() }),
-        approvalPolicy: a.approval_policy,
+        approvalPolicy: settings.engineApprovalPolicy(),
         skillRoots: ["/home/agent/knowledge/skills", "/shared/skills"],
       };
     },
@@ -429,7 +452,7 @@ export async function createHub(opts: { dbPath?: string; webDist?: string; logge
     fitEffort: (model, effort) => catalog.fit(model, effort),
     autoResume: () => settings.autoResume(),
     limits: () => settings.limits(),
-    approvalMode: () => settings.approvalMode(),
+    permission: (kind) => settings.permission(kind),
     repairRunner: (agentId, error) => recovery.repairRunner(agentId, error),
     incident: (input) => void recovery.file(input),
     reviewDone: (run) => recovery.reviewDone(run),

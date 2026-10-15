@@ -1,6 +1,6 @@
 import { startRegistration } from "@simplewebauthn/browser";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Activity, Bell, Boxes, Brain, ChevronRight, ClipboardCheck, Gauge, Layers, LogOut, Monitor, Palette, Search, Server, Settings2, Shield, Sparkles, type LucideIcon } from "lucide-react";
+import { Activity, Bell, Boxes, Brain, ChevronRight, ClipboardCheck, Gauge, Layers, LogOut, Monitor, Palette, Search, Server, Settings2, Shield, ShieldCheck, Sparkles, type LucideIcon } from "lucide-react";
 import QRCode from "qrcode";
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
@@ -17,6 +17,8 @@ import { KIND_INFO, KINDS } from "../lib/instances";
 import type { Agent, AuditEntry, Effort, HostCaps, IdleAction, Schedule } from "../lib/types";
 
 type NotifyKind = "done" | "failed" | "approval" | "stuck" | "panic";
+type PermissionKind = "command" | "file_change" | "host_access" | "instance_create" | "instance_update";
+type Permission = "auto" | "smart" | "ask";
 
 interface SettingsView {
   defaultModel: string;
@@ -31,14 +33,13 @@ interface SettingsView {
   intelligentUi: "off" | "balanced" | "rich";
   emojiUse: "none" | "rare" | "some" | "free";
   plainHeadings: boolean;
-  approvalMode: "ask" | "smart" | "auto";
+  permissions: Record<PermissionKind, Permission>;
   agentIdleMinutes: number;
   desktopIdleMinutes: number;
   desktopIdleAction: IdleAction;
   androidBackend: "auto" | "redroid" | "emulator" | "off";
   maxInstances: number;
   maxAndroidInstances: number;
-  instanceApproval: { create: boolean; update: boolean };
   autoReflect: boolean;
   reflectMinToolCalls: number;
   notifyOn: Record<NotifyKind, boolean>;
@@ -66,6 +67,7 @@ type Save = (patch: Record<string, unknown>, ok?: string) => Promise<void>;
 
 const SECTIONS: { id: string; label: string; icon: LucideIcon }[] = [
   { id: "general", label: "通用", icon: Settings2 },
+  { id: "permissions", label: "权限", icon: ShieldCheck },
   { id: "models", label: "模型", icon: Boxes },
   { id: "instances", label: "实例", icon: Monitor },
   { id: "learning", label: "学习", icon: Brain },
@@ -126,6 +128,7 @@ export default function Settings() {
   const body = (
     <div className="space-y-5">
       {current.id === "general" && <GeneralSection s={s} save={save} />}
+      {current.id === "permissions" && <PermissionsSection s={s} save={save} />}
       {current.id === "models" && <ModelsSection s={s} save={save} />}
       {current.id === "instances" && <InstancesSection s={s} save={save} />}
       {current.id === "learning" && <LearningSection s={s} save={save} />}
@@ -278,24 +281,6 @@ function GeneralSection({ s, save }: { s: SettingsView; save: Save }) {
           <Toggle checked={s.browserHtml} onChange={(v) => void save({ browserHtml: v }, v ? "已开启读取网页 HTML" : "已关闭读取网页 HTML")} label="直接读取网页 HTML" />
         </SettingRow>
       </SettingGroup>
-      <SettingGroup title="审批">
-        <SettingRow wide title="审批方式" desc={APPROVAL_DESC[s.approvalMode]}>
-          <div className="w-64">
-            <Segmented
-              value={s.approvalMode}
-              options={[
-                { value: "ask", label: "每次询问" },
-                { value: "smart", label: "智能" },
-                { value: "auto", label: "全部自动" },
-              ]}
-              onChange={(v) => {
-                if (v === "auto" && !confirm("全部自动后，删除数据、在宿主机上执行命令这类破坏性操作也不再需要你批准。确定吗？")) return;
-                void save({ approvalMode: v }, "已保存审批方式");
-              }}
-            />
-          </div>
-        </SettingRow>
-      </SettingGroup>
     </>
   );
 }
@@ -306,11 +291,52 @@ const UI_DESC: Record<SettingsView["intelligentUi"], string> = {
   rich: "更主动地用图表、计算器、示意图、测验和按钮，一条回复可以有多个。下一条消息起生效。",
 };
 
-const APPROVAL_DESC: Record<SettingsView["approvalMode"], string> = {
-  ask: "agent 每次请求审批都要你批准。",
-  smart: "普通操作自动批准，agent 自己推进；只有破坏性操作（大范围删除、格式化磁盘、关机重启、清理 Docker、强制推送、删数据库表、改系统关键配置等）才问你。",
-  auto: "所有审批都自动通过，包括破坏性操作。只在完全信任 agent 时使用。",
+function PermissionsSection({ s, save }: { s: SettingsView; save: Save }) {
+  return (
+    <SettingGroup title="agent 的操作">
+      {PERMISSION_ROWS.map((r) => {
+        const v = s.permissions[r.kind];
+        const now = v === "ask" ? (r.askDesc ?? PERMISSION_DESC.ask) : PERMISSION_DESC[v];
+        // The engine is told whether to ask when a task starts, so tasks already running keep going as they were.
+        const later = r.engine && v !== "auto" ? "正在进行的任务从下一轮起生效。" : "";
+        return (
+          <SettingRow key={r.kind} wide title={r.title} desc={`${r.desc}${now}${later}`}>
+            <div className="w-64">
+              <Segmented
+                value={v}
+                options={PERMISSION_OPTIONS.filter((o) => o.value !== "smart" || r.smart)}
+                onChange={(next) => void save({ permissions: { [r.kind]: next } }, "已保存权限")}
+              />
+            </div>
+          </SettingRow>
+        );
+      })}
+    </SettingGroup>
+  );
+}
+
+const PERMISSION_OPTIONS: { value: Permission; label: string }[] = [
+  { value: "auto", label: "自动批准" },
+  { value: "smart", label: "危险时问我" },
+  { value: "ask", label: "每次问我" },
+];
+
+const PERMISSION_DESC: Record<Permission, string> = {
+  auto: "现在：直接执行，不打扰你。",
+  smart: "现在：大范围删除、格式化磁盘、关机重启、清理 Docker、强制推送、删数据库表、改系统关键配置这类破坏性命令先问你，其余直接执行。",
+  ask: "现在：每次都要你批准。",
 };
+
+/** Commands that only look things up never wait, even when every command asks. */
+const ASK_COMMANDS = "现在：除了查看类的只读命令，每条都要你批准。";
+
+const PERMISSION_ROWS: { kind: PermissionKind; title: string; desc: string; smart?: boolean; engine?: boolean; askDesc?: string }[] = [
+  { kind: "command", title: "执行命令", desc: "agent 在自己的容器里运行命令。", smart: true, engine: true, askDesc: ASK_COMMANDS },
+  { kind: "file_change", title: "修改文件", desc: "agent 在自己的工作区里新建和改动文件。", engine: true },
+  { kind: "host_access", title: "在宿主机上执行命令", desc: "只有开了「允许操作宿主服务器」的 agent 能做，查看类的只读命令总是直接执行。", smart: true, askDesc: "现在：只读命令以外，每条都要你批准。" },
+  { kind: "instance_create", title: "新建实例", desc: "agent 需要时自己新建浏览器、Linux 桌面或安卓实例，仍受实例数上限限制。" },
+  { kind: "instance_update", title: "修改实例", desc: "agent 改分给它的实例的名字、屏幕尺寸等，运行中的会重启；修复卡住的实例不需要审批。" },
+];
 
 const EFFORTS: { value: Effort | "default"; label: string }[] = [
   { value: "default", label: "默认" },
@@ -1391,18 +1417,12 @@ function InstancesSection({ s, save }: { s: SettingsView; save: Save }) {
           />
         </SettingRow>
       </SettingGroup>
-      <SettingGroup title="上限与审批">
+      <SettingGroup title="上限">
         <SettingRow title="实例总数上限" desc="包括 agent 自己新建的。">
           <Choice label="实例总数上限" value={s.maxInstances} options={[3, 5, 10, 20].map((n) => ({ value: n, label: `${n} 个` }))} onChange={(v) => void save({ maxInstances: v })} />
         </SettingRow>
         <SettingRow title="安卓实例上限" desc="安卓每个约占 2–4 GB 内存。">
           <Choice label="安卓实例上限" value={s.maxAndroidInstances} options={[0, 1, 2, 3, 5].map((n) => ({ value: n, label: `${n} 个` }))} onChange={(v) => void save({ maxAndroidInstances: v })} />
-        </SettingRow>
-        <SettingRow title="agent 新建实例要我同意" desc="关掉后 agent 需要时直接新建（仍受上面的上限限制）。">
-          <Toggle label="agent 新建实例要我同意" checked={s.instanceApproval.create} onChange={(v) => void save({ instanceApproval: { create: v } })} />
-        </SettingRow>
-        <SettingRow title="agent 修改实例要我同意" desc="agent 只能改分给它的实例，不能删除实例。实例卡住时的修复（重启、重建容器，数据保留）不需要同意。">
-          <Toggle label="agent 修改实例要我同意" checked={s.instanceApproval.update} onChange={(v) => void save({ instanceApproval: { update: v } })} />
         </SettingRow>
       </SettingGroup>
     </>
