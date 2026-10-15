@@ -22,6 +22,7 @@
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "react-router": "^8.0.0",
+    "sucrase": "^3.35.1",
     "twemoji-colr-font": "^15.0.3",
     "workbox-precaching": "^7.4.0",
     "workbox-routing": "^7.4.0",

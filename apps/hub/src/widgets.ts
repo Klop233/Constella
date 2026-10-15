@@ -1,71 +1,90 @@
 import type { IntelligentUiLevel } from "@constella/protocol";
 
-// What agents are told about interactive reply blocks (智能界面). The web app renders them
-// (apps/web/src/components/Widget.tsx) with the runtime in apps/web/src/lib/widget-runtime.ts;
-// keep the class names and the `ui` API listed here in step with that runtime.
+// What agents are told about interactive replies (智能界面). The web app compiles ```ui blocks and
+// runs them isolated (apps/web/src/lib/genui), then renders the result with its own components
+// (apps/web/src/components/genui/components.tsx); ```ui-html is the sandboxed-page escape hatch.
+// Keep the component list and props here in step with components.tsx and runtime.ts.
 
 const WHEN: Record<Exclude<IntelligentUiLevel, "off">, string> = {
-  balanced: `- 回答符合下面任一情况时，就在回复里做一个界面（一条回复最多一个），不要只给表格或文字：
-  - 问题里有可以变的数字或参数（金额、利率、年限、数量、时间、比例、单位…），或者要对比几种参数组合：做成计算器，让主人自己拖动/输入看结果，表格只能给几个固定点，计算器能覆盖全部；
-  - 一组数据的对比、构成或变化趋势：做成图表；
-  - 机制、结构、流程、空间关系（原理示意、步骤演示、时间线、行程路线）：做成 SVG 示意图或可切换的分步视图；
-  - 学习、解释概念类问题：讲解之后附一个 3–5 题的小测验；
-  - 多个方案、产品或选项的对比：做成可切换或可筛选的对比卡片；
-  - 需要主人在几个选项里挑、或填几个参数后你再继续：做成按钮或小表单（提交时用 ui.send 发回给你）。
-- 不要用：简单事实问答、闲聊、写代码或运维任务的结果汇报、主人要求纯文字时、一两句话就能说清的内容。`,
-  rich: `- 主动使用：凡是图表、计算器、示意图、分步视图、小测验、对比卡片、按钮或表单能让回答更好懂、更好用的，都可以做，一条回复可以有多个（分别放在相关段落后面）。适合：可调参数的计算和估算、数据对比和趋势、机制/流程/结构/时间线/行程、学习类问题的小测验、方案对比、需要主人挑选或填参数的地方。
-- 仍然不要用：闲聊、写代码或运维任务的结果汇报、主人要求纯文字时。`,
+  balanced: `## 什么时候用
+回答符合下面任一情况，就把相关部分做成界面，而不是只写文字或表格：
+- 有可以变的数字或参数（金额、利率、年限、数量、时长、比例…），或要对比几种参数组合 → 计算器：Slider/NumberInput + Stat + Chart，主人自己调；
+- 一组数据的对比、构成、趋势 → Chart、Table、Stat；
+- 几个方案、产品、选项的比较 → Grid 里并排的 Card，关键差异用 Badge/Stat，可加 Tabs 或 Segmented 切换视角；
+- 原理、流程、架构、步骤、时间线 → Flow（带箭头的框图）、Steps（可逐步切换）、Timeline、带图标的 Item 列表；
+- 学习、解释概念 → 讲解后加一个 Quiz（3–5 题）；
+- 需要主人选择、或填几个参数后你再继续 → Choice（带 submit）、表单 + Button 用 send() 发回给你；
+- 合适时在最后放 Suggestions，给 2–3 个下一步可以直接点的追问。
+不要用：简单事实问答、闲聊、写代码或运维任务的结果汇报、主人要求纯文字时、一两句话就能说清的内容。一条回复里界面通常一处，内容确实需要时可以两处。`,
+  rich: `## 什么时候用
+尽量用界面组织回答：凡是数字、对比、结构、流程、步骤、选择、学习内容，都优先做成组件（计算器、图表、并排卡片、Flow 框图、Steps、Timeline、Item 列表、Quiz、Choice），一条回复可以有多处界面，穿插在文字之间；合适时在最后放 Suggestions 给出下一步追问。
+仍然不要用：闲聊、写代码或运维任务的结果汇报、主人要求纯文字时。`,
 };
 
-const SPEC = `- 写法：在回复正文里放一个代码块，语言标成 ui，后面跟一个简短标题；块里是 HTML 片段（不要 <html>/<head>/<body>），可以有 <style>、<script>、内联 <svg>：
-  \`\`\`ui 房贷计算器
-  <div class="card">…</div>
-  <script>…</script>
-  \`\`\`
-- 文字仍是主体：界面前面先用一两句话给出结论或说明，界面只做补充；不要在文字里描述“下面是一个界面”。
-- 外观：平台已注入和站点一致的基础样式，直接用这些类名，不要自己定义整套配色：
-  - 布局 .card（细边框卡片）.row（横排，自动换行）.col（竖排）.grid（自适应网格）.spacer；文字 .muted .small .big .title；
-  - 数据 .stat（里面放 <span class="label">标签</span><span class="value">数字</span>）、.badge、.chip（可点的小标签，选中加 .active）、.tabs（里面放 <button>，选中加 .active）、.bar（进度条，用 style="--v:40%"）；
-  - 表单 button（默认次要按钮，主操作加 .primary）、input、select、textarea、input[type=range]、label、table、details/summary 都已有样式。
-  - 颜色只用 CSS 变量：--text --muted --bg --surface --surface-2 --border --accent --ok --warn --danger，图表分类色依次用 --series-1 … --series-6（也可用 ui.color(i)）。明暗和配色切换会自动跟随，不要写死颜色，界面背景保持透明。
-- 图表：全局 Chart（Chart.js 4）直接可用，已按站点主题设好字体、网格和配色；放在 <div class="chart"><canvas></canvas></div> 里（默认高 240px）。简单示意图用内联 SVG，用 currentColor 和上面的变量。
-- 交互接口 window.ui：
-  - ui.send(文字)：以主人的名义发一条新消息给你，用于“按这个方案展开”“换成…再算一次”“提交答案”这类后续，文字要是完整的一句话并带上界面里的当前取值；只能由主人点击触发。
-  - ui.state（对象）和 ui.setState({...})：保存主人在界面里的输入和选择，刷新、换设备后还在；初始化时先读 ui.state 恢复。
-  - ui.copy(文字)、ui.open(链接)；ui.color(i) 取第 i 个分类色。
-- 限制：没有网络（fetch/XHR 会被拦截），需要的数据直接写进代码；图片只能用 https 或 data: 地址；不用 alert/confirm/prompt；手机宽度（340px）也要能用；源码尽量控制在 15KB 内；所有文字用中文。`;
+const SPEC = `## 怎么写
+在回复里放一个代码块，语言写 ui，后面跟一个简短标题。块里先写普通 JS 语句（状态、计算、辅助函数），然后从**行首**的「<」开始写 JSX 组件树（可以有多个并列的根）。界面在主人的页面上用平台自己的原生组件渲染，样式、配色、明暗都由平台负责，你只管选组件和填内容；块会边写边显示。
 
-const EXAMPLE = `- 示例（结构参考，按实际需要改）：
-  \`\`\`ui 存款计算器
-  <div class="col">
-    <label>每月存入 <b id="mv"></b><input id="m" type="range" min="500" max="20000" step="500"></label>
-    <label>年化收益 <b id="rv"></b><input id="r" type="range" min="0" max="8" step="0.1"></label>
-    <div class="grid"><div class="stat"><span class="label">10 年后</span><span class="value" id="total"></span></div></div>
-    <div class="chart"><canvas id="c"></canvas></div>
-    <div class="row"><button class="primary" id="go">按这个方案给我理财建议</button></div>
-  </div>
-  <script>
-  const m = document.getElementById("m"), r = document.getElementById("r");
-  m.value = ui.state.m ?? 3000; r.value = ui.state.r ?? 3;
-  const chart = new Chart(document.getElementById("c"), { type: "line", data: { labels: [], datasets: [{ label: "累计", data: [] }] } });
-  function update() {
-    const pm = +m.value, rate = +r.value / 100 / 12, pts = [];
-    let v = 0; for (let i = 1; i <= 120; i++) { v = v * (1 + rate) + pm; if (i % 12 === 0) pts.push(Math.round(v)); }
-    mv.textContent = pm + " 元"; rv.textContent = r.value + "%"; total.textContent = Math.round(v).toLocaleString() + " 元";
-    chart.data.labels = pts.map((_, i) => i + 1 + " 年"); chart.data.datasets[0].data = pts; chart.update();
-    ui.setState({ m: pm, r: +r.value });
-  }
-  m.oninput = r.oninput = update; update();
-  go.onclick = () => ui.send("我每月存 " + m.value + " 元、年化 " + r.value + "%，10 年后约 " + total.textContent + "，按这个方案给我理财建议");
-  </script>
-  \`\`\``;
+\`\`\`ui 房贷对比
+const [loan, setLoan] = useState(100);       // 万元
+const [rate, setRate] = useState(3.5);
+const pay = (years) => { const r = rate / 1200, n = years * 12; return r ? loan * 1e4 * r / (1 - (1 + r) ** -n) : loan * 1e4 / n; };
+const rows = [20, 30].map((y) => ({ 期限: y + " 年", 月供: Math.round(pay(y)), 总利息: Math.round(pay(y) * y * 12 - loan * 1e4) }));
+<Card title="调一调参数" icon="calculator">
+  <Slider label="贷款金额" value={loan} min={10} max={500} step={10} unit=" 万" onChange={setLoan} />
+  <Slider label="年利率" value={rate} min={2} max={6} step={0.05} unit="%" onChange={setRate} />
+</Card>
+<Grid cols={2}>
+  {rows.map((r) => <Stat key={r.期限} label={r.期限 + "月供"} value={fmt.money(r.月供)} sub={"总利息 " + fmt.compact(r.总利息) + " 元"} />)}
+</Grid>
+<Chart type="bar" data={rows} x="期限" y={["总利息"]} format="compact" height={200} />
+<Suggestions items={["加上提前还款的情况", "按 " + rate + "% 利率给我还款建议"]} />
+\`\`\`
+
+## 可用的
+- 状态与计算：useState(初值)、useMemo、useRef、useEffect、useInterval(fn, 毫秒)；fmt(n, 小数位) / fmt.money / fmt.pct / fmt.compact（万、亿）/ fmt.date；clamp、range、sum、round。主人在界面里的输入会自动保存，刷新后还在。
+- 回到你：send("完整的一句话，带上界面里的当前取值") 以主人的名义发一条新消息（只能在主人点击时触发）；copy(文字)、openUrl(https 链接)。界面里的滑动、切换、输入都在本地完成，不经过你。
+- 没有网络，也没有 DOM：数据直接写进代码，不要用 document、fetch、alert。
+
+## 组件（属性都可省略，除非标了必填）
+布局
+- <Col gap> 竖排（默认），<Row gap align justify wrap> 横排，<Grid cols={2|3|4} 或 min={160}> 自适应网格（手机上自动变一列），<Box padding border background="subtle|accent|ok|warn|danger" direction gap>，<Divider label>，<Spacer>
+- <Card title subtitle icon badge tone selected onClick>…</Card> 细边框卡片
+- <Caption left="图示名称" right="说明" /> 放在一个界面块上方的小字标签
+文字
+- <Heading level={2|3|4}>，<Text size="xs|sm|md|lg|xl|2xl" tone="muted|accent|ok|warn|danger" bold mono align>，<Markdown text>（长段落），<Badge tone icon>，<Icon name size tone>，<Code lang code>，<Callout tone="info|tip|ok|warn|danger" title>
+- 字符串里可以用 **粗体**、\`代码\`、[链接](https://…)
+数据
+- <Stat label value sub delta icon tone />，<Progress label value max tone />，<KeyValue items={[{label, value}]} />
+- <Table columns={["列"] 或 [{key,label,align,format}]} rows={[[…]] 或 [{…}]} highlight={行号} />
+- <Chart type="bar|line|area|pie|donut|scatter" data={[{…}]} x="键" y={["键"]} 或 labels={[…]} series={[{name, data}]} stacked horizontal format="number|money|percent|compact" unit height highlight title />
+结构
+- <Flow direction="vertical|horizontal"><Node icon title desc items={["小标签"]} tone highlight />…</Flow> 带箭头的框图（架构、流程、数据流）
+- <List><Item icon title desc right send="点了发给你的话" />…</List> 带图标的说明列表；<List items={["…"]} ordered /> 普通列表
+- <Steps title><Step title desc>…</Step>…</Steps> 可逐步切换的分步演示，每步可以放任意组件
+- <Timeline><Event time title desc done active />…</Timeline>
+- <Tabs><Tab label icon>…</Tab>…</Tabs>，<Accordion><Details summary icon>…</Details></Accordion>
+- <Quiz title questions={[{question, options:["…"], answer: 正确选项序号(从0开始), explain}]} />（自带判分、讲解错题按钮）
+- <Image src="https://…" alt caption ratio="16:9" />
+- 需要画示意图时，可以直接写 <svg viewBox="0 0 300 160">…</svg>（path、circle、rect、line、text、g 等），颜色用 "var(--series-1)"…"var(--series-6)"、"var(--muted)"、"var(--border)"、"currentColor"，可以跟状态联动
+输入（给了 value 和 onChange 就由你的状态控制）
+- <Slider label value min max step unit format onChange />，<NumberInput label value unit onChange />，<Input label value placeholder onChange onSubmit />，<TextArea>
+- <Select label value options={["a"] 或 [{value,label}]} onChange />，<Segmented options value onChange />，<Switch label checked onChange />，<Checkbox>
+- <Choice options={[{value, label, desc, badge}]} multiple recommended="值" submit="我选：" />（submit 会加一个按钮，把选择发给你）
+- <Button variant="primary|secondary|ghost" icon onClick send="发给你的话" copy="要复制的文字" href>文字</Button>，<Link href>，<Suggestions items={["追问1", "追问2"]} />
+- 图标名（icon）：calculator, chart, line-chart, pie-chart, trending-up, trending-down, lightbulb, brain, brain-circuit, bot, cpu, server, database, network, workflow, layers, code, terminal, globe, map-pin, route, plane, train, car, home, building, wallet, coins, credit-card, percent, scale, target, trophy, star, heart, heart-pulse, shield-check, lock, key, clock, timer, calendar, user, users, book-open, graduation-cap, flask, sparkles, zap, rocket, check-circle, alert, info, help, search, settings, wrench, package, cart, utensils, coffee, leaf, sun, moon, cloud, camera, image, music, film, message, send, mail, phone, smartphone, laptop, monitor, gauge, activity, list-checks, file-text, folder, flag, gift, puzzle, compass, mountain
+
+## 原则
+- 界面是回答的一部分，不是附件：先用一两句话给结论，再接界面；界面前后不要说“下面是一个界面”。
+- 宁可简洁：一个界面 3–8 个组件为宜，标签简短，数字给单位，计算要正确（先在脑子里验算一组值）。
+- 手机上也要好用：并排内容用 Grid（会自动换行），不要写死宽度。
+- 组件不够用（游戏、动画、画布、复杂自定义交互）时才用 \`\`\`ui-html 代码块写一个自包含的 HTML 页面（无网络、颜色用 var(--text)、var(--accent) 等变量）。`;
 
 /** The instructions section about interactive replies, or "" when the setting is off. */
 export function intelligentUiNote(level: IntelligentUiLevel): string {
   if (level === "off") return "";
   return `# 智能界面（交互式回答）
-主人在网页和手机上看你的回复，回复里可以直接嵌入可交互的小界面（图表、计算器、示意图、测验、按钮、表单），会在对话里原位渲染。
+主人在网页和手机上看你的回复。回复里可以直接嵌入用平台原生组件渲染的界面：计算器、图表、并排对比卡片、框图、分步演示、测验、选项和按钮。
 ${WHEN[level]}
-${SPEC}
-${EXAMPLE}`;
+
+${SPEC}`;
 }

@@ -193,3 +193,14 @@ body {
 
 @keyframes pulse-dot { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
 .pulse-dot { animation: pulse-dot 1.4s ease-in-out infinite; }
+
+/* Sliders in component blocks (智能界面): accent fill up to the value, quiet rail after it. */
+.genui-range { -webkit-appearance: none; appearance: none; height: 20px; background: transparent; cursor: pointer; margin: 0; }
+.genui-range:focus-visible { outline: none; }
+.genui-range::-webkit-slider-runnable-track { height: 4px; border-radius: 999px; background: linear-gradient(to right, var(--color-accent) var(--pct, 0%), color-mix(in oklab, var(--text) 14%, transparent) var(--pct, 0%)); }
+.genui-range::-webkit-slider-thumb { -webkit-appearance: none; width: 16px; height: 16px; margin-top: -6px; border-radius: 999px; background: var(--surface); border: 2px solid var(--color-accent); box-shadow: 0 1px 3px rgb(0 0 0 / 0.18); transition: transform 0.1s; }
+.genui-range:active::-webkit-slider-thumb { transform: scale(1.12); }
+.genui-range:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 3px color-mix(in oklab, var(--color-accent) 30%, transparent); }
+.genui-range::-moz-range-track { height: 4px; border-radius: 999px; background: color-mix(in oklab, var(--text) 14%, transparent); }
+.genui-range::-moz-range-progress { height: 4px; border-radius: 999px; background: var(--color-accent); }
+.genui-range::-moz-range-thumb { width: 12px; height: 12px; border-radius: 999px; background: var(--surface); border: 2px solid var(--color-accent); }

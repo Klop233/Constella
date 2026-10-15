@@ -26,23 +26,32 @@ describe("splitWidgets", () => {
     const text = "先看结论。\n\n```ui 房贷计算器\n<div class=\"card\">x</div>\n```\n\n然后是说明。\n~~~ui\n<p>2</p>\n~~~";
     expect(splitWidgets(text)).toEqual([
       { kind: "md", text: "先看结论。\n" },
-      { kind: "ui", title: "房贷计算器", source: '<div class="card">x</div>', closed: true },
+      { kind: "ui", title: "房贷计算器", source: '<div class="card">x</div>', closed: true, format: "html" },
       { kind: "md", text: "\n然后是说明。" },
-      { kind: "ui", title: "", source: "<p>2</p>", closed: true },
+      { kind: "ui", title: "", source: "<p>2</p>", closed: true, format: "components" },
     ]);
   });
 
   it("marks a block still being streamed as open", () => {
     expect(splitWidgets("结论\n```ui 图表\n<canvas>")).toEqual([
       { kind: "md", text: "结论" },
-      { kind: "ui", title: "图表", source: "<canvas>", closed: false },
+      { kind: "ui", title: "图表", source: "<canvas>", closed: false, format: "components" },
     ]);
   });
 
   it("keeps ui fences inside other code blocks as code, and needs a closing fence at least as long", () => {
     const nested = "````md\n```ui x\n<p/>\n```\n````";
     expect(splitWidgets(nested)).toEqual([{ kind: "md", text: nested }]);
-    expect(splitWidgets("````ui t\n```\n<p/>\n````")).toEqual([{ kind: "ui", title: "t", source: "```\n<p/>", closed: true }]);
+    expect(splitWidgets("````ui t\n```\n<p/>\n````")).toEqual([{ kind: "ui", title: "t", source: "```\n<p/>", closed: true, format: "components" }]);
+  });
+
+  it("tells component programs from html pages", () => {
+    const [comp] = splitWidgets("```ui 计算器\nconst [a, setA] = useState(1);\n<Card><Slider value={a} onChange={setA} /></Card>\n```");
+    expect(comp).toMatchObject({ kind: "ui", format: "components" });
+    const [page] = splitWidgets("```ui-html 小游戏\n<canvas id=c></canvas>\n```");
+    expect(page).toMatchObject({ kind: "ui", title: "小游戏", format: "html" });
+    const [legacy] = splitWidgets('```ui 旧界面\n<div class="card">x</div>\n<script>1</script>\n```');
+    expect(legacy).toMatchObject({ format: "html" });
   });
 
   it("does not take other languages that start with ui", () => {
@@ -79,12 +88,13 @@ describe("intelligent UI setting", () => {
     const rich = intelligentUiNote("rich");
     for (const note of [balanced, rich]) {
       expect(note).toContain("```ui");
-      expect(note).toContain("ui.send");
-      expect(note).toContain("ui.setState");
+      expect(note).toContain("send(");
+      expect(note).toContain("<Slider");
+      expect(note).toContain("ui-html");
     }
-    expect(balanced).toContain("最多一个");
     expect(balanced).toContain("计算器");
-    expect(rich).toContain("可以有多个");
+    expect(balanced).toContain("通常一处");
+    expect(rich).toContain("多处界面");
   });
 
   it("keeps ui source out of reflection transcripts", () => {

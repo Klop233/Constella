@@ -1,15 +1,27 @@
 // Interactive UI ("智能界面"): an agent reply may contain fenced blocks whose info string is `ui`,
-// optionally followed by a title, holding a self-contained HTML fragment that the web app renders
-// inline in a sandboxed iframe:
+// optionally followed by a title. The block is a small component program (hooks and plain JS, then a
+// JSX tree of the platform's components) that runs isolated in a worker; the web app renders the
+// resulting tree with its own components:
 //
 //   ```ui 房贷计算器
-//   <div class="card">…</div>
+//   const [rate, setRate] = useState(4);
+//   <Card><Slider label="年利率" value={rate} min={2} max={6} step={0.1} onChange={setRate} /></Card>
 //   ```
+//
+// `ui-html` blocks (or ui blocks that are plainly HTML) are the escape hatch: a self-contained page
+// run in a sandboxed iframe, for what the components can't express.
 
 export type IntelligentUiLevel = "off" | "balanced" | "rich";
 export const INTELLIGENT_UI_LEVELS: readonly IntelligentUiLevel[] = ["off", "balanced", "rich"];
 
-export type MessagePart = { kind: "md"; text: string } | { kind: "ui"; title: string; source: string; closed: boolean };
+export type WidgetFormat = "components" | "html";
+export type MessagePart = { kind: "md"; text: string } | { kind: "ui"; title: string; source: string; closed: boolean; format: WidgetFormat };
+
+/** HTML pages use script/style tags, class="…" attributes or a doctype; component programs never do. */
+export function widgetFormat(lang: string, source: string): WidgetFormat {
+  if (lang === "ui-html") return "html";
+  return /<(script|style)\b|\bclass="|<!doctype|<html\b/i.test(source) ? "html" : "components";
+}
 
 // A fence opens with 3+ backticks or tildes at line start (up to 3 spaces of indent) and closes
 // with the same character, at least as long, on a line of its own (CommonMark).
@@ -17,7 +29,7 @@ const OPEN = /^ {0,3}(`{3,}|~{3,})[ \t]*([^\n`]*)$/;
 
 /** Splits a reply into markdown and ui parts. A ui block still being streamed has `closed: false`. */
 export function splitWidgets(text: string): MessagePart[] {
-  if (!/(`{3,}|~{3,})[ \t]*ui\b/i.test(text)) return [{ kind: "md", text }];
+  if (!/(`{3,}|~{3,})[ \t]*ui(\b|-html\b)/i.test(text)) return [{ kind: "md", text }];
   const lines = text.split("\n");
   const parts: MessagePart[] = [];
   let md: string[] = [];
@@ -41,7 +53,7 @@ export function splitWidgets(text: string): MessagePart[] {
     }
     const marker = m[1] ?? "```";
     const info = (m[2] ?? "").trim();
-    const ui = /^ui(?:\s+(.*))?$/i.exec(info);
+    const ui = /^(ui(?:-html)?)(?:\s+(.*))?$/i.exec(info);
     if (!ui) {
       fence = marker;
       md.push(line);
@@ -58,7 +70,8 @@ export function splitWidgets(text: string): MessagePart[] {
       }
       body.push(l);
     }
-    parts.push({ kind: "ui", title: (ui[1] ?? "").trim().slice(0, 80), source: body.join("\n"), closed });
+    const source = body.join("\n");
+    parts.push({ kind: "ui", title: (ui[2] ?? "").trim().slice(0, 80), source, closed, format: widgetFormat((ui[1] ?? "ui").toLowerCase(), source) });
   }
   flushMd();
   return parts.length ? parts : [{ kind: "md", text }];

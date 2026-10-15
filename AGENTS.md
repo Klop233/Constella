@@ -57,7 +57,7 @@
 - `pages/Performance.tsx`、`components/PerfChart.tsx`、`lib/perf.ts`：性能页（宿主机 + 实例/agent/服务）；`components/LineChart.tsx`：时间序列曲线。
 - `lib/audit.ts`、`components/AuditDetail.tsx`：操作记录的动作/字段中文名、一行摘要，和点开的详情面板（设置页与审计页共用）。
 - `lib/api.ts`：fetch 封装；`lib/live.ts`：SSE；`lib/types.ts`：前端用的类型（事件类型从 protocol 引）；`sw.ts`：Service Worker 与推送。
-- `components/Widget.tsx`、`lib/widget-runtime.ts`：回复正文里的 ` ```ui ` 块（智能界面）——拆分、沙盒 iframe、主题同步、给界面的样式与桥接运行时（`ui.send` / `ui.state` / `Chart`）。
+- 智能界面（回复里的 ` ```ui ` 块）：`components/Widget.tsx` 拆分回复、按格式分发、工具条与全屏；`lib/genui/`（`compile.ts` 把「JS 语句 + JSX 组件树」编成程序，`repair.ts` 流式时截取写好的部分并补齐标签，`runtime.ts` 隐藏沙盒 iframe 里的 Worker 运行时：hooks、状态、函数按编号回调）；`components/genui/`（`Block.tsx` 宿主侧：编译、看门狗、保存状态；`Renderer.tsx` 把组件树渲染成原生组件并校验属性；`components.tsx` 组件库；`Chart.tsx` SVG 图表；`icons.ts` 可用图标）。` ```ui-html ` 是自包含网页的退路，走 `lib/widget-runtime.ts` 的沙盒 iframe。
 
 ## 改什么去哪里
 
@@ -70,7 +70,7 @@
 | agent 往对话里交付文件或文档 | `artifacts.ts`（存储与版本）、`mcp.ts` 的 `send_file` / `artifact_*`、protocol 的 `artifact` 事件、web 的 `Artifact*` 组件 |
 | 新增会写审计的操作 | 调用处 `audit(db, actor, action, detail)`：`detail` 里记对象的名字，改动类再加 `changes: changesOf(前, 后, 字段)`（不记密钥明文）；中文名登记到 web `lib/audit.ts`；新的对象类型在 `audit.ts` 的 `auditRefs` 里加解析 |
 | 加表或列 | `db.ts`，见下面的「数据库迁移」 |
-| 改智能界面（交互式回复块） | 解析 `packages/protocol/src/widgets.ts` → 给 agent 的说明 `apps/hub/src/widgets.ts` → 渲染 `apps/web/src/components/Widget.tsx` + `lib/widget-runtime.ts`；设置项 `intelligentUi` |
+| 改智能界面（交互式回复块） | 解析 `packages/protocol/src/widgets.ts` → 给 agent 的说明 `apps/hub/src/widgets.ts` → 组件库 `apps/web/src/components/genui/components.tsx`（新组件同时登记到 `lib/genui/runtime.ts` 的 `COMPONENTS` 和给 agent 的说明里）→ 运行时 `lib/genui/`；测试 `apps/hub/test/genui.test.ts`；设置项 `intelligentUi` |
 | 接新的 agent 引擎 | `apps/runner/src/engines/` 新增适配器，事件统一成 protocol 事件 |
 | 改桌面镜像或桌面控制 | `images/desktop/`；hub 侧在 `desktops.ts` 和 `mcp.ts` 的 `desktop_*` |
 | 改前端样式 | 先读 `docs/design-system.md`，新的通用样式写回规范 |

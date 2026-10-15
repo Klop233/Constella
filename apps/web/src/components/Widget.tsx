@@ -6,6 +6,7 @@ import { useArtifactPanel } from "../lib/artifacts";
 import { BRIDGE, buildSrcdoc, chartScriptUrl, themeSnapshot, usesChart, type WidgetTheme } from "../lib/widget-runtime";
 import { Markdown } from "./Markdown";
 import { MenuDivider, MenuItem, Popover, cx, toast } from "./ui";
+import { GenUIBlock, type BlockHost, type BlockState } from "./genui/Block";
 
 /** What the conversation page lends interactive blocks: sending a message, and the saved block states. */
 export interface WidgetHost {
@@ -43,10 +44,12 @@ export const RichMessage = memo(function RichMessage({ text, streaming, keyBase,
   if (parts.length === 1 && parts[0]?.kind === "md") return <Markdown text={text} className={className} noHeadingEmoji={noHeadingEmoji} />;
   let n = 0;
   return (
-    <div className="space-y-3">
+    <div className="space-y-4">
       {parts.map((p, i) =>
         p.kind === "md" ? (
           <Markdown key={i} text={p.text} className={className} noHeadingEmoji={noHeadingEmoji} />
+        ) : p.format === "components" ? (
+          <ComponentWidget key={i} title={p.title} source={p.source} streaming={!p.closed && streaming} stateKey={`${keyBase}:${n++}`} />
         ) : p.closed || !streaming ? (
           <Widget key={i} title={p.title} source={p.source} stateKey={`${keyBase}:${n++}`} runId={runId} />
         ) : (
@@ -178,7 +181,96 @@ function Frame({
   );
 }
 
-/** An interactive block in a reply: a quiet card with a small toolbar, the frame, and an error line when it breaks. */
+/** Hover tools for a block (desktop): source, full screen, run again, and more. Blocks have no frame of their own, like ChatGPT. */
+function BlockTools({ code, onCode, onFull, onReload, source, onSave, saving }: { code: boolean; onCode: () => void; onFull: () => void; onReload: () => void; source: string; onSave?: () => void; saving?: boolean }) {
+  const copySource = () => void navigator.clipboard.writeText(source).then(() => toast("已复制源码"), () => toast("复制失败", "danger"));
+  return (
+    <div className={cx("absolute -top-3 right-0 z-10 flex items-center gap-0.5 rounded-lg border border-line bg-surface p-0.5 shadow-sm transition-opacity", "opacity-0 group-hover/block:opacity-100 focus-within:opacity-100 pointer-coarse:hidden", code && "opacity-100")}>
+      <ToolButton label={code ? "看界面" : "看源码"} onClick={onCode} active={code}>
+        <Code2 className="size-3.5" strokeWidth={1.8} />
+      </ToolButton>
+      <ToolButton label="全屏" onClick={onFull}>
+        <Maximize2 className="size-3.5" strokeWidth={1.8} />
+      </ToolButton>
+      <Popover
+        label="更多"
+        side="bottom"
+        className="w-44"
+        triggerClassName="size-6 grid place-items-center rounded-md text-muted hover:text-[var(--text)] hover:bg-surface-2 aria-expanded:bg-surface-2"
+        trigger={<MoreHorizontal className="size-3.5" strokeWidth={1.8} />}
+      >
+        {(close) => (
+          <div className="p-1.5">
+            <MenuItem icon={<RotateCw className="size-4" strokeWidth={1.8} />} label="重新运行" onClick={() => { close(); onReload(); }} />
+            <MenuItem icon={<Copy className="size-4" strokeWidth={1.8} />} label="复制源码" onClick={() => { close(); copySource(); }} />
+            {onSave && (
+              <>
+                <MenuDivider />
+                <MenuItem icon={<Save className="size-4" strokeWidth={1.8} />} label={saving ? "保存中…" : "另存为成果"} onClick={() => { close(); onSave(); }} />
+              </>
+            )}
+          </div>
+        )}
+      </Popover>
+    </div>
+  );
+}
+
+function ErrorLine({ error, onRetry, onFix }: { error: string; onRetry: () => void; onFix?: () => void }) {
+  return (
+    <div className="flex items-center gap-2 text-[13px] text-danger min-w-0">
+      <CircleX className="size-3.5 shrink-0" strokeWidth={1.8} />
+      <span className="truncate">界面出错：{error}</span>
+      <span className="flex items-center gap-2 shrink-0 text-xs text-muted">
+        <button className="hover:text-[var(--text)]" onClick={onRetry}>重试</button>
+        {onFix && <button className="hover:text-[var(--text)]" onClick={onFix}>让 agent 修复</button>}
+      </span>
+    </div>
+  );
+}
+
+/** A component block (```ui): rendered natively in the flow of the reply, from the first lines on. */
+export function ComponentWidget({ title, source, streaming, stateKey }: { title: string; source: string; streaming: boolean; stateKey: string }) {
+  const host = useContext(HostContext);
+  const label = title || "交互界面";
+  const [code, setCode] = useState(false);
+  const [full, setFull] = useState(false);
+  const [reload, setReload] = useState(0);
+  const [state, setState] = useState<BlockState>({ error: null, shown: false });
+  const saved = host ? host.states : {};
+  const blockHost = useMemo<BlockHost>(
+    () => ({
+      send: (text) => (host ? void host.send(text) : toast("在对话页里才能从界面发消息", "danger")),
+      slots: saved === undefined ? undefined : ((saved[stateKey]?.slots as unknown[] | undefined) ?? null),
+      saveSlots: (slots) => host?.saveState(stateKey, { slots }),
+    }),
+    [host, saved, stateKey],
+  );
+  const fix = host && state.error ? () => void host.send(`刚才的「${label}」界面运行出错：${state.error}。请修复后重新给出这个界面。`) : undefined;
+  return (
+    <div className="space-y-1.5">
+      <div className="relative group/block">
+        {!streaming && <BlockTools code={code} onCode={() => setCode((c) => !c)} onFull={() => setFull(true)} onReload={() => setReload((r) => r + 1)} source={source} />}
+        {code && <pre className="max-h-[28rem] overflow-auto rounded-xl border border-line bg-surface-2 px-3.5 py-2.5 font-mono text-[12.5px] leading-5 whitespace-pre-wrap break-all">{source}</pre>}
+        <div className={cx(code && "hidden")}>
+          <GenUIBlock source={source} streaming={streaming} host={blockHost} onState={setState} reloadKey={reload} />
+        </div>
+      </div>
+      {state.error && !streaming && <ErrorLine error={state.error} onRetry={() => setReload((r) => r + 1)} onFix={fix} />}
+      {full && (
+        <FullScreen title={label} onClose={() => setFull(false)}>
+          <div className="h-full overflow-y-auto">
+            <div className="max-w-3xl mx-auto px-4 sm:px-6 py-5">
+              <GenUIBlock source={source} streaming={false} host={blockHost} />
+            </div>
+          </div>
+        </FullScreen>
+      )}
+    </div>
+  );
+}
+
+/** The escape hatch (```ui-html): a self-contained page in a sandboxed frame, for what the components can't do. */
 export function Widget({ title, source, stateKey, runId }: { title: string; source: string; stateKey: string; runId: string }) {
   const host = useContext(HostContext);
   const { open: openArtifact } = useArtifactPanel();
@@ -202,11 +294,6 @@ export function Widget({ title, source, stateKey, runId }: { title: string; sour
     setReady(false);
     setGen((g) => g + 1);
   };
-  const copySource = () =>
-    void navigator.clipboard.writeText(source).then(
-      () => toast("已复制源码"),
-      () => toast("复制失败", "danger"),
-    );
   const saveArtifact = async () => {
     if (!host) return;
     setSaving(true);
@@ -222,56 +309,18 @@ export function Widget({ title, source, stateKey, runId }: { title: string; sour
       setSaving(false);
     }
   };
-  const fix = () => host && void host.send(`刚才的「${label}」界面运行出错：${error}。请修复后重新给出这个界面。`);
+  const fix = host && error ? () => void host.send(`刚才的「${label}」界面运行出错：${error}。请修复后重新给出这个界面。`) : undefined;
 
   return (
     <div className="space-y-1.5">
-      <div className="rounded-xl border border-line bg-surface">
-        <div className="h-8 flex items-center gap-1.5 pl-3 pr-1 border-b border-line">
-          <Sparkles className="size-3.5 shrink-0 text-muted" strokeWidth={1.8} />
-          <span className="flex-1 min-w-0 truncate text-[12.5px] text-muted">{label}</span>
-          <ToolButton label={code ? "看界面" : "看源码"} onClick={() => setCode((c) => !c)} active={code}>
-            <Code2 className="size-3.5" strokeWidth={1.8} />
-          </ToolButton>
-          <ToolButton label="全屏" onClick={() => setFull(true)}>
-            <Maximize2 className="size-3.5" strokeWidth={1.8} />
-          </ToolButton>
-          <Popover
-            label="更多"
-            side="bottom"
-            className="w-48"
-            triggerClassName="size-6 grid place-items-center rounded-md text-muted hover:text-[var(--text)] hover:bg-surface-2 aria-expanded:bg-surface-2"
-            trigger={<MoreHorizontal className="size-3.5" strokeWidth={1.8} />}
-          >
-            {(close) => (
-              <div className="p-1.5">
-                <MenuItem icon={<RotateCw className="size-4" strokeWidth={1.8} />} label="重新运行" onClick={() => { close(); reload(); }} />
-                <MenuItem icon={<Copy className="size-4" strokeWidth={1.8} />} label="复制源码" onClick={() => { close(); copySource(); }} />
-                {host && (
-                  <>
-                    <MenuDivider />
-                    <MenuItem icon={<Save className="size-4" strokeWidth={1.8} />} label={saving ? "保存中…" : "另存为成果"} onClick={() => { close(); void saveArtifact(); }} />
-                  </>
-                )}
-              </div>
-            )}
-          </Popover>
-        </div>
-        {code && <pre className="max-h-96 overflow-auto px-3.5 py-2.5 font-mono text-[12.5px] leading-5 whitespace-pre-wrap break-all">{source}</pre>}
-        <div className={cx("rounded-b-xl overflow-hidden", code && "hidden")}>
+      <div className="relative group/block">
+        <BlockTools code={code} onCode={() => setCode((c) => !c)} onFull={() => setFull(true)} onReload={reload} source={source} onSave={host ? () => void saveArtifact() : undefined} saving={saving} />
+        {code && <pre className="max-h-[28rem] overflow-auto rounded-xl border border-line bg-surface-2 px-3.5 py-2.5 font-mono text-[12.5px] leading-5 whitespace-pre-wrap break-all">{source}</pre>}
+        <div className={cx("rounded-xl border border-line overflow-hidden", code && "hidden")}>
           <Frame key={gen} source={source} title={label} stateKey={stateKey} onError={onError} onReady={onReady} />
         </div>
       </div>
-      {error && (
-        <div className="flex items-center gap-2 text-[13px] text-danger min-w-0">
-          <CircleX className="size-3.5 shrink-0" strokeWidth={1.8} />
-          <span className="truncate">界面出错：{error}</span>
-          <span className="flex items-center gap-2 shrink-0 text-xs text-muted">
-            <button className="hover:text-[var(--text)]" onClick={reload}>重试</button>
-            {host && <button className="hover:text-[var(--text)]" onClick={fix}>让 agent 修复</button>}
-          </span>
-        </div>
-      )}
+      {error && <ErrorLine error={error} onRetry={reload} onFix={fix} />}
       {full && (
         <FullScreen title={label} onClose={() => setFull(false)}>
           <Frame source={source} title={label} stateKey={stateKey} fill onError={onError} onReady={onReady} />
