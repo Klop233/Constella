@@ -30,18 +30,18 @@ export const SIZE_PRESETS: Record<DesktopKind, { label: string; width: number; h
   ],
 };
 
-/** Who is on an instance, or what state it is in, for badges. */
-export function leaseText(d: Desktop, agents: Agent[] | undefined): { text: string; tone: "ok" | "warn" | "accent" | "muted" } {
+/** Who is on an instance, or what state it is in, for its status line (a `StatusDot` tone). */
+export function leaseText(d: Desktop, agents: Agent[] | undefined): { text: string; tone: "ok" | "warn" | "busy" | "off" } {
   const l = d.leaseInfo;
   if (l.holder === "human") return { text: "你在操作", tone: "warn" };
   if (l.holder === "agent") {
     const a = agents?.find((x) => x.id === l.agentId);
-    return { text: `${a ? `${a.emoji} ${a.name}` : "agent"} 使用中`, tone: "accent" };
+    return { text: `${a ? `${a.emoji} ${a.name}` : "agent"} 使用中`, tone: "busy" };
   }
   if (d.state === "running") return { text: "空闲", tone: "ok" };
-  if (d.state === "paused") return { text: "已暂停", tone: "muted" };
-  if (d.state === "starting") return { text: "启动中", tone: "muted" };
-  return { text: "已停止", tone: "muted" };
+  if (d.state === "paused") return { text: "已暂停", tone: "off" };
+  if (d.state === "starting") return { text: "启动中", tone: "off" };
+  return { text: "已停止", tone: "off" };
 }
 
 /** Whether a thumbnail (live, or the last frame kept when paused / stopped) may exist. */

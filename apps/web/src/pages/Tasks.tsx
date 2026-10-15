@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { CalendarClock, Play, Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
-import { Badge, Button, Card, Empty, Field, Header, IconButton, Loading, Section, Segmented, Select, Sheet, Toggle, cx, inputClass, toast } from "../components/ui";
+import { Button, Card, Empty, Field, Header, HeaderButton, confirmDialog, Loading, Section, Segmented, Select, Sheet, StatusText, Toggle, cx, inputClass, toast } from "../components/ui";
 import { api } from "../lib/api";
 import { clock, describeCron, timeAgo } from "../lib/format";
 import type { Agent, Schedule } from "../lib/types";
@@ -55,17 +55,15 @@ export default function Tasks() {
   const agentName = (id: string | null) => agents.data?.find((a) => a.id === id);
 
   return (
-    <div>
+    <div className="lg:max-w-3xl">
       <Header
         title="任务"
         sub="定时提醒和定时让 agent 干活"
         right={
-          <IconButton label="新建" onClick={() => setEdit({ kind: "notify", cron: "0 8 * * *", name: "", payload: { body: "" } })}>
-            <Plus className="size-4" />
-          </IconButton>
+          <HeaderButton icon={<Plus />} label="新建任务" onClick={() => setEdit({ kind: "notify", cron: "0 8 * * *", name: "", payload: { body: "" } })} />
         }
       />
-      <div className="px-4 space-y-5 pb-6 lg:max-w-3xl">
+      <div className="px-4 space-y-8 pb-6">
         {list.isLoading ? (
           <Loading />
         ) : (
@@ -73,7 +71,7 @@ export default function Tasks() {
             <Section title="定时任务">
               {user.length === 0 ? (
                 <Card>
-                  <Empty icon={<CalendarClock className="size-9" />} title="还没有定时任务" hint="也可以直接对 agent 说「每天早上 8 点提醒我吃药」" />
+                  <Empty icon={<CalendarClock className="size-6" strokeWidth={1.8} />} title="还没有定时任务" hint="也可以直接对 agent 说「每天早上 8 点提醒我吃药」" />
                 </Card>
               ) : (
                 <div className="space-y-2.5">
@@ -187,8 +185,8 @@ export default function Tasks() {
               {edit.id && (
                 <Button
                   variant="danger"
-                  onClick={() => {
-                    if (!confirm("删除这个任务？")) return;
+                  onClick={async () => {
+                    if (!(await confirmDialog({ title: "删除这个任务？", body: edit.name ? `「${edit.name}」之后不会再运行。` : undefined, ok: "删除", danger: true }))) return;
                     void api.del(`/api/schedules/${edit.id}`).then(() => {
                       setEdit(null);
                       void qc.invalidateQueries({ queryKey: ["schedules"] });
@@ -215,8 +213,10 @@ export default function Tasks() {
           <div className="divide-y divide-[var(--border)]">
             {hist.data.map((h) => (
               <div key={h.id} className="py-2.5 flex items-center gap-2 text-sm">
-                <Badge tone={h.ok ? "ok" : "danger"}>{h.ok ? "成功" : "失败"}</Badge>
-                <span className="text-muted">{clock(h.fired_at)}</span>
+                <span className="w-14 shrink-0">
+                  <StatusText tone={h.ok ? "ok" : "danger"}>{h.ok ? "成功" : "失败"}</StatusText>
+                </span>
+                <span className="text-muted tabular-nums">{clock(h.fired_at)}</span>
                 <span className="truncate flex-1 text-xs text-muted">{h.detail}</span>
               </div>
             ))}

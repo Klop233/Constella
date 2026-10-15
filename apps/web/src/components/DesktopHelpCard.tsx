@@ -73,7 +73,7 @@ export function DesktopHelpCard({ help }: { help: DesktopHelp }) {
             </button>
           </form>
           <div className="grid grid-cols-2 gap-2">
-            <Button variant="secondary" onClick={open}>
+            <Button variant="soft" onClick={open}>
               <Monitor className="size-4" /> 回到实例
             </Button>
             <Button variant="primary" loading={busy === "handback"} disabled={!!busy} onClick={() => void handback()}>
@@ -83,7 +83,7 @@ export function DesktopHelpCard({ help }: { help: DesktopHelp }) {
         </div>
       ) : (
         <div className="mt-2.5 grid grid-cols-2 gap-2">
-          <Button variant="secondary" onClick={peek}>
+          <Button variant="soft" onClick={peek}>
             <Monitor className="size-4" /> 先看看
           </Button>
           <Button variant="primary" loading={busy === "takeover"} disabled={!!busy} onClick={() => void takeover()}>

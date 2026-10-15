@@ -1,13 +1,13 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Download, KeyRound, MessageSquarePlus, Pencil, RotateCcw, Share2, Sparkles, Trash2 } from "lucide-react";
+import { Download, MessageSquarePlus, Pencil, RotateCcw, Share2, Sparkles, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { useNavigate, useParams } from "react-router";
-import { AgentAvatar, AgentStatus } from "../components/AgentBits";
+import { AgentAvatar, AgentStatus, RunStatus } from "../components/AgentBits";
 import { ArtifactRows } from "../components/ArtifactList";
 import { Markdown } from "../components/Markdown";
-import { Badge, Button, Card, Empty, Field, Header, IconButton, Loading, Row, Section, Segmented, Sheet, cx, inputClass, toast } from "../components/ui";
+import { Badge, Button, Card, confirmDialog, Empty, Field, Header, IconButton, Loading, Row, Section, SectionLink, Segmented, SettingGroup, SettingRow, Sheet, Tabs, cx, inputClass, toast } from "../components/ui";
 import { api } from "../lib/api";
-import { STATUS_TEXT, statusTone, timeAgo } from "../lib/format";
+import { timeAgo } from "../lib/format";
 import { useModelLabel } from "../lib/models";
 import type { Agent, Artifact, Conversation, Skill } from "../lib/types";
 
@@ -21,32 +21,33 @@ export default function AgentDetail() {
   if (agent.isLoading) return <Loading />;
   if (!a) return <Empty title="找不到这个 agent" />;
   return (
-    <div>
+    <div className="lg:max-w-3xl">
       <Header
         back="/"
-        title={a.name}
+        // On wide screens the name is right below, large; the bar keeps just the way back and edit.
+        title={<span className="lg:hidden">{a.name}</span>}
         right={
           <IconButton label="编辑" onClick={() => nav(`/agents/${a.id}/edit`)}>
             <Pencil className="size-4" />
           </IconButton>
         }
       />
-      <div className="px-4 space-y-4 lg:max-w-3xl">
-        <div className="flex items-center gap-3">
+      <div className="px-4 space-y-5">
+        <div className="flex items-center gap-3 lg:pt-2">
           <AgentAvatar emoji={a.emoji} size="lg" />
           <div className="flex-1 min-w-0">
-            <div className="text-base font-semibold truncate">{a.name}</div>
+            <div className="font-display text-xl font-medium truncate">{a.name}</div>
             <AgentStatus agent={a} />
             <div className="text-xs text-muted mt-1 truncate">
               {modelLabel(a.model)} · {a.desktop_policy.desktopIds.length ? `实例 ${a.desktop_policy.desktopIds.length} 个` : "没有实例"}
               {a.host_access && " · 可操作宿主机"}
             </div>
           </div>
+          <Button variant="primary" className="shrink-0" onClick={() => nav(`/agents/${a.id}/chat`)}>
+            <MessageSquarePlus className="size-4" /> 新对话
+          </Button>
         </div>
-        <Button variant="primary" className="w-full" onClick={() => nav(`/agents/${a.id}/chat`)}>
-          <MessageSquarePlus className="size-4" /> 新对话
-        </Button>
-        <Segmented
+        <Tabs
           value={tab}
           onChange={setTab}
           options={[
@@ -103,14 +104,16 @@ function Chats({ agentId }: { agentId: string }) {
   };
   return (
     <div className="space-y-3 mb-6">
-      <Segmented
-        value={view}
-        onChange={setView}
-        options={[
-          { value: "active", label: "进行中" },
-          { value: "archived", label: "已归档" },
-        ]}
-      />
+      <div className="w-40">
+        <Segmented
+          value={view}
+          onChange={setView}
+          options={[
+            { value: "active", label: "进行中" },
+            { value: "archived", label: "已归档" },
+          ]}
+        />
+      </div>
       {q.isLoading ? (
         <Loading />
       ) : !q.data?.length ? (
@@ -133,9 +136,9 @@ function Chats({ agentId }: { agentId: string }) {
                   >
                     取消归档
                   </button>
-                ) : c.last_status && c.last_status !== "done" ? (
-                  <Badge tone={statusTone(c.last_status)}>{STATUS_TEXT[c.last_status]}</Badge>
-                ) : undefined
+                ) : (
+                  <RunStatus status={c.last_status} />
+                )
               }
               onClick={() => nav(`/c/${c.id}`)}
             />
@@ -172,21 +175,20 @@ function Knowledge({ agentId }: { agentId: string }) {
     }
   };
   return (
-    <div className="space-y-5 pb-6">
+    <div className="space-y-8 pb-6 pt-1">
       {(["agent", "user"] as const).map((scope) => (
         <Section
           key={scope}
           title={scope === "agent" ? "它的记忆" : "关于你（所有 agent 共享）"}
           action={
-            <button
-              className="text-xs text-muted hover:text-[var(--text)]"
+            <SectionLink
               onClick={() => {
                 setDraft(q.data.memory[scope]);
                 setEditing(scope);
               }}
             >
               编辑
-            </button>
+            </SectionLink>
           }
         >
           <Card className="p-3 text-[13px]">
@@ -197,10 +199,9 @@ function Knowledge({ agentId }: { agentId: string }) {
       <Section
         title={`技能 · ${q.data.skills.length}`}
         action={
-          <button
-            className="text-xs text-muted hover:text-[var(--text)] flex items-center gap-1"
-            disabled={curating}
+          <SectionLink
             onClick={async () => {
+              if (curating) return;
               setCurating(true);
               try {
                 const r = await api.post<{ events: unknown[] }>(`/api/agents/${agentId}/curate`);
@@ -213,8 +214,8 @@ function Knowledge({ agentId }: { agentId: string }) {
               }
             }}
           >
-            <Sparkles className={cx("size-4", curating && "animate-pulse")} /> 整理
-          </button>
+            <Sparkles className={cx(curating && "animate-pulse")} /> 整理
+          </SectionLink>
         }
       >
         {q.data.skills.length === 0 ? (
@@ -268,7 +269,7 @@ function Knowledge({ agentId }: { agentId: string }) {
               <Button
                 variant="danger"
                 onClick={async () => {
-                  if (!confirm(`删除技能 ${skill.skill.name}？`)) return;
+                  if (!(await confirmDialog({ title: `删除技能「${skill.skill.name}」？`, body: "删除后可以在学习页撤销。", ok: "删除", danger: true }))) return;
                   await api.del(`/api/agents/${agentId}/skills/${skill.skill.name}?scope=${skill.skill.scope}`);
                   toast("已删除（可在学习页撤销）");
                   setSkill(null);
@@ -306,68 +307,68 @@ function Manage({ agent }: { agent: Agent }) {
     }
   };
   return (
-    <div className="space-y-5 pb-8">
-      <Section title="密钥（以环境变量注入，不会出现在对话里）" action={<button className="text-xs text-muted hover:text-[var(--text)]" onClick={() => setSecretOpen(true)}>添加</button>}>
-        <Card className="divide-y divide-[var(--border)] overflow-hidden">
-          {agent.secrets.length === 0 ? (
-            <div className="px-4 py-3 text-sm text-muted">无</div>
-          ) : (
-            agent.secrets.map((s) => (
-              <Row
-                key={s}
-                icon={<KeyRound className="size-4 text-muted" />}
-                title={<span className="font-mono text-sm">{s}</span>}
-                right={
-                  <button className="text-danger text-sm" onClick={() => act(`del-${s}`, () => api.del(`/api/agents/${agent.id}/secrets/${s}`), "已删除，重启后生效")}>
-                    删除
-                  </button>
-                }
-              />
-            ))
-          )}
-        </Card>
-      </Section>
-      <Section title="new-api">
-        <Card className="p-3 space-y-2.5">
-          <div className="text-sm text-muted">
-            {agent.newapi_token_id ? `使用专属令牌 #${agent.newapi_token_id}，可按 agent 统计费用和限额。` : "使用全局令牌。生成专属令牌后可单独统计费用、设置每日预算。"}
-          </div>
-          <Button
-            className="w-full"
-            disabled={!settings.data?.newapiAdminConfigured}
-            loading={busy === "token"}
-            onClick={() => act("token", () => api.post(`/api/agents/${agent.id}/newapi-token`, {}), "已生成专属令牌")}
-          >
-            {agent.newapi_token_id ? "重新生成专属令牌" : "生成专属令牌"}
+    <div className="space-y-8 pb-8 pt-1">
+      <SettingGroup title="密钥">
+        <SettingRow title="环境变量" desc="以环境变量注入 agent 容器，不会出现在对话里；改动在重启 agent 后生效。">
+          <Button size="sm" onClick={() => setSecretOpen(true)}>
+            添加
           </Button>
-          {!settings.data?.newapiAdminConfigured && <div className="text-xs text-muted">需要先在「设置 → new-api」填写管理令牌</div>}
-        </Card>
-      </Section>
-      <Section title="运行">
-        <Card className="divide-y divide-[var(--border)] overflow-hidden">
-          <Row
-            icon={<RotateCcw className="size-4 text-muted" />}
-            title="重启 agent 容器"
-            sub={`当前：${agent.container}`}
-            onClick={() => act("restart", () => api.post(`/api/agents/${agent.id}/restart`), "已重启，下次发消息时自动启动")}
-          />
-          <Row
-            icon={<Download className="size-4 text-muted" />}
-            title="导出（人设、记忆、技能）"
+        </SettingRow>
+        {agent.secrets.map((s) => (
+          <SettingRow key={s} dense title={<span className="font-mono text-[13px] font-normal">{s}</span>}>
+            <Button size="sm" variant="ghost" className="text-danger" loading={busy === `del-${s}`} onClick={() => act(`del-${s}`, () => api.del(`/api/agents/${agent.id}/secrets/${s}`), "已删除，重启后生效")}>
+              删除
+            </Button>
+          </SettingRow>
+        ))}
+      </SettingGroup>
+      <SettingGroup title="new-api">
+        <SettingRow
+          wide
+          title="专属令牌"
+          desc={
+            <>
+              {agent.newapi_token_id ? `正在使用专属令牌 #${agent.newapi_token_id}，可按 agent 统计费用和限额。` : "正在使用全局令牌。生成专属令牌后可单独统计费用、设置每日预算。"}
+              {!settings.data?.newapiAdminConfigured && " 需要先在「设置 → new-api」填写管理令牌。"}
+            </>
+          }
+        >
+          <Button size="sm" disabled={!settings.data?.newapiAdminConfigured} loading={busy === "token"} onClick={() => act("token", () => api.post(`/api/agents/${agent.id}/newapi-token`, {}), "已生成专属令牌")}>
+            {agent.newapi_token_id ? "重新生成" : "生成专属令牌"}
+          </Button>
+        </SettingRow>
+      </SettingGroup>
+      <SettingGroup title="运行">
+        <SettingRow title="重启容器" desc={`当前状态：${agent.container}。重启后下次发消息时自动启动。`}>
+          <Button size="sm" loading={busy === "restart"} onClick={() => act("restart", () => api.post(`/api/agents/${agent.id}/restart`), "已重启，下次发消息时自动启动")}>
+            <RotateCcw className="size-3.5" /> 重启
+          </Button>
+        </SettingRow>
+        <SettingRow title="导出" desc="人设、记忆和技能打包成一个文件。">
+          <Button
+            size="sm"
             onClick={() => {
               window.location.href = `/api/agents/${agent.id}/export`;
             }}
-          />
-          <Row
-            icon={<Trash2 className="size-4 text-danger" />}
-            title={<span className="text-danger">删除 agent</span>}
-            onClick={() => {
-              if (!confirm(`删除「${agent.name}」？对话记录会保留在数据库中，容器会被移除。`)) return;
+          >
+            <Download className="size-3.5" /> 导出
+          </Button>
+        </SettingRow>
+        <SettingRow title="删除 agent" desc="对话记录会保留在数据库中，容器会被移除。">
+          <Button
+            size="sm"
+            variant="ghost"
+            className="text-danger"
+            loading={busy === "delete"}
+            onClick={async () => {
+              if (!(await confirmDialog({ title: `删除「${agent.name}」？`, body: "对话记录会保留在数据库中，容器会被移除。", ok: "删除", danger: true }))) return;
               void act("delete", () => api.del(`/api/agents/${agent.id}`), "已删除").then(() => nav("/"));
             }}
-          />
-        </Card>
-      </Section>
+          >
+            <Trash2 className="size-3.5" /> 删除
+          </Button>
+        </SettingRow>
+      </SettingGroup>
       <Sheet open={secretOpen} onClose={() => setSecretOpen(false)} title="添加密钥">
         <div className="space-y-4">
           <Field label="变量名" hint="大写字母、数字、下划线，例如 GITHUB_TOKEN">

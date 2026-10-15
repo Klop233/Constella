@@ -61,7 +61,7 @@ export default function Reflect() {
   const s = data?.stats;
   const step = s ? Math.ceil(s.series.length / 8) : 1;
   return (
-    <div>
+    <div className="lg:max-w-3xl">
       <Header
         title="回顾"
         sub="根据你和 agent 们的对话"
@@ -74,7 +74,7 @@ export default function Reflect() {
       ) : s.runs === 0 ? (
         <Empty icon={<Sparkles className="size-6" />} title="这段时间还没有对话" hint="和 agent 聊几次之后再来看看" />
       ) : (
-        <div className="px-4 pb-8 space-y-6 lg:max-w-3xl">
+        <div className="px-4 pb-8 space-y-6">
           <section className="space-y-2 pt-1">
             {data.summary ? (
               <>

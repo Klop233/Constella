@@ -3,7 +3,7 @@ import { Bot, ChevronDown, RefreshCw, Search, Server } from "lucide-react";
 import { useMemo, useState, type ReactNode } from "react";
 import { Link } from "react-router";
 import { PerfChart, compactBytes, compactRate } from "../components/PerfChart";
-import { Badge, Card, Header, Loading, Section, Segmented, Select, StatTile, cx, inputClass } from "../components/ui";
+import { Badge, Card, Header, Loading, Section, Segmented, Select, StatTile, StatusDot, cx, inputClass } from "../components/ui";
 import { api } from "../lib/api";
 import { timeAgo } from "../lib/format";
 import { KIND_INFO } from "../lib/instances";
@@ -42,7 +42,7 @@ function cpuText(now: PerfPoint | null | undefined, hostCores: number | null): s
 }
 
 function Dot({ on }: { on: boolean }) {
-  return <span className={cx("size-2 shrink-0 rounded-full", on ? "bg-accent" : "border border-[var(--muted)] opacity-60")} />;
+  return <StatusDot tone={on ? "ok" : "off"} label={on ? "运行中" : "未运行"} />;
 }
 
 function ContainerLine({ c, hostCores }: { c: PerfContainer; hostCores: number | null }) {
@@ -163,7 +163,7 @@ export default function Performance() {
           </button>
         }
       />
-      <div className="px-4 pb-8 space-y-5">
+      <div className="px-4 pb-8 space-y-8">
         <div className="flex flex-wrap items-center gap-2">
           <div className="min-w-0 flex-1 sm:flex-none sm:w-52">
             <Segmented value={range} options={RANGES} onChange={setRange} />

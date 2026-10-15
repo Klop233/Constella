@@ -7,7 +7,7 @@ import { ARCHIVE, bytes, fileUrl, isTextKind, KIND_LABEL, kindIcon, RENDERED_KIN
 import { timeAgo } from "../lib/format";
 import type { ArtifactDetail, ArtifactVersion } from "../lib/types";
 import { Markdown } from "./Markdown";
-import { Badge, Button, buttonClass, Empty, IconButton, inputClass, Loading, MenuDivider, MenuItem, Popover, Segmented, cx, toast } from "./ui";
+import { Badge, Button, buttonClass, confirmDialog, Empty, IconButton, inputClass, Loading, MenuDivider, MenuItem, Popover, Segmented, cx, toast } from "./ui";
 
 /** Width of the panel on wide screens; the page content moves aside by the same amount (see Shell). */
 const PANEL_W = "min(50vw, 760px)";
@@ -54,8 +54,8 @@ function Panel({ id, version, onVersion, onClose }: { id: string; version?: numb
     };
   }, []);
 
-  const tryClose = () => {
-    if (dirty && !confirm("修改还没保存，确定关闭？")) return;
+  const tryClose = async () => {
+    if (dirty && !(await confirmDialog({ title: "修改还没保存，确定关闭？", ok: "关闭", danger: true }))) return;
     onClose();
   };
   useEffect(() => {
@@ -108,7 +108,7 @@ function Panel({ id, version, onVersion, onClose }: { id: string; version?: numb
     });
   const remove = () =>
     act(async () => {
-      if (!confirm(`删除「${a!.title}」和它的全部 ${a!.version} 个版本？聊天里的卡片会显示为已删除。`)) return;
+      if (!(await confirmDialog({ title: `删除「${a!.title}」？`, body: `它的全部 ${a!.version} 个版本都会删除，聊天里的卡片会显示为已删除。`, ok: "删除", danger: true }))) return;
       await api.del(`/api/artifacts/${id}`);
       refresh();
       onClose();
@@ -213,7 +213,7 @@ function Panel({ id, version, onVersion, onClose }: { id: string; version?: numb
           {draft !== null ? (
             <>
               <input value={note} onChange={(e) => setNote(e.target.value)} maxLength={300} placeholder="改了什么（可选）" aria-label="修改说明" className={cx(inputClass, "h-7 py-0 flex-1 min-w-0")} />
-              <Button size="sm" variant="ghost" onClick={() => (dirty && !confirm("放弃这次修改？") ? null : setDraft(null))}>
+              <Button size="sm" variant="ghost" onClick={async () => (dirty && !(await confirmDialog({ title: "放弃这次修改？", ok: "放弃", danger: true })) ? null : setDraft(null))}>
                 取消
               </Button>
               <Button size="sm" variant="primary" loading={busy} disabled={!dirty} onClick={save}>

@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { memo, useMemo, useState, type ReactNode } from "react";
 import { Link } from "react-router";
 import { api } from "../lib/api";
+import { INCIDENT_STATUS } from "../lib/audit";
 import { openInstanceWindow } from "../lib/instanceWindow";
 import { useAppearance } from "../lib/appearance";
 import { clock, duration, STATUS_TEXT, tokens } from "../lib/format";
@@ -13,7 +14,7 @@ import { ApprovalCard } from "./ApprovalCard";
 import { ArtifactCard, type DeliveredArtifact } from "./ArtifactCard";
 import { MessageAttachments } from "./Attachments";
 import { DesktopHelpCard, type DesktopHelp } from "./DesktopHelpCard";
-import { IncidentCard, IncidentStatus } from "./IncidentCard";
+import { IncidentCard } from "./IncidentCard";
 import { RichMessage } from "./Widget";
 import { cx, toast } from "./ui";
 
@@ -400,9 +401,9 @@ function NoticeLine({ item, incident, first, onChanged }: { item: Extract<Item, 
   const line = (
     <StatusLine icon={<Icon className="size-3.5" />}>
       {incident && first ? (
-        <span className="inline-flex items-center gap-2">
-          {incident.title} <IncidentStatus incident={incident} />
-        </span>
+        <>
+          {incident.title} · {INCIDENT_STATUS[incident.status] ?? incident.status}
+        </>
       ) : (
         item.text
       )}

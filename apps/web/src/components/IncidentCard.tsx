@@ -5,7 +5,7 @@ import { Link } from "react-router";
 import { api } from "../lib/api";
 import { timeAgo } from "../lib/format";
 import type { Incident } from "../lib/types";
-import { Badge, Button, Card, cx, toast } from "./ui";
+import { Badge, Button, Card, cx, StatusText, toast } from "./ui";
 
 export const INCIDENT_KIND: Record<Incident["kind"], string> = {
   start_failure: "启动失败",
@@ -30,8 +30,8 @@ const KIND_ICON: Record<Incident["kind"], typeof Eye> = {
   help: LifeBuoy,
 };
 
-const STATUS: Record<Incident["status"], { label: string; tone: "warn" | "muted" | "ok" | "accent" }> = {
-  analyzing: { label: "分析中", tone: "accent" },
+const STATUS: Record<Incident["status"], { label: string; tone: "warn" | "muted" | "ok" | "busy" }> = {
+  analyzing: { label: "分析中", tone: "busy" },
   open: { label: "待处理", tone: "warn" },
   auto: { label: "已自动处理", tone: "ok" },
   adopted: { label: "已采用方案", tone: "ok" },
@@ -43,9 +43,10 @@ export function IncidentIcon({ incident, className }: { incident: Pick<Incident,
   return <Icon className={cx("size-4 shrink-0", incident.status === "open" || incident.status === "analyzing" ? "text-warn" : "text-muted", className)} />;
 }
 
-export function IncidentStatus({ incident }: { incident: Incident }) {
+/** Where a report stands, as quiet status text (分析中 / 待处理 / 已采用方案…). */
+export function IncidentStatus({ incident }: { incident: Pick<Incident, "status"> }) {
   const s = STATUS[incident.status];
-  return <Badge tone={s.tone}>{s.label}</Badge>;
+  return <StatusText tone={s.tone}>{s.label}</StatusText>;
 }
 
 /**
@@ -128,7 +129,7 @@ export function IncidentCard({ incident, showAgent = true, showLink = true, clas
                 </div>
                 {o.detail && <div className="text-xs text-muted mt-0.5">{o.detail}</div>}
               </div>
-              <Button size="sm" variant={i === incident.recommended ? "primary" : "secondary"} loading={busy === i} disabled={busy !== null} onClick={() => void act(i)}>
+              <Button size="sm" variant={i === incident.recommended ? "primary" : "soft"} loading={busy === i} disabled={busy !== null} onClick={() => void act(i)}>
                 采用
               </Button>
             </div>
