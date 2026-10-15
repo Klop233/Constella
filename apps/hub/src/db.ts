@@ -142,6 +142,11 @@ const ENSURE = `
     kind TEXT NOT NULL, detail TEXT NOT NULL, created_at TEXT NOT NULL
   );
   CREATE INDEX IF NOT EXISTS widget_issues_run ON widget_issues(run_id);
+  CREATE TABLE IF NOT EXISTS ui_blocks (
+    id TEXT PRIMARY KEY, run_id TEXT NOT NULL, message_id TEXT NOT NULL, block_id TEXT NOT NULL,
+    title TEXT NOT NULL, status TEXT NOT NULL, error TEXT, version INTEGER NOT NULL, doc TEXT NOT NULL, updated_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS ui_blocks_message ON ui_blocks(message_id);
 `;
 
 export type Db = DatabaseSync;

@@ -12,7 +12,6 @@ export const config = {
   dbPath: path.join(dataDir, "db", "constella.db"),
   agentsDir: path.join(dataDir, "agents"),
   desktopsDir: path.join(dataDir, "desktops"),
-  sharedSkillsDir: path.join(dataDir, "shared-skills"),
   /** Files of artifacts, one directory per artifact holding one file per version; never mounted into agents. */
   artifactsDir: path.join(dataDir, "artifacts"),
   backupsDir: path.join(dataDir, "backups"),

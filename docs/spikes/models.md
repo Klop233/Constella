@@ -16,7 +16,7 @@
 | gpt-6-astra | ✅ 通过（测了两次） | 31–41s | |
 | gpt-5.6-sol | ✅ 通过 | 86s | |
 | mimo-v2.5-pro | ✅ 通过 | 20s | |
-| anthropic/claude-opus-5.5 | ❌ 上游故障 | | OpenRouter key 月度额度已用完（$150.15 / $150，11-01 重置） |
+| anthropic/claude-opus-5.5 | ❌ 上游故障 | | OpenRouter 通道月度额度已用完 |
 | glm-5.3、deepseek-v4-flash | ❌ 上游故障 | | `401 User not found`（new-api 的 OpenAI 类通道，上游账号失效） |
 | kimi-k3、minimax-m3 | ❌ 上游故障 | | `404 Model not supported by any configured account in this group` |
 | gemini-3.8-flash | ❌ 上游故障 | | 先返回 429，之后变成 `503 No available channel`（通道疑似被自动禁用） |
@@ -24,7 +24,7 @@
 
 ## 结论
 
-- **Codex + new-api（Responses API）链路可用**。3 个能连通的模型全部完成了多步工具任务，验证了 ADR 0001 的方向。
+- **Codex + new-api（Responses API）链路可用**。3 个能连通的模型全部完成了多步工具任务，验证了 [ADR 0001](../decisions/0001-engine-codex.md) 的方向。
 - 其余失败**都发生在 new-api 的上游通道**（额度、账号、限流），和 Codex 无关；修好通道后重跑脚本即可补全这张表。
 - 对 Codex 不认识的模型（例如 gemini），会提示 "Model metadata not found"，然后使用默认参数。正式接入时由 hub 在 `config.toml` 里补上 `model_context_window` 等参数。
-- 默认模型暂定 **gpt-6-astra**。复盘用的便宜模型原计划是 deepseek-v4-flash，但目前不可用，暂时改用 mimo-v2.5-pro，等上游恢复后再评估。
+- 默认模型暂定 **gpt-6-astra**；复盘用的便宜模型用 mimo-v2.5-pro（deepseek-v4-flash 当时通道不可用，恢复后可再评估）。两者都能在 `deploy/.env` 里改。

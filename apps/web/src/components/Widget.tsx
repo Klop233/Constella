@@ -1,34 +1,19 @@
 import { splitWidgets } from "@constella/protocol";
 import { CircleX, Code2, Copy, Loader2, Maximize2, MoreHorizontal, RotateCw, Save, Sparkles, X } from "lucide-react";
-import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { memo, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { api } from "../lib/api";
 import { useArtifactPanel } from "../lib/artifacts";
 import { BRIDGE, buildSrcdoc, chartScriptUrl, themeSnapshot, usesChart, type WidgetTheme } from "../lib/widget-runtime";
 import { Markdown } from "./Markdown";
-import { MenuDivider, MenuItem, Popover, cx, toast } from "./ui";
+import { cx, toast } from "./ui";
 import { GenUIBlock, type BlockHost, type BlockMode, type BlockState, type Saved } from "./genui/Block";
+import { StreamUiBlock } from "./streamui/Block";
+import { HostContext, type WidgetIssue } from "./widgetHost";
+import { BlockTools, ErrorLine, FullScreen, WidgetSkeleton } from "./widgetParts";
+import type { MessageUi } from "../lib/streamui/docs";
 
-/** What the conversation page lends interactive blocks: sending a message, and the saved block states. */
-export interface WidgetHost {
-  conversationId: string;
-  send: (text: string) => Promise<void>;
-  /** Saved states by block key; undefined while loading. */
-  states: Record<string, Record<string, unknown>> | undefined;
-  saveState: (key: string, data: Record<string, unknown>) => void;
-  /** Records a block that broke, was cut off or needed fixing, so reflection can learn from it. */
-  reportIssue?: (issue: WidgetIssue) => void;
-}
-
-export interface WidgetIssue {
-  key: string;
-  runId: string;
-  title: string;
-  kind: "error" | "dropped" | "diagnostics" | "interrupted";
-  detail: string;
-}
-
-const HostContext = createContext<WidgetHost | null>(null);
-export const WidgetHostProvider = HostContext.Provider;
+export { WidgetHostProvider } from "./widgetHost";
+export type { WidgetHost, WidgetIssue } from "./widgetHost";
 
 /** The resolved site theme, following changes to the attributes on <html>. */
 function useTheme(): WidgetTheme {
@@ -45,48 +30,48 @@ function useTheme(): WidgetTheme {
 }
 
 /**
- * An agent reply: markdown, with any ```ui blocks rendered as interactive blocks in place.
+ * An agent reply: markdown, with any ui blocks rendered as interactive blocks in place.
  * `keyBase` (run and message id) makes each block's saved-state key; `noHeadingEmoji` is passed
- * through to the markdown parts (the 标题不用表情 setting).
+ * through to the markdown parts (the 标题不用表情 setting); `ui` carries the streaming-DSL documents
+ * the hub built from its `ui.op` events.
  */
-export const RichMessage = memo(function RichMessage({ text, streaming, keyBase, runId, className, noHeadingEmoji }: { text: string; streaming: boolean; keyBase: string; runId: string; className?: string; noHeadingEmoji?: boolean }) {
+export const RichMessage = memo(function RichMessage({ text, streaming, keyBase, runId, className, noHeadingEmoji, ui }: { text: string; streaming: boolean; keyBase: string; runId: string; className?: string; noHeadingEmoji?: boolean; ui?: MessageUi }) {
   const parts = useMemo(() => splitWidgets(text), [text]);
   if (parts.length === 1 && parts[0]?.kind === "md") return <Markdown text={text} className={className} noHeadingEmoji={noHeadingEmoji} />;
   let n = 0;
   return (
     <div className="space-y-4">
-      {parts.map((p, i) =>
-        p.kind === "md" ? (
-          <Markdown key={i} text={p.text} className={className} noHeadingEmoji={noHeadingEmoji} />
-        ) : p.format === "components" ? (
-          <ComponentWidget key={i} title={p.title} source={p.source} mode={p.closed ? "final" : streaming ? "streaming" : "interrupted"} stateKey={`${keyBase}:${n++}`} runId={runId} />
-        ) : p.closed || !streaming ? (
-          <Widget key={i} title={p.title} source={p.source} stateKey={`${keyBase}:${n++}`} runId={runId} interrupted={!p.closed} />
+      {parts.map((p, i) => {
+        if (p.kind === "md") return <Markdown key={i} text={p.text} className={className} noHeadingEmoji={noHeadingEmoji} />;
+        // The index a block takes among all ui blocks: the same one the hub labels its ops with.
+        const index = n++;
+        const stateKey = `${keyBase}:${index}`;
+        const mode = p.closed ? "final" : streaming ? "streaming" : "interrupted";
+        if (p.format === "json") {
+          return (
+            <StreamUiBlock
+              key={i}
+              title={p.title}
+              source={p.source}
+              mode={mode}
+              stateKey={stateKey}
+              runId={runId}
+              doc={ui?.docs[String(index)]}
+              status={ui?.status[String(index)]}
+              issues={ui?.issues[String(index)]}
+            />
+          );
+        }
+        if (p.format === "components") return <ComponentWidget key={i} title={p.title} source={p.source} mode={mode} stateKey={stateKey} runId={runId} />;
+        return p.closed || !streaming ? (
+          <Widget key={i} title={p.title} source={p.source} stateKey={stateKey} runId={runId} interrupted={!p.closed} />
         ) : (
           <WidgetSkeleton key={i} title={p.title} lines={p.source.split("\n").length} />
-        ),
-      )}
+        );
+      })}
     </div>
   );
 });
-
-function WidgetSkeleton({ title, lines }: { title: string; lines: number }) {
-  return (
-    <div className="rounded-xl border border-line bg-surface overflow-hidden">
-      <div className="h-8 flex items-center gap-2 px-3 text-[12.5px] text-muted border-b border-line">
-        <Loader2 className="size-3.5 animate-spin text-accent" strokeWidth={1.8} />
-        <span className="truncate">正在生成{title ? `「${title}」` : "交互界面"}…</span>
-        <span className="ml-auto tabular-nums text-[11px]">{lines} 行</span>
-      </div>
-      <div className="p-3.5 space-y-2.5" aria-hidden>
-        {[70, 92, 55].map((w) => (
-          <div key={w} className="h-2.5 rounded-full bg-surface-2 pulse-dot" style={{ width: `${w}%` }} />
-        ))}
-        <div className="h-24 rounded-lg bg-surface-2 pulse-dot" />
-      </div>
-    </div>
-  );
-}
 
 const MAX_INLINE_HEIGHT = 900;
 const READY_TIMEOUT_MS = 8000;
@@ -188,57 +173,6 @@ function Frame({
       style={fill ? { height: "100%" } : { height }}
       scrolling={fill || height >= MAX_INLINE_HEIGHT ? "auto" : "no"}
     />
-  );
-}
-
-/** Hover tools for a block (desktop): source, full screen, run again, and more. Blocks have no frame of their own, like ChatGPT. */
-function BlockTools({ code, onCode, onFull, onReload, source, onSave, saving, badge }: { code: boolean; onCode: () => void; onFull: () => void; onReload: () => void; source: string; onSave?: () => void; saving?: boolean; badge?: number }) {
-  const copySource = () => void navigator.clipboard.writeText(source).then(() => toast("已复制源码"), () => toast("复制失败", "danger"));
-  return (
-    <div className={cx("absolute -top-3 right-0 z-10 flex items-center gap-0.5 rounded-lg border border-line bg-surface p-0.5 shadow-sm transition-opacity", "opacity-0 group-hover/block:opacity-100 focus-within:opacity-100 pointer-coarse:hidden", code && "opacity-100")}>
-      <ToolButton label={code ? "看界面" : badge ? `看源码（${badge} 处诊断）` : "看源码"} onClick={onCode} active={code}>
-        <span className="relative">
-          <Code2 className="size-3.5" strokeWidth={1.8} />
-          {!!badge && <span className="absolute -right-1 -top-1 size-1.5 rounded-full bg-warn" />}
-        </span>
-      </ToolButton>
-      <ToolButton label="全屏" onClick={onFull}>
-        <Maximize2 className="size-3.5" strokeWidth={1.8} />
-      </ToolButton>
-      <Popover
-        label="更多"
-        side="bottom"
-        className="w-44"
-        triggerClassName="size-6 grid place-items-center rounded-md text-muted hover:text-[var(--text)] hover:bg-surface-2 aria-expanded:bg-surface-2"
-        trigger={<MoreHorizontal className="size-3.5" strokeWidth={1.8} />}
-      >
-        {(close) => (
-          <div className="p-1.5">
-            <MenuItem icon={<RotateCw className="size-4" strokeWidth={1.8} />} label="重新运行" onClick={() => { close(); onReload(); }} />
-            <MenuItem icon={<Copy className="size-4" strokeWidth={1.8} />} label="复制源码" onClick={() => { close(); copySource(); }} />
-            {onSave && (
-              <>
-                <MenuDivider />
-                <MenuItem icon={<Save className="size-4" strokeWidth={1.8} />} label={saving ? "保存中…" : "另存为成果"} onClick={() => { close(); onSave(); }} />
-              </>
-            )}
-          </div>
-        )}
-      </Popover>
-    </div>
-  );
-}
-
-function ErrorLine({ error, onRetry, onFix }: { error: string; onRetry: () => void; onFix?: () => void }) {
-  return (
-    <div className="flex items-center gap-2 text-[13px] text-danger min-w-0">
-      <CircleX className="size-3.5 shrink-0" strokeWidth={1.8} />
-      <span className="truncate">界面出错：{error}</span>
-      <span className="flex items-center gap-2 shrink-0 text-xs text-muted">
-        <button className="hover:text-[var(--text)]" onClick={onRetry}>重试</button>
-        {onFix && <button className="hover:text-[var(--text)]" onClick={onFix}>让 agent 修复</button>}
-      </span>
-    </div>
   );
 }
 
@@ -400,33 +334,4 @@ export function Widget({ title, source, stateKey, runId, interrupted }: { title:
   );
 }
 
-function ToolButton({ label, onClick, active, children }: { label: string; onClick: () => void; active?: boolean; children: ReactNode }) {
-  return (
-    <button aria-label={label} title={label} onClick={onClick} className={cx("size-6 grid place-items-center rounded-md text-muted hover:text-[var(--text)] hover:bg-surface-2", active && "bg-surface-2 text-[var(--text)]")}>
-      {children}
-    </button>
-  );
-}
 
-function FullScreen({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) {
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
-  return (
-    <div className="fixed inset-0 z-50 flex sm:p-6" role="dialog" aria-modal="true" aria-label={title}>
-      <div className="absolute inset-0 bg-black/30 backdrop-blur-[2px]" onClick={onClose} />
-      <div className="relative flex-1 flex flex-col bg-surface sm:border border-line sm:rounded-2xl shadow-xl overflow-hidden safe-bottom">
-        <div className="h-12 shrink-0 flex items-center gap-2 pl-4 pr-2 border-b border-line">
-          <Sparkles className="size-4 text-muted" strokeWidth={1.8} />
-          <div className="flex-1 min-w-0 truncate font-display font-semibold text-[15px]">{title}</div>
-          <button aria-label="关闭" title="关闭" onClick={onClose} className="size-8 grid place-items-center rounded-md text-muted hover:text-[var(--text)] hover:bg-surface-2">
-            <X className="size-4" strokeWidth={1.8} />
-          </button>
-        </div>
-        <div className="flex-1 min-h-0">{children}</div>
-      </div>
-    </div>
-  );
-}

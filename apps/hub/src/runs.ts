@@ -5,6 +5,7 @@ import { audit, type Db } from "./db.ts";
 import { decideApproval, type ApprovalMode } from "./safety.ts";
 import type { EventStore } from "./events.ts";
 import type { IncidentInput } from "./recovery.ts";
+import { UiStreams } from "./streamui.ts";
 
 export interface RunRow {
   id: string;
@@ -50,6 +51,12 @@ export interface ConversationRow {
 export interface RunDeps {
   db: Db;
   events: EventStore;
+  /**
+   * Reads the streaming UI DSL (```ui-json) out of replies as they are written. The hub passes its
+   * own instance so the stored documents are shared with the routes; a caller that leaves it out
+   * (unit tests) gets one of its own for the same database.
+   */
+  ui?: UiStreams;
   /** Make sure the agent's container is up and its runner connected. */
   ensureRunner(agentId: string): Promise<void>;
   sendToRunner(agentId: string, msg: HubToRunner): boolean;
@@ -158,7 +165,7 @@ interface ResumeRow {
 }
 
 export class RunManager {
-  #d: RunDeps;
+  #d: RunDeps & { ui: UiStreams };
   #finishedHooks: FinishedHook[] = [];
   #hubApprovals = new Map<string, HubApproval>();
   /** Runs whose continuation finish() already arranged; the cut-off / failure paths leave them alone. */
@@ -167,7 +174,7 @@ export class RunManager {
   #resumeTimer: NodeJS.Timeout | null = null;
 
   constructor(deps: RunDeps) {
-    this.#d = deps;
+    this.#d = { ...deps, ui: deps.ui ?? new UiStreams(deps.db, deps.events) };
   }
 
   #limits(): RunLimits {
@@ -349,6 +356,9 @@ export class RunManager {
   /** End a run. Returns false when it had already ended. `notify: false` when the caller reports the failure itself. */
   finish(runId: string, status: "done" | "failed" | "cancelled", error?: string, opts: { notify?: boolean } = {}): boolean {
     if (!this.transition(runId, status, error)) return false;
+    // A reply that was cut off mid-block still closes what it had built, so the block shows what it
+    // managed to render instead of hanging on a spinner.
+    this.#d.ui.finishRun(runId);
     const { db } = this.#d;
     // A continuation promised for when this run stops (watchdog split, supervisor restart).
     const onCancel = db.prepare("SELECT * FROM resumes WHERE run_id = ? AND status = 'on_cancel'").get(runId) as ResumeRow | undefined;
@@ -420,6 +430,10 @@ export class RunManager {
       );
     }
     this.#append(run, ev);
+    // A reply that carries a streaming UI block (```ui-json) is read here as it is written; the ops
+    // are appended as their own events, so the browser can build the interface incrementally.
+    if (ev.type === "message.delta") this.#d.ui.onText(run, ev.messageId, ev.text, false);
+    else if (ev.type === "message.completed") this.#d.ui.onText(run, ev.messageId, ev.text, true);
     if (ev.type === "approval.requested") {
       db.prepare(
         "INSERT INTO approvals (id, run_id, agent_id, kind, summary, detail, status, created_at, source) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, 'engine')",

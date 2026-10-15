@@ -30,6 +30,7 @@ import { Recovery } from "./recovery.ts";
 import { RunManager, type NotifyKind, type RunLimits } from "./runs.ts";
 import { Scheduler } from "./scheduler.ts";
 import { intelligentUiNote } from "./widgets.ts";
+import { UiStreams } from "./streamui.ts";
 import { Reflect } from "./reflect.ts";
 import { PERMISSION_KINDS, SMART_KINDS, type ApprovalMode, type PermissionKind } from "./safety.ts";
 import { OfficeService } from "./office.ts";
@@ -44,6 +45,8 @@ export interface Hub {
   credentials: Credentials;
   secrets: SecretStore;
   events: EventStore;
+  /** Streaming UI blocks inside replies: the ops are read out of the reply as it is written. */
+  ui: UiStreams;
   agents: Agents;
   runs: RunManager;
   /** Files and documents agents delivered, with their versions. */
@@ -393,6 +396,8 @@ export async function createHub(opts: { dbPath?: string; webDist?: string; logge
   const models = new ModelRegistry({ db, secrets, newapiBaseUrl: config.newapi.baseUrl, newapiKey: () => config.newapi.apiKey });
   const settings = new Settings(db, secrets, models);
   const events = new EventStore(db);
+  /** Streaming UI blocks (```ui-json) inside replies: parsing, caps, and the stored documents. */
+  const ui = new UiStreams(db, events);
   const containers = new Containers();
   const runners = new RunnerGateway();
   const newapi = new NewApi({ baseUrl: config.newapi.baseUrl, admin: () => settings.newapiAdmin() });
@@ -434,6 +439,7 @@ export async function createHub(opts: { dbPath?: string; webDist?: string; logge
   const runs = new RunManager({
     db,
     events,
+    ui,
     ensureRunner,
     sendToRunner: (agentId, msg) => runners.send(agentId, msg),
     startPayload: (agentId) => {
@@ -568,6 +574,7 @@ export async function createHub(opts: { dbPath?: string; webDist?: string; logge
     auth,
     secrets,
     events,
+    ui,
     agents,
     runs,
     artifacts,
