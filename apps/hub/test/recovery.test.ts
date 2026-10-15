@@ -325,6 +325,19 @@ describe("logins the owner types in", () => {
     expect(t.runs.get(r.runId)!.status).toBe("running");
   });
 
+  it("passes along which vault to save the typed login into, only one the card offered", async () => {
+    const t = setup();
+    const r = await t.runs.send({ agentId: "ag1", text: "登录" });
+    await tick();
+    const withSave = { ...spec, save: [{ id: "cred_1", name: "家用" }] };
+    const q = t.runs.requestSecret(r.runId, "登录", withSave, 60_000);
+    const ap = t.db.prepare("SELECT id FROM approvals").get() as { id: string };
+    const values = { "login.username": "me", "login.password": "pw-12345" };
+    expect(() => t.runs.provideSecret(ap.id, values, "user", "cred_other")).toThrow("不能保存");
+    t.runs.provideSecret(ap.id, values, "user", "cred_1");
+    await expect(q).resolves.toEqual({ status: "provided", values, actor: "user", save: "cred_1" });
+  });
+
   it("lets the owner allow the matching vault item instead of typing", async () => {
     const t = setup();
     const r = await t.runs.send({ agentId: "ag1", text: "登录" });

@@ -84,6 +84,8 @@ export const AUDIT_ACTION: Record<string, string> = {
   "credentials.read": "读取凭据",
   "credentials.read.failed": "读取凭据失败",
   "credentials.fill": "agent 登录时填入凭据",
+  "credentials.save": "把登录信息存进密码库",
+  "credentials.save.failed": "存进密码库失败",
   "secret.provide": "输入了 agent 需要的登录信息",
   "secret.vault": "允许 agent 使用密码库条目登录",
   "secret.decline": "拒绝提供 agent 需要的登录信息",

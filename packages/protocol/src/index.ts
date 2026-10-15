@@ -62,6 +62,8 @@ export const SecretSpec = z.object({
   vault: z.object({ name: z.string(), username: z.string().optional() }).optional(),
   /** Why the vault wasn't used (declined, slow reviewer), shown above the inputs. */
   note: z.string().optional(),
+  /** Unlocked vaults the typed login can be saved into (offered as a checkbox). */
+  save: z.array(z.object({ id: z.string(), name: z.string() })).max(10).optional(),
 });
 export type SecretSpec = z.infer<typeof SecretSpec>;
 

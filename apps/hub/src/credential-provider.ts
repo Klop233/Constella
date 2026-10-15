@@ -12,9 +12,12 @@ export interface CredentialProvider {
   sync(connection: CredentialConnection): Promise<void>;
   items(connection: CredentialConnection): Promise<CredentialItem[]>;
   read(connection: CredentialConnection, itemId: string, fields: string[]): Promise<Record<string, string>>;
+  /** Add a new login item (never changes an existing one); resolves with its id. */
+  create(connection: CredentialConnection, login: NewLogin): Promise<string>;
 }
+export interface NewLogin { name: string; username: string; password: string; uri: string }
 /** Runs `bw` with the prepared environment; injectable so the CLI contract can be tested. */
-export type CommandRunner = (env: NodeJS.ProcessEnv, args: string[]) => Promise<string>;
+export type CommandRunner = (env: NodeJS.ProcessEnv, args: string[], input?: string) => Promise<string>;
 interface VaultItem { id: string; name?: string; type?: number; login?: { username?: string; password?: string; totp?: string; uris?: { uri?: string }[] }; fields?: { name?: string; value?: string; type?: number }[] }
 const SESSION_MS = 15 * 60_000;
 
@@ -43,13 +46,15 @@ export function serverProblem(value: string): string | null {
   return "第三方服务器要用 https://；只有内网地址（如 192.168.x.x、*.local）可以用 http://";
 }
 
-const defaultRun: CommandRunner = (env, args) =>
+const defaultRun: CommandRunner = (env, args, input) =>
   new Promise((resolve, reject) => {
-    execFile("bw", args, { env, timeout: 60_000, maxBuffer: 16 * 1024 * 1024, windowsHide: true }, (err, stdout) => {
+    const child = execFile("bw", args, { env, timeout: 60_000, maxBuffer: 16 * 1024 * 1024, windowsHide: true }, (err, stdout) => {
       // The CLI's own output can contain vault data and authentication material: never forward it.
       if (err) reject(new Error("Bitwarden 操作失败，请检查连接、登录信息或解锁状态"));
       else resolve(stdout.trim());
     });
+    // Secrets go in on stdin, not on the command line where any process listing would show them.
+    if (input !== undefined) child.stdin?.end(input);
   });
 
 /** Bitwarden Password Manager over the official CLI; also serves Bitwarden-compatible servers. */
@@ -97,7 +102,7 @@ export class BitwardenProvider implements CredentialProvider {
     fs.chmodSync(file, 0o600);
     return file;
   }
-  async #command(c: CredentialConnection, args: string[], extra: Record<string, string> = {}): Promise<string> {
+  async #command(c: CredentialConnection, args: string[], extra: Record<string, string> = {}, input?: string): Promise<string> {
     const dir = this.#dir(c);
     const ca = this.#caFile(c, dir);
     const trust = ca ?? process.env.NODE_EXTRA_CA_CERTS;
@@ -109,7 +114,7 @@ export class BitwardenProvider implements CredentialProvider {
       ...(trust ? { NODE_EXTRA_CA_CERTS: trust } : {}),
       ...extra,
     };
-    return this.#run(env, args).catch(() => {
+    return this.#run(env, args, input).catch(() => {
       // Whatever the CLI or the runner said, it can contain vault data: replace it here as well, so
       // no call path can leak it even if the runner's own message is unsanitized.
       throw new Error("Bitwarden 操作失败，请检查连接、登录信息或解锁状态");
@@ -153,6 +158,15 @@ export class BitwardenProvider implements CredentialProvider {
         uris: (i.login?.uris ?? []).flatMap(u => typeof u.uri === "string" ? [u.uri.slice(0, 2000)] : []).slice(0, 20),
         fields: [ ...(i.login?.username != null ? ["login.username"] : []), ...(i.login?.password != null ? ["login.password"] : []), ...(i.login?.totp ? ["login.totp"] : []) ],
       }));
+    });
+  }
+  async create(c: CredentialConnection, login: NewLogin): Promise<string> {
+    return this.#withSession(c, async (env) => {
+      const item = { type: 1, name: login.name, notes: null, favorite: false, organizationId: null, folderId: null, login: { username: login.username, password: login.password, totp: null, uris: [{ match: null, uri: login.uri }] } };
+      const encoded = Buffer.from(JSON.stringify(item)).toString("base64");
+      const created = JSON.parse(await this.#command(c, ["create", "item"], env, encoded)) as { id?: string };
+      if (typeof created.id !== "string") throw new Error("Bitwarden 返回格式无效");
+      return created.id;
     });
   }
   async read(c: CredentialConnection, itemId: string, fields: string[]): Promise<Record<string, string>> {

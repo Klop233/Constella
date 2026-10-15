@@ -808,6 +808,8 @@ function buildServer(agent: AgentRow, d: McpDeps): McpServer {
       let note: string | undefined;
       let values: Record<string, string> | undefined;
       let via = "";
+      let saveTo: string | undefined;
+      let saveBy = "user";
 
       // The vault first: an item that belongs to this site and has the fields.
       let found = host ? await d.credentials.match(host, fields) : [];
@@ -854,6 +856,8 @@ function buildServer(agent: AgentRow, d: McpDeps): McpServer {
           fields: fields.map((f) => ({ name: f, label: FILL_FIELDS[f].label, secret: FILL_FIELDS[f].secret })),
           target,
           ...(hit && !d.credentials.approver() ? { vault: { name: hit.item.name, ...(hit.item.username ? { username: hit.item.username } : {}) } } : {}),
+          // A typed username + password can go into the vault for next time (never over an existing match).
+          ...(!hit && host && fields.includes("login.username") && fields.includes("login.password") && d.credentials.savable().length ? { save: d.credentials.savable() } : {}),
           ...(note ? { note } : {}),
         };
         const asked = await d.runs.requestSecret(r.id, `${why}：需要你提供${labels.join("、")}`, spec, ASK_WAIT_MS);
@@ -861,6 +865,8 @@ function buildServer(agent: AgentRow, d: McpDeps): McpServer {
           values = asked.values;
           d.credentials.remember(fields.filter((f) => FILL_FIELDS[f].secret).map((f) => values![f]!));
           via = "主人刚在聊天里输入的";
+          saveTo = asked.save;
+          saveBy = asked.actor;
         } else if (asked.status === "vault" && hit) {
           const req = await useVault(asked.actor);
           values = await readVault(req.id);
@@ -894,7 +900,16 @@ function buildServer(agent: AgentRow, d: McpDeps): McpServer {
       }
       logAction(runId, id, `填写${labels.join("、")}（${via.startsWith("密码库") ? "来自密码库" : "主人输入"}）`);
       d.credentials.logFill(agent.id, { target, fields, via: via.startsWith("密码库") ? "vault" : "typed" });
-      const head = `已填入${labels.join("、")}（${via}）。值没有返回给你，也不要再向主人要。`;
+      let saved = "";
+      if (saveTo && host) {
+        try {
+          const name = await d.credentials.save(saveTo, { site: host, username: values["login.username"]!, password: values["login.password"]! }, saveBy);
+          saved = `主人选择把它存进了密码库「${name}」，下次登录 ${host} 会自动取用。`;
+        } catch {
+          saved = "存进密码库没成功（密码库可能已锁定），下次还需要再输入。";
+        }
+      }
+      const head = `已填入${labels.join("、")}（${via}）。${saved}值没有返回给你，也不要再向主人要。`;
       if (!p) return text(`${head}${submit ? "已按回车。" : ""}需要确认结果时请截图。${on(id)}`);
       return text(`${head}\n\n${redact(await pageState(p), secrets)}`);
     }),

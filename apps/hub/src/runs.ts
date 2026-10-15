@@ -125,7 +125,7 @@ export function isTransientError(error: string | null | undefined): boolean {
 type FinishedHook = (run: RunRow) => void;
 
 interface HubApproval {
-  resolve: (r: { approved: boolean; answer?: string; values?: Record<string, string>; vault?: boolean; actor?: string }) => void;
+  resolve: (r: { approved: boolean; answer?: string; values?: Record<string, string>; save?: string; vault?: boolean; actor?: string }) => void;
   runId: string;
 }
 
@@ -142,7 +142,7 @@ export type DecisionResult = { status: "answered"; answer: string } | { status: 
  * vault item (`actor` is who), declined, no answer in time, or the run ended.
  */
 export type SecretResult =
-  | { status: "provided"; values: Record<string, string>; actor: string }
+  | { status: "provided"; values: Record<string, string>; actor: string; save?: string }
   | { status: "vault"; actor: string }
   | { status: "declined" | "timeout" | "ended" };
 
@@ -725,7 +725,7 @@ export class RunManager {
     timer.unref?.();
     return decided.then((r): SecretResult => {
       clearTimeout(timer);
-      if (r.approved && r.values) return { status: "provided", values: r.values, actor: r.actor ?? "user" };
+      if (r.approved && r.values) return { status: "provided", values: r.values, actor: r.actor ?? "user", ...(r.save ? { save: r.save } : {}) };
       if (r.approved && r.vault) return { status: "vault", actor: r.actor ?? "user" };
       if (timedOut) return { status: "timeout" };
       const row = this.#d.db.prepare("SELECT status FROM approvals WHERE id = ?").get(approvalId) as { status: string } | undefined;
@@ -734,7 +734,7 @@ export class RunManager {
   }
 
   /** What the owner typed into a "secret" card. Nothing here is stored or put in an event: it goes to the waiting call. */
-  provideSecret(approvalId: string, values: Record<string, string>, actor: string): void {
+  provideSecret(approvalId: string, values: Record<string, string>, actor: string, save?: string): void {
     const { db } = this.#d;
     const row = db.prepare("SELECT * FROM approvals WHERE id = ?").get(approvalId) as ApprovalRow | undefined;
     if (!row || row.kind !== "secret") throw new Error("approval not found");
@@ -751,12 +751,13 @@ export class RunManager {
       if (typeof v !== "string" || v === "") throw new Error(`请填写「${f.label}」`);
       given[f.name] = v;
     }
+    if (save && !spec.save?.some((c) => c.id === save)) throw new Error("这个密码库现在不能保存");
     db.prepare("UPDATE approvals SET status = 'approved', resolved_at = ? WHERE id = ?").run(nowIso(), approvalId);
     audit(db, actor, "secret.provide", { approvalId, fields: spec.fields.map((f) => f.name), target: spec.target ?? "" });
     const run = this.get(row.run_id);
     if (run) this.#append(run, { type: "approval.resolved", runId: run.id, approvalId, decision: "approve", by: "user", answer: "已输入" });
     this.#hubApprovals.delete(approvalId);
-    waiting.resolve({ approved: true, values: given, actor });
+    waiting.resolve({ approved: true, values: given, actor, ...(save ? { save } : {}) });
     this.#resumeIfNotWaiting(row.run_id);
   }
 

@@ -177,6 +177,24 @@ export class Credentials {
   secretValues(): string[] { return [...this.#redaction]; }
   /** Values the owner typed in for an agent: not from the vault, but scrubbed from events and notes the same way. */
   remember(values: string[]): void { this.#remember(values); }
+  /** Unlocked connections a typed login can be saved into. */
+  savable(): { id: string; name: string }[] { return this.connections().filter((c) => c.status === "unlocked").map((c) => ({ id: c.id, name: c.name })); }
+  /** Save a login the owner typed in as a new vault item (nothing existing is changed). */
+  async save(connectionId: string, login: { site: string; username: string; password: string }, actor: string): Promise<string> {
+    const c = this.#connection(connectionId);
+    if (!this.#provider.unlocked(c.id)) throw new Error("凭据连接未解锁");
+    const host = siteHost(login.site) ?? login.site;
+    try {
+      await this.#provider.create(c, { name: host, username: login.username, password: login.password, uri: `https://${host}` });
+    } catch (err) {
+      this.#log("save.failed", actor, undefined, { connection: c.name, target: host });
+      throw err;
+    }
+    this.#log("save", actor, undefined, { connection: c.name, target: host });
+    // Best effort: the next lookup should see the new item.
+    await this.#provider.sync(c).catch(() => {});
+    return c.name;
+  }
   /** A login filled into a page by `credentials_fill` (no values): on the access log and the audit trail. */
   logFill(agentId: string, detail: { target: string; fields: string[]; via: "vault" | "typed" }): void { this.#log("fill", agentId, undefined, detail); }
   /** Items of unlocked connections that belong to a site and hold every one of `fields`. */

@@ -4,7 +4,7 @@ import { useState } from "react";
 import { api } from "../lib/api";
 import { timeAgo } from "../lib/format";
 import type { Approval, SecretSpec } from "../lib/types";
-import { Badge, Button, Card, cx, inputClass, toast } from "./ui";
+import { Badge, Button, Card, cx, inputClass, Select, toast } from "./ui";
 
 const KIND: Record<string, string> = {
   command: "执行命令",
@@ -138,6 +138,9 @@ function DecisionOptions({ approval, busy, onPick }: { approval: Approval; busy:
 function SecretForm({ approval, spec, onDone }: { approval: Approval; spec: SecretSpec; onDone: () => void }) {
   const [values, setValues] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState<"submit" | "vault" | "deny" | null>(null);
+  const targets = spec.save ?? [];
+  const [saveTo, setSaveTo] = useState<string>(targets[0]?.id ?? "");
+  const [save, setSave] = useState(true);
   const ready = spec.fields.every((f) => (values[f.name] ?? "") !== "");
   const run = async (kind: "submit" | "vault" | "deny", call: () => Promise<unknown>, done: string) => {
     setBusy(kind);
@@ -156,7 +159,7 @@ function SecretForm({ approval, spec, onDone }: { approval: Approval; spec: Secr
       className="mt-2 space-y-2.5"
       onSubmit={(e) => {
         e.preventDefault();
-        if (ready && !busy) void run("submit", () => api.post(`/api/approvals/${approval.id}/secret`, { values }), "已提供");
+        if (ready && !busy) void run("submit", () => api.post(`/api/approvals/${approval.id}/secret`, { values, ...(targets.length && save && saveTo ? { save: saveTo } : {}) }), "已提供");
       }}
     >
       <div className="text-sm whitespace-pre-wrap">{approval.summary}</div>
@@ -193,6 +196,26 @@ function SecretForm({ approval, spec, onDone }: { approval: Approval; spec: Secr
           </label>
         ))}
       </div>
+      {targets.length > 0 && (
+        <label className="flex items-center gap-2 text-[13px]">
+          <input type="checkbox" checked={save} onChange={(e) => setSave(e.target.checked)} disabled={!!busy} className="size-4 accent-[var(--color-accent)]" />
+          <span className="min-w-0">
+            保存到密码库
+            {targets.length === 1 ? `「${targets[0]!.name}」` : null}，下次自动使用
+          </span>
+          {targets.length > 1 && (
+            <Select
+              value={saveTo}
+              onChange={setSaveTo}
+              options={targets.map((t) => ({ value: t.id, label: t.name }))}
+              label="保存到哪个密码库"
+              size="sm"
+              disabled={!save || !!busy}
+              className="w-32 shrink-0 ml-auto"
+            />
+          )}
+        </label>
+      )}
       <div className="text-xs text-muted">{spec.target ? `用于 ${spec.target}。` : ""}只会填进页面，不会写进聊天记录，也不会给到模型。</div>
       <div className="grid grid-cols-2 gap-2">
         <Button type="button" variant="secondary" loading={busy === "deny"} disabled={!!busy} onClick={() => void run("deny", () => api.post(`/api/approvals/${approval.id}`, { decision: "deny" }), "已告诉它不提供")}>

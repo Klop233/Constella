@@ -17,9 +17,9 @@ const ITEM = { id: "item-1", name: "GitHub", type: 1, login: { username: "me", p
 
 /** Records every CLI call and answers with canned output. */
 function fakeCli(answers: (args: string[]) => unknown = () => "") {
-  const calls: { args: string[]; env: NodeJS.ProcessEnv }[] = [];
-  const run = async (env: NodeJS.ProcessEnv, args: string[]): Promise<string> => {
-    calls.push({ args, env });
+  const calls: { args: string[]; env: NodeJS.ProcessEnv; input?: string }[] = [];
+  const run = async (env: NodeJS.ProcessEnv, args: string[], input?: string): Promise<string> => {
+    calls.push({ args, env, input });
     const out = answers(args);
     if (out instanceof Error) throw out;
     return typeof out === "string" ? out : JSON.stringify(out);
@@ -42,6 +42,7 @@ function defaultAnswers(args: string[]): unknown {
   if (args[0] === "list") return [ITEM, { id: "note-1", name: "笔记", type: 2 }];
   if (args[0] === "get" && args[1] === "item") return ITEM;
   if (args[0] === "get" && args[1] === "totp") return "654321";
+  if (args[0] === "create") return { id: "item-new", type: 1 };
   return "";
 }
 
@@ -178,5 +179,22 @@ describe("Bitwarden CLI contract", () => {
     const c = connect(s, "us");
     await expect(s.provider.unlock(c, "pw")).rejects.toThrow("Bitwarden 操作失败，请检查连接、登录信息或解锁状态");
     await expect(s.provider.unlock(c, "pw")).rejects.not.toThrow(/hunter2|session-key/);
+  });
+});
+
+describe("creating a login", () => {
+  it("sends the item on stdin, never on the command line, and needs an unlocked vault", async () => {
+    const s = setup();
+    const c = connect(s, "us");
+    await expect(s.provider.create(c, { name: "example.com", username: "me", password: "typed-pw-9", uri: "https://example.com" })).rejects.toThrow("解锁");
+    await s.provider.unlock(c, "master");
+    const id = await s.provider.create(c, { name: "example.com", username: "me", password: "typed-pw-9", uri: "https://example.com" });
+    expect(id).toBe("item-new");
+    const call = s.cli.find("create")!;
+    expect(call.args).toEqual(["create", "item"]);
+    expect(JSON.stringify(call.args)).not.toContain("typed-pw-9");
+    expect(call.env.BW_SESSION).toBe("session-key-123");
+    const sent = JSON.parse(Buffer.from(call.input!, "base64").toString());
+    expect(sent).toMatchObject({ type: 1, name: "example.com", login: { username: "me", password: "typed-pw-9", uris: [{ uri: "https://example.com" }] } });
   });
 });

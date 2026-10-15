@@ -49,6 +49,8 @@ async function withTools<T>(
   opts: {
     page?: ReturnType<typeof fakePage>;
     asked?: (a: SecretAsk) => unknown;
+    savable?: { id: string; name: string }[];
+    saveFails?: boolean;
     vaultItems?: { connection: { id: string; name: string }; item: { id: string; name: string; username?: string } }[];
     approver?: string | null;
     settled?: { status: string; reason?: string };
@@ -61,7 +63,7 @@ async function withTools<T>(
      VALUES ('a', 'a', '✨', 'assistant', 'p', 'm', 'auto', '{}', 'h', 'now', 'now')`,
   ).run();
   db.prepare("INSERT INTO runs (id, conversation_id, agent_id, prompt, status, model, created_at, last_event_at) VALUES ('r1', 'c1', 'a', 'p', 'running', 'm', 'now', 'now')").run();
-  const seen: Record<string, unknown[]> = { asked: [], requested: [], decided: [], read: [], remembered: [], actions: [], logged: [], revoked: [] };
+  const seen: Record<string, unknown[]> = { asked: [], requested: [], decided: [], read: [], remembered: [], actions: [], logged: [], revoked: [], saved: [] };
   const page = opts.page ?? fakePage("https://login.example.com/signin", () => "");
   const app = Fastify();
   registerMcp(app, {
@@ -92,6 +94,12 @@ async function withTools<T>(
       remember: (v: string[]) => void seen.remembered!.push(...v),
       revoke: (id: string) => void seen.revoked!.push(id),
       logFill: (_a: string, detail: unknown) => void seen.logged!.push(detail),
+      savable: () => opts.savable ?? [],
+      save: async (conn: string, login: unknown, actor: string) => {
+        if (opts.saveFails) throw new Error("x");
+        seen.saved!.push({ conn, login, actor });
+        return "家用";
+      },
     },
     browserHtml: () => false,
     instanceApproval: () => ({ create: false, update: false }),
@@ -114,6 +122,45 @@ const ENTRIES = [
 ];
 
 describe("credentials_fill", () => {
+  it("offers to save a typed login, saves it when the owner agrees, and says so to the agent", async () => {
+    const page = fakePage("https://example.com/login", () => "");
+    await withTools(
+      {
+        page,
+        savable: [{ id: "c1", name: "家用" }],
+        asked: () => ({ status: "provided", values: { "login.username": "me", "login.password": "typed-pw-7" }, actor: "owner-1", save: "c1" }),
+      },
+      async (call, seen) => {
+        const res = await call("credentials_fill", { entries: ENTRIES });
+        expect((seen.asked![0] as SecretAsk).spec.save).toEqual([{ id: "c1", name: "家用" }]);
+        expect(seen.saved).toEqual([{ conn: "c1", login: { site: "example.com", username: "me", password: "typed-pw-7" }, actor: "owner-1" }]);
+        expect(res.content[0]!.text).toContain("存进了密码库「家用」");
+        expect(res.content[0]!.text).not.toContain("typed-pw-7");
+      },
+    );
+  });
+
+  it("a failed save doesn't fail the login, and no save is offered for password-only or when nothing is unlocked", async () => {
+    const page = fakePage("https://example.com/login", () => "");
+    await withTools(
+      { page, savable: [{ id: "c1", name: "家用" }], saveFails: true, asked: () => ({ status: "provided", values: { "login.username": "me", "login.password": "pw-123456" }, actor: "u", save: "c1" }) },
+      async (call) => {
+        const res = await call("credentials_fill", { entries: ENTRIES });
+        expect(res.isError).toBeFalsy();
+        expect(res.content[0]!.text).toContain("没成功");
+        expect(page.filled).toEqual({ 邮箱: "me", 密码: "pw-123456" });
+      },
+    );
+    await withTools({ page: fakePage("https://example.com/login", () => ""), savable: [{ id: "c1", name: "家用" }], asked: () => ({ status: "provided", values: { "login.password": "pw-123456" }, actor: "u" }) }, async (call, seen) => {
+      await call("credentials_fill", { entries: [{ field: "login.password", label: "密码" }] });
+      expect((seen.asked![0] as SecretAsk).spec.save).toBeUndefined();
+    });
+    await withTools({ page: fakePage("https://example.com/login", () => ""), asked: () => ({ status: "provided", values: { "login.username": "a", "login.password": "pw-123456" }, actor: "u" }) }, async (call, seen) => {
+      await call("credentials_fill", { entries: ENTRIES });
+      expect((seen.asked![0] as SecretAsk).spec.save).toBeUndefined();
+    });
+  });
+
   it("asks on the chat page when the vault has nothing, and fills without echoing the password", async () => {
     const page = fakePage("https://login.example.com/signin", (f) => `textbox "密码": ${f["密码"] ?? ""}\ntextbox "邮箱": ${f["邮箱"] ?? ""}`);
     await withTools(

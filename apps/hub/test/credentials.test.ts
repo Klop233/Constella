@@ -40,6 +40,11 @@ class FakeProvider implements Provider {
   async items() {
     return [{ id: "item-1", name: "GitHub", username: "me", uris: ["https://github.com"], fields: ["login.username", "login.password", "login.totp"] }];
   }
+  created: { name: string; username: string; password: string; uri: string }[] = [];
+  async create(_c: unknown, login: { name: string; username: string; password: string; uri: string }): Promise<string> {
+    this.created.push(login);
+    return `item-new-${this.created.length}`;
+  }
   async read(_c: unknown, _itemId: string, fields: string[]): Promise<Record<string, string>> {
     this.reads += 1;
     const out: Record<string, string> = {};
@@ -264,6 +269,22 @@ describe("grants", () => {
     s.credentials.lock(s.conn.id, "owner");
     expect(() => s.credentials.decide(req.id, "approve", "可以", "reviewer", req.reviewerRunId!)).toThrow();
     expect(s.credentials.status(req.id, "a", "run-a").status).not.toBe("approved");
+  });
+});
+
+describe("saving a typed login", () => {
+  it("adds a new item to an unlocked vault, and leaves the audit trail without the password", async () => {
+    const s = setup();
+    const conn = s.credentials.create({ name: "家用", provider: "bitwarden", server: "us", clientId: "user.abc", clientSecret: "secret-xyz" }, "owner");
+    expect(s.credentials.savable()).toEqual([]);
+    await expect(s.credentials.save(conn.id, { site: "https://www.Example.com/login", username: "me", password: "typed-pw-9" }, "owner")).rejects.toThrow("未解锁");
+    await s.credentials.unlock(conn.id, "master-password", "owner");
+    expect(s.credentials.savable()).toEqual([{ id: conn.id, name: "家用" }]);
+    await expect(s.credentials.save(conn.id, { site: "https://www.Example.com/login", username: "me", password: "typed-pw-9" }, "owner")).resolves.toBe("家用");
+    expect(s.provider.created).toEqual([{ name: "example.com", username: "me", password: "typed-pw-9", uri: "https://example.com" }]);
+    const dump = JSON.stringify([s.db.prepare("SELECT * FROM audit").all(), s.db.prepare("SELECT * FROM credential_access_log").all()]);
+    expect(dump).toContain("credentials.save");
+    expect(dump).not.toContain("typed-pw-9");
   });
 });
 

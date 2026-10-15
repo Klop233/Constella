@@ -715,8 +715,8 @@ export function registerRoutes(hub: Hub): void {
   // What the owner typed into a "secret" card (an agent's login). Its own route so the values are never part of
   // an answer, an audit record or an event: they are handed to the waiting tool call and nothing else.
   app.post("/api/approvals/:id/secret", async (req) => {
-    const b = z.object({ values: z.record(z.string().max(200), z.string().min(1).max(2000)) }).parse(req.body);
-    runs.provideSecret(id(req), b.values, actor(req));
+    const b = z.object({ values: z.record(z.string().max(200), z.string().min(1).max(2000)), save: z.string().max(100).optional() }).parse(req.body);
+    runs.provideSecret(id(req), b.values, actor(req), b.save);
     return { ok: true };
   });
 
