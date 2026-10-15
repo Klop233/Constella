@@ -107,8 +107,10 @@ function StreamUiBlockInner({ title, source, mode, stateKey, runId, doc: docFrom
         const safe = safeUrl(url);
         if (safe) window.open(safe, "_blank", "noopener,noreferrer");
       },
+      // Components that only have a plain "send this" affordance go through the dispatcher as well.
+      dispatch: (action) => runtime.dispatch(action, ""),
     }),
-    [],
+    [runtime],
   );
 
   // Tell the hub once per problem, after the block has settled, so reflection can learn from it.

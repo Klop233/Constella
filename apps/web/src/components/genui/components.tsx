@@ -1,4 +1,4 @@
-import { GENUI_HTML_TAGS, GENUI_SVG_TAGS } from "@constella/protocol";
+import { GENUI_HTML_TAGS, GENUI_SVG_TAGS, type UIAction } from "@constella/protocol";
 import DOMPurify from "dompurify";
 import { marked } from "marked";
 import { ArrowDown, ArrowRight, Check, ChevronDown, ChevronLeft, ChevronRight, Copy, RotateCcw, Send, X } from "lucide-react";
@@ -18,6 +18,12 @@ export interface Ctx {
   send: (text: string) => void;
   copy: (text: string) => void;
   open: (url: string) => void;
+  /**
+   * Runs a declarative action through the block's Action Dispatcher (rate limit, URL check,
+   * confirmation). Set by the streaming-UI host; the component-program host leaves it out, and the
+   * components below fall back to `send`.
+   */
+  dispatch?: (action: UIAction) => void;
 }
 
 export interface Node {
@@ -687,10 +693,11 @@ function ImageC({ p }: CompProps) {
 
 function Suggestions({ p, ctx }: CompProps) {
   const items: { label: string; text: string }[] = (Array.isArray(p.items) ? p.items : []).map((it: any) => (typeof it === "string" ? { label: it, text: it } : { label: str(it?.label ?? it?.text), text: str(it?.text ?? it?.label) })).filter((x: { label: string }) => x.label);
+  const go = (text: string) => (ctx.dispatch ? ctx.dispatch({ type: "send", text }) : ctx.send(text));
   return (
     <div className="flex flex-wrap gap-1.5">
       {items.map((it, i) => (
-        <button key={i} type="button" onClick={() => ctx.send(it.text)} className="inline-flex items-center gap-1.5 h-7 px-2.5 rounded-full border border-line bg-surface text-[13px] hover:border-[color-mix(in_oklab,var(--text)_25%,transparent)] hover:bg-surface-2">
+        <button key={i} type="button" onClick={() => go(it.text)} className="inline-flex items-center gap-1.5 h-7 px-2.5 rounded-full border border-line bg-surface text-[13px] hover:border-[color-mix(in_oklab,var(--text)_25%,transparent)] hover:bg-surface-2">
           <Send className="size-3 text-muted" strokeWidth={1.8} />
           {it.label}
         </button>
@@ -975,7 +982,11 @@ function Choice({ p, ctx }: CompProps) {
         <button
           type="button"
           disabled={!sel.length}
-          onClick={() => ctx.send(`${submit}${submit.endsWith("：") || submit.endsWith(":") ? "" : "："}${sel.map((s) => options.find((o) => o.value === s)?.label ?? s).join("、")}`)}
+          onClick={() => {
+            const text = `${submit}${submit.endsWith("：") || submit.endsWith(":") ? "" : "："}${sel.map((s) => options.find((o) => o.value === s)?.label ?? s).join("、")}`;
+            if (ctx.dispatch) ctx.dispatch({ type: "send", text });
+            else ctx.send(text);
+          }}
           className="h-8 px-3 rounded-md bg-accent text-white text-[13.5px] font-medium disabled:opacity-40 inline-flex items-center gap-1.5"
         >
           <Send className="size-3.5" strokeWidth={1.8} />

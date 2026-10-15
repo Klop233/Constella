@@ -56,6 +56,17 @@ function propsFor(node: UINode, value: unknown, runtime: UiBlockRuntime, _ctx: C
     if (initial !== undefined && p[binding.initial] === undefined) p[binding.initial] = initial;
     p[binding.value] = value !== undefined ? value : initial;
   }
+  // A button-like component the model gave a `send` / `copy` / `href` instead of an onClick: route it
+  // through the dispatcher too, so every side effect an interface can have goes through one place
+  // (rate limit, URL check, confirmation) rather than through the component's own shortcut.
+  if (spec.props.onClick && p.onClick === undefined) {
+    const send = typeof p.send === "string" ? p.send : undefined;
+    const copy = typeof p.copy === "string" ? p.copy : undefined;
+    const href = typeof p.href === "string" ? p.href : undefined;
+    if (send) p.onClick = () => runtime.dispatch({ type: "send", text: send }, node.id);
+    else if (copy) p.onClick = () => runtime.dispatch({ type: "copy", text: copy }, node.id);
+    else if (href) p.onClick = () => runtime.dispatch({ type: "open", url: href }, node.id);
+  }
   // A form submits by default: it gathers the fields inside it and sends them to the agent.
   if (node.type === "Form" && !p.onSubmit) {
     p.onSubmit = () =>
