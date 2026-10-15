@@ -25,14 +25,14 @@ export default function Audit() {
   const close = () => setParams({}, { replace: true });
 
   return (
-    <div>
+    <div className="lg:max-w-3xl">
       <Header title="审计" sub="出错、卡住和系统自动处理的记录；需要你决定的可以直接采用方案" />
-      <div className="px-4 pb-8 space-y-4 lg:max-w-3xl">
+      <div className="px-4 pb-8 space-y-4">
         <Tabs
           value={view}
           onChange={setView}
           options={[
-            { value: "open", label: open.length ? `待处理 ${open.length}` : "待处理" },
+            { value: "open", label: "待处理", count: open.length || undefined },
             { value: "all", label: "全部记录" },
             { value: "log", label: "操作日志" },
           ]}

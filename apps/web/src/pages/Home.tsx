@@ -5,11 +5,11 @@ import { useNavigate } from "react-router";
 import { ApprovalCard } from "../components/ApprovalCard";
 import { IncidentCard } from "../components/IncidentCard";
 import { InstanceThumb } from "../components/InstanceThumb";
-import { AgentAvatar, AgentStatus } from "../components/AgentBits";
-import { Badge, Card, Empty, Header, IconButton, Loading, Section, Sheet, cx } from "../components/ui";
+import { AgentAvatar, AgentStatus, RunStatus } from "../components/AgentBits";
+import { Button, Card, Empty, Header, IconButton, Loading, Section, SectionLink, Sheet, cx } from "../components/ui";
 import { api } from "../lib/api";
-import { KIND_INFO, leaseText } from "../lib/instances";
-import { STATUS_TEXT, statusTone, timeAgo } from "../lib/format";
+import { KIND_INFO } from "../lib/instances";
+import { timeAgo } from "../lib/format";
 import { useLiveStatus } from "../lib/live";
 import { useModelLabel } from "../lib/models";
 import type { Overview } from "../lib/types";
@@ -53,7 +53,7 @@ export default function Home() {
       {isLoading || !data ? (
         <Loading />
       ) : (
-        <div className="px-4 space-y-5 pb-6">
+        <div className="px-4 space-y-8 pb-6">
           {data.approvals.length > 0 && (
             <Section title={`${approvalsTitle(data.approvals.map((a) => a.kind))} · ${data.approvals.length}`}>
               <div className="space-y-3">
@@ -67,11 +67,7 @@ export default function Home() {
           {data.incidents.length > 0 && (
             <Section
               title={`需要你处理 · ${data.incidents.length}`}
-              action={
-                <button className="text-xs text-muted hover:text-[var(--text)]" onClick={() => nav("/audit")}>
-                  审计记录
-                </button>
-              }
+              action={<SectionLink onClick={() => nav("/audit")}>审计记录</SectionLink>}
             >
               <div className="space-y-3">
                 {data.incidents.slice(0, 3).map((i) => (
@@ -84,14 +80,14 @@ export default function Home() {
           <Section
             title="我的 agent"
             action={
-              <button className="text-xs text-muted hover:text-[var(--text)] flex items-center gap-0.5" onClick={() => nav("/agents/new")}>
-                <Plus className="size-4" /> 新建
-              </button>
+              <SectionLink onClick={() => nav("/agents/new")}>
+                <Plus /> 新建
+              </SectionLink>
             }
           >
             {data.agents.length === 0 ? (
               <Card>
-                <Empty title="还没有 agent" hint="从模板开始，几秒钟就能建好一个" action={<button className="text-accent font-medium" onClick={() => nav("/agents/new")}>新建 agent</button>} />
+                <Empty title="还没有 agent" hint="从模板开始，几秒钟就能建好一个" action={<Button variant="primary" onClick={() => nav("/agents/new")}>新建 agent</Button>} />
               </Card>
             ) : (
               <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-3">
@@ -112,22 +108,17 @@ export default function Home() {
           </Section>
 
           {data.desktops.length > 0 && (
-            <Section title="实例" action={<button className="text-xs text-muted hover:text-[var(--text)]" onClick={() => nav("/instances")}>全部</button>}>
+            <Section title="实例" action={<SectionLink onClick={() => nav("/instances")}>全部</SectionLink>}>
               <div className="flex gap-3 overflow-x-auto no-scrollbar -mx-4 px-4">
                 {data.desktops.map((d) => (
                   <Card key={d.id} className="w-44 lg:w-64 shrink-0 overflow-hidden" onClick={() => nav(`/instances/${d.id}`)}>
-                    <InstanceThumb d={d} width={360} className="aspect-[16/10]" />
+                    <InstanceThumb d={d} width={360} className="aspect-[16/10] border-b border-line" />
                     <div className="px-3 py-2 text-sm truncate flex items-center gap-1.5">
                       {(() => {
                         const Icon = KIND_INFO[d.kind].icon;
                         return <Icon className="size-3.5 text-muted shrink-0" />;
                       })()}
                       <span className="truncate">{d.name}</span>
-                      {(d.op || d.error) && (
-                        <Badge tone={leaseText(d, undefined).tone} className="ml-auto shrink-0">
-                          {leaseText(d, undefined).text}
-                        </Badge>
-                      )}
                     </div>
                   </Card>
                 ))}
@@ -152,7 +143,7 @@ export default function Home() {
                         {c.source === "schedule" && " · 定时"}
                       </div>
                     </div>
-                    {c.last_status && c.last_status !== "done" && <Badge tone={statusTone(c.last_status)}>{STATUS_TEXT[c.last_status]}</Badge>}
+                    <RunStatus status={c.last_status} />
                   </div>
                 ))}
               </Card>

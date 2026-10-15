@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useNavigate } from "react-router";
 import { InstanceFields, type InstanceDraft } from "../components/InstanceFields";
 import { InstanceThumb } from "../components/InstanceThumb";
-import { Badge, Button, Card, Empty, Header, IconButton, Loading, Segmented, Sheet, toast } from "../components/ui";
+import { Button, Card, Empty, Header, HeaderButton, Loading, Segmented, Sheet, StatusDot, toast } from "../components/ui";
 import { api, errorMessage } from "../lib/api";
 import { setAppearance, useAppearance } from "../lib/appearance";
 import { timeAgo } from "../lib/format";
@@ -18,7 +18,9 @@ export default function Desktops() {
   const nav = useNavigate();
   const view = useAppearance().instanceView;
   const qc = useQueryClient();
-  const list = useQuery({ queryKey: ["desktops"], queryFn: () => api.get<Desktop[]>("/api/desktops"),
+  const list = useQuery({
+    queryKey: ["desktops"],
+    queryFn: () => api.get<Desktop[]>("/api/desktops"),
     // Changes arrive over SSE; this is the safety net, and a faster check while something is starting or being repaired.
     refetchInterval: (q) => (q.state.data?.some((d) => d.op) ? 2_000 : 60_000),
   });
@@ -67,9 +69,7 @@ export default function Desktops() {
                 ]}
               />
             </div>
-            <IconButton label="新建实例" onClick={open}>
-              <Plus className="size-4" />
-            </IconButton>
+            <HeaderButton icon={<Plus />} label="新建实例" onClick={open} />
           </div>
         }
       />
@@ -79,7 +79,7 @@ export default function Desktops() {
         ) : !list.data?.length ? (
           <Card>
             <Empty
-              icon={<Monitor className="size-10" />}
+              icon={<Monitor className="size-6" strokeWidth={1.8} />}
               title="还没有实例"
               hint="新建一个浏览器、Linux 桌面或安卓实例并分给 agent；agent 需要时也可以自己新建"
               action={
@@ -99,12 +99,17 @@ export default function Desktops() {
               const info = (
                 <div className="flex-1 min-w-0">
                   <div className="font-medium truncate">{d.name}</div>
-                  <div className="text-xs text-muted truncate">
-                    {KIND_INFO[d.kind].label} · {users.length ? users.map((a) => a.emoji).join("") : "没有分给 agent"} · {timeAgo(d.last_used_at)}
+                  <div className="flex items-center gap-1 text-xs text-muted min-w-0 mt-0.5">
+                    <StatusDot tone={l.tone} className="shrink-0 max-w-[65%]">
+                      {l.text}
+                    </StatusDot>
+                    <span className="truncate">
+                      · {KIND_INFO[d.kind].label} · {users.length ? users.map((a) => a.emoji).join("") : "没有分给 agent"} · {timeAgo(d.last_used_at)}
+                    </span>
                   </div>
                   {p?.running && p.now && (
-                    <div className="text-[11.5px] text-muted tabular-nums truncate">
-                      CPU {cores(p.now.cpu)} · {p.memLimit ? `${bytes(p.now.mem).replace(" GB", "")}/${bytes(p.memLimit)}` : bytes(p.now.mem)}
+                    <div className="text-xs text-muted tabular-nums truncate mt-0.5">
+                      CPU {cores(p.now.cpu)} · 内存 {p.memLimit ? `${bytes(p.now.mem).replace(" GB", "")}/${bytes(p.memLimit)}` : bytes(p.now.mem)}
                     </div>
                   )}
                 </div>
@@ -115,17 +120,15 @@ export default function Desktops() {
                     <InstanceThumb d={d} width={160} className="w-20 sm:w-24 aspect-[16/10] rounded-md shrink-0" />
                     <Icon className="size-4 text-muted shrink-0 hidden sm:block" aria-label={KIND_INFO[d.kind].label} />
                     {info}
-                    <Badge tone={l.tone}>{l.text}</Badge>
                   </div>
                 );
               }
               return (
                 <Card key={d.id} className="overflow-hidden" onClick={() => nav(`/instances/${d.id}`)}>
-                  <InstanceThumb d={d} width={640} className="aspect-[16/10]" />
-                  <div className="px-4 py-3 flex items-center gap-2">
-                    <Icon className="size-4 text-muted shrink-0" aria-label={KIND_INFO[d.kind].label} />
+                  <InstanceThumb d={d} width={640} className="aspect-[16/10] border-b border-line" />
+                  <div className="px-3.5 py-3 flex items-start gap-2.5">
+                    <Icon className="size-4 text-muted shrink-0 mt-0.5" aria-label={KIND_INFO[d.kind].label} />
                     {info}
-                    <Badge tone={l.tone}>{l.text}</Badge>
                   </div>
                 </Card>
               );

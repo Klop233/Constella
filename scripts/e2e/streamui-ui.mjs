@@ -3,7 +3,7 @@
 // things the bridge can silently drop), screenshot it, then click the button the agent was asked to
 // include and confirm it started a new turn: the "interaction reaches the agent" half of the demo.
 //
-//   BASE=http://172.17.0.1:8790 CONV=cv-… CDP=ws://… node scripts/e2e/streamui-ui.mjs
+//   BASE=http://<docker host address>:8790 CONV=cv-… CDP=ws://… node scripts/e2e/streamui-ui.mjs
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";

@@ -1,10 +1,10 @@
 import { QueryClient, QueryClientProvider, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Activity, Archive, Brain, CalendarClock, ChevronDown, ChevronsUpDown, ClipboardCheck, Gauge, House, KeyRound, Layers, LogOut, Monitor, Palette, Plus, Search, Settings as SettingsIcon, Shield, SlidersHorizontal, Sparkles, ExternalLink, X } from "lucide-react";
+import { Activity, Archive, Brain, CalendarClock, ChevronDown, ChevronsUpDown, ClipboardCheck, Gauge, House, Layers, LogOut, Monitor, Palette, Plus, Search, Settings as SettingsIcon, Shield, SlidersHorizontal, Sparkles, ExternalLink, X } from "lucide-react";
 import { lazy, StrictMode, Suspense, useEffect, useState, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter, Navigate, NavLink, Route, Routes, useLocation, useNavigate, useParams, useSearchParams } from "react-router";
 import { registerSW } from "virtual:pwa-register";
-import { cx, Loading, toast, MenuDivider, MenuItem, navItemClass, Popover } from "./components/ui";
+import { ConfirmHost, cx, Loading, toast, MenuDivider, MenuItem, navItemClass, Popover, StatusDot } from "./components/ui";
 import "./index.css";
 import { useAppearance } from "./lib/appearance";
 import { api, ApiError, logout } from "./lib/api";
@@ -86,12 +86,12 @@ function OldInstanceLink() {
   return <Navigate to={`/instances/${useParams().id}`} replace />;
 }
 
-/** Conversation bullet, like Claude Code's session dots: hollow when idle, colored while something is going on. */
-function StatusDot({ status }: { status?: string | null }) {
-  if (status === "running" || status === "queued") return <span className="size-2 rounded-full bg-accent pulse-dot shrink-0" />;
-  if (status === "waiting_approval" || status === "paused_by_user") return <span className="size-2 rounded-full bg-[var(--warn)] shrink-0" />;
-  if (status === "failed") return <span className="size-2 rounded-full bg-[var(--danger)] shrink-0" />;
-  return <span className="size-2 rounded-full border border-[var(--muted)] opacity-60 shrink-0" />;
+/** A conversation's state in the sidebar: nothing while idle (Claude's list has no bullets), a dot while something is going on. */
+function ConvDot({ status }: { status?: string | null }) {
+  if (status === "running" || status === "queued") return <StatusDot tone="busy" label="进行中" />;
+  if (status === "waiting_approval" || status === "paused_by_user") return <StatusDot tone="warn" label="等你处理" />;
+  if (status === "failed") return <StatusDot tone="danger" label="失败" />;
+  return null;
 }
 
 /** Account row at the bottom of the sidebar; opens a Claude Code-style menu upward. */
@@ -202,23 +202,28 @@ function Sidebar() {
         {groups.map(({ agent: a, convs }) =>
           needle && !convs.length ? null : (
             <div key={a.id}>
-              <div className="group flex items-center h-7 pl-2.5 pr-1 text-[12.5px] text-muted">
+              <div className="group/agent flex items-center h-7 pl-2.5 pr-1 text-xs text-muted">
                 <NavLink to={`/agents/${a.id}`} className="flex-1 min-w-0 truncate hover:text-[var(--text)]">
                   {a.emoji} {a.name}
                 </NavLink>
-                <NavLink to={`/agents/${a.id}/chat`} aria-label={`和${a.name}开始新对话`} title="新对话" className="p-1 rounded hover:bg-[color-mix(in_oklab,var(--text)_7%,transparent)] hover:text-[var(--text)]">
-                  <Plus className="size-3.5" />
-                </NavLink>
-                <NavLink to={`/agents/${a.id}/edit`} aria-label={`${a.name}设置`} title="设置" className="p-1 rounded hover:bg-[color-mix(in_oklab,var(--text)_7%,transparent)] hover:text-[var(--text)]">
-                  <SlidersHorizontal className="size-3.5" />
-                </NavLink>
+                {/* With a mouse these show on hover, like Claude's row actions; touch screens always show them. */}
+                <span className="flex items-center pointer-fine:opacity-0 group-hover/agent:opacity-100 focus-within:opacity-100 transition-opacity">
+                  <NavLink to={`/agents/${a.id}/chat`} aria-label={`和${a.name}开始新对话`} title="新对话" className="p-1 rounded hover:bg-[color-mix(in_oklab,var(--text)_7%,transparent)] hover:text-[var(--text)]">
+                    <Plus className="size-3.5" />
+                  </NavLink>
+                  <NavLink to={`/agents/${a.id}/edit`} aria-label={`${a.name}设置`} title="设置" className="p-1 rounded hover:bg-[color-mix(in_oklab,var(--text)_7%,transparent)] hover:text-[var(--text)]">
+                    <SlidersHorizontal className="size-3.5" />
+                  </NavLink>
+                </span>
               </div>
               <div className="space-y-px">
                 {convs.slice(0, 8).map((c) => (
                   <div key={c.id} className="group/conv relative">
                     <NavLink to={`/c/${c.id}`} className={item}>
-                      <StatusDot status={c.last_status} />
-                      <span className="truncate pr-5">{c.title}</span>
+                      <span className="flex-1 truncate">{c.title}</span>
+                      <span className="w-4 flex justify-center shrink-0 group-hover/conv:invisible">
+                        <ConvDot status={c.last_status} />
+                      </span>
                     </NavLink>
                     <button
                       type="button"
@@ -376,6 +381,7 @@ function App() {
     <QueryClientProvider client={qc}>
       <BrowserRouter>
         <Toasts />
+        <ConfirmHost />
         <Gate>
           <ApprovalPopups />
           <Shell>

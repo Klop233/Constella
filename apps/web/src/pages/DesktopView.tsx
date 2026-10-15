@@ -1,10 +1,10 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Activity, ChevronLeft, ClipboardPaste, Eraser, Hand, Keyboard, Loader2, Maximize, MoreVertical, Pause, Play, Power, RotateCcw, Settings2, Stethoscope, Undo2, Wrench } from "lucide-react";
+import { Activity, ChevronLeft, ClipboardPaste, Eraser, Hand, Keyboard, Loader2, Maximize, MoreVertical, Pause, Play, Power, RotateCcw, Settings2, Smartphone, Stethoscope, Trash2, Undo2, Wrench } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router";
 import { InstanceFields, type InstanceDraft } from "../components/InstanceFields";
 import { PerfChart, compactBytes, compactCores, compactRate, type PerfSeriesDef } from "../components/PerfChart";
-import { Button, Empty, Field, Loading, Segmented, Sheet, StatTile, cx, inputClass, toast } from "../components/ui";
+import { Button, confirmDialog, Empty, Field, Loading, MenuDivider, MenuItem, Popover, Segmented, Sheet, StatTile, cx, inputClass, toast } from "../components/ui";
 import { ApiError, api, errorMessage } from "../lib/api";
 import { KIND_INFO, OP_LABEL, OP_NAME, leaseText } from "../lib/instances";
 import { RANGES, ROLE_LABEL, bytes, cores, rate, type InstancePerf, type PerfPoint, type PerfRange } from "../lib/perf";
@@ -46,7 +46,6 @@ export default function DesktopView() {
   const kbd = useRef<HTMLTextAreaElement>(null);
   const [fit, setFit] = useState(true);
   const [ctrl, setCtrl] = useState(false);
-  const [menu, setMenu] = useState(false);
   const [handback, setHandback] = useState(false);
   const [note, setNote] = useState("");
   const [paste, setPaste] = useState(false);
@@ -139,18 +138,15 @@ export default function DesktopView() {
    */
   const background = (action: "start" | "stop" | "restart" | "pause" | "repair", started: string) =>
     act(() => api.post(`/api/desktops/${id}/${action}${action === "repair" ? "" : "?wait=0"}`), started);
-  const confirmAgent = (what: string) => d?.leaseInfo.holder !== "agent" || confirm(`agent 正在使用这个实例，${what}会打断它的操作。继续吗？`);
-  const repair = () => {
-    if (!confirmAgent("修复")) return;
+  const repair = async () => {
+    if (d?.leaseInfo.holder === "agent" && !(await confirmDialog({ title: "修复这个实例？", body: "agent 正在使用它，修复会先停止再启动，打断它的操作。", ok: "修复", danger: true }))) return;
     setHealthOpen(false);
-    setMenu(false);
-    void background("repair", "开始修复，数据会保留");
+    await background("repair", "开始修复，数据会保留");
   };
-  const reset = () => {
-    if (!confirm(`清空重建会删掉「${d?.name ?? ""}」里的 App、数据和登录状态，无法恢复。继续吗？`)) return;
+  const reset = async () => {
+    if (!(await confirmDialog({ title: `清空重建「${d?.name ?? ""}」？`, body: "里面的 App、数据和登录状态都会删掉，无法恢复。", ok: "清空重建", danger: true }))) return;
     setHealthOpen(false);
-    setMenu(false);
-    void act(() => api.post(`/api/desktops/${id}/reset`, { confirmDataLoss: true }), "开始清空重建");
+    await act(() => api.post(`/api/desktops/${id}/reset`, { confirmDataLoss: true }), "开始清空重建");
   };
 
   const sendKey = (sym: number, code?: string) => {
@@ -193,7 +189,6 @@ export default function DesktopView() {
   const openSettings = () => {
     if (!d) return;
     setEditing({ name: d.name, kind: d.kind, options: d.options, agentIds: d.agentIds });
-    setMenu(false);
   };
   const saveSettings = async (confirmDataLoss = false) => {
     if (!editing || !d) return;
@@ -211,7 +206,7 @@ export default function DesktopView() {
       void qc.invalidateQueries({ queryKey: ["agents"] });
     } catch (err) {
       const e = err as Error & { code?: string };
-      if (e.code === "confirm" && confirm(`${e.message}。继续吗？`)) return saveSettings(true);
+      if (e.code === "confirm" && (await confirmDialog({ title: "继续保存？", body: e.message, ok: "继续", danger: true }))) return saveSettings(true);
       toast(errorMessage(err), "danger");
     } finally {
       setBusy(false);
@@ -246,9 +241,73 @@ export default function DesktopView() {
               <Undo2 className="size-4" /> 交还
             </Button>
           )}
-          <button aria-label="更多" className="size-10 grid place-items-center" onClick={() => setMenu(true)}>
-            <MoreVertical className="size-5" />
-          </button>
+          <Popover
+            label="更多"
+            side="bottom"
+            align="right"
+            className="w-64 p-1.5 text-[var(--text)]"
+            triggerClassName="size-10 grid place-items-center rounded-md hover:bg-white/10 aria-expanded:bg-white/10"
+            trigger={<MoreVertical className="size-5" />}
+          >
+            {(close) => {
+              const run = (fn: () => unknown) => () => {
+                close();
+                void fn();
+              };
+              return (
+                <>
+                  <MenuItem icon={<Maximize />} label={fit ? "原始大小（拖动查看）" : "适应屏幕"} onClick={run(() => setFit(!fit))} />
+                  <MenuItem icon={<Settings2 />} label="实例设置" onClick={run(openSettings)} />
+                  <MenuItem icon={<Activity />} label="性能" onClick={run(() => setPerfOpen(true))} />
+                  <MenuItem icon={<Stethoscope />} label="诊断与修复" onClick={run(() => setHealthOpen(true))} />
+                  {android && d?.options.googlePlay && running && (
+                    <MenuItem
+                      icon={<Smartphone />}
+                      label="Google 设备登记"
+                      onClick={run(() =>
+                        act(async () => {
+                          const r = await api.get<{ id: string | null; error?: string }>(`/api/desktops/${id}/android/gsf-id`);
+                          if (!r.id) throw new Error(r.error ?? "还没有生成设备 ID，打开一次 Play 商店后再试");
+                          setGsf(r.id);
+                        }),
+                      )}
+                    />
+                  )}
+                  {(running || d?.state === "paused") && <MenuDivider />}
+                  {!op && running && d?.leaseInfo.holder === "none" && <MenuItem icon={<Pause />} label="暂停（保留内存）" onClick={run(() => background("pause", "开始暂停"))} />}
+                  {!op && (running || d?.state === "paused") && (
+                    <MenuItem
+                      icon={<RotateCcw />}
+                      label="重启"
+                      onClick={run(async () => {
+                        if (d?.leaseInfo.holder === "agent" && !(await confirmDialog({ title: "重启这个实例？", body: "agent 正在使用它，重启会打断它的操作。", ok: "重启", danger: true }))) return;
+                        return background("restart", "开始重启");
+                      })}
+                    />
+                  )}
+                  {!op && (running || d?.state === "paused") && d?.leaseInfo.holder === "none" && <MenuItem icon={<Power />} label="停止" onClick={run(() => background("stop", "开始停止"))} />}
+                  <MenuDivider />
+                  {!op && (
+                    <MenuItem
+                      icon={<Trash2 />}
+                      label="删除实例"
+                      danger
+                      onClick={run(async () => {
+                        if (!(await confirmDialog({ title: `删除「${d?.name ?? ""}」？`, body: `里面的${android ? "App 和数据" : "浏览器登录状态和文件"}会一并删除，分给它的 agent 也会解除绑定。`, ok: "删除", danger: true }))) return;
+                        return act(() => api.del(`/api/desktops/${id}`), "已删除").then((ok) => ok && nav("/instances", { replace: true }));
+                      })}
+                    />
+                  )}
+                  <MenuDivider />
+                  <div className="px-2.5 py-1.5 text-xs text-muted leading-5">
+                    {android
+                      ? "接管后：点击＝点按，拖动＝滑动，右键＝返回；输入中文用「键盘」或「粘贴文字」。"
+                      : "横屏查看更清楚。接管后：单指点击＝左键，双指点击＝右键，双指拖动＝滚动。"}
+                  </div>
+                </>
+              );
+            }}
+          </Popover>
         </div>
       </div>
 
@@ -293,7 +352,7 @@ export default function DesktopView() {
                         <Play className="size-4" /> {d.error ? "重试启动" : "启动"}
                       </Button>
                       {d.error && (
-                        <Button loading={busy} onClick={repair}>
+                        <Button loading={busy} onClick={() => void repair()}>
                           <Wrench className="size-4" /> 修复
                         </Button>
                       )}
@@ -303,7 +362,7 @@ export default function DesktopView() {
                     </div>
                   )}
                   {d && !op && d.error && android && (
-                    <button type="button" className="text-xs underline opacity-70 hover:opacity-100" onClick={reset}>
+                    <button type="button" className="text-xs underline opacity-70 hover:opacity-100" onClick={() => void reset()}>
                       还是不行？清空重建（会丢掉 App 和数据）
                     </button>
                   )}
@@ -397,75 +456,6 @@ export default function DesktopView() {
         </div>
       )}
 
-      <Sheet open={menu} onClose={() => setMenu(false)} title={d?.name ?? "实例"}>
-        <div className="space-y-2 text-[var(--text)]">
-          <Button className="w-full" onClick={() => (setFit(!fit), setMenu(false))}>
-            <Maximize className="size-4" /> {fit ? "原始大小（拖动查看）" : "适应屏幕"}
-          </Button>
-          <div className="text-xs text-muted px-1">
-            {android
-              ? "接管后：点击＝点按，拖动＝滑动，右键＝返回；输入中文用「键盘」或「粘贴文字」。"
-              : "提示：横屏查看更清楚。接管后：单指点击＝左键，双指点击＝右键，双指拖动＝滚动。"}
-          </div>
-          <Button className="w-full" onClick={openSettings}>
-            <Settings2 className="size-4" /> 实例设置
-          </Button>
-          <Button className="w-full" onClick={() => (setMenu(false), setPerfOpen(true))}>
-            <Activity className="size-4" /> 性能
-          </Button>
-          {android && d?.options.googlePlay && running && (
-            <Button
-              className="w-full"
-              onClick={() =>
-                act(async () => {
-                  const r = await api.get<{ id: string | null; error?: string }>(`/api/desktops/${id}/android/gsf-id`);
-                  if (!r.id) throw new Error(r.error ?? "还没有生成设备 ID，打开一次 Play 商店后再试");
-                  setGsf(r.id);
-                })
-              }
-            >
-              Google 设备登记
-            </Button>
-          )}
-          <Button className="w-full" onClick={() => (setMenu(false), setHealthOpen(true))}>
-            <Stethoscope className="size-4" /> 诊断
-          </Button>
-          {running && d?.leaseInfo.holder === "none" && (
-            <Button className="w-full" disabled={!!op} onClick={() => void background("pause", "开始暂停").then(() => setMenu(false))}>
-              <Pause className="size-4" /> 暂停（保留内存）
-            </Button>
-          )}
-          {(running || d?.state === "paused") && (
-            <Button
-              className="w-full"
-              disabled={!!op}
-              onClick={() => {
-                if (!confirmAgent("重启")) return;
-                void background("restart", "开始重启").then(() => setMenu(false));
-              }}
-            >
-              <RotateCcw className="size-4" /> 重启
-            </Button>
-          )}
-          {(running || d?.state === "paused") && d?.leaseInfo.holder === "none" && (
-            <Button className="w-full" disabled={!!op} onClick={() => void background("stop", "开始停止").then(() => setMenu(false))}>
-              <Power className="size-4" /> 停止
-            </Button>
-          )}
-          <Button
-            variant="danger"
-            className="w-full"
-            disabled={!!op}
-            onClick={() => {
-              if (!confirm(`删除「${d?.name ?? ""}」？里面的${android ? "App 和数据" : "浏览器登录状态和文件"}会一并删除，分给它的 agent 也会解除绑定。`)) return;
-              void act(() => api.del(`/api/desktops/${id}`), "已删除").then((ok) => ok && nav("/instances", { replace: true }));
-            }}
-          >
-            删除
-          </Button>
-        </div>
-      </Sheet>
-
       <Sheet open={healthOpen} onClose={() => setHealthOpen(false)} title={`诊断 · ${d?.name ?? "实例"}`}>
         <div className="space-y-3 text-[var(--text)]">
           {health.isLoading ? (
@@ -492,7 +482,7 @@ export default function DesktopView() {
               )}
               <pre className="text-[11.5px] leading-relaxed bg-surface-2 rounded-lg px-3 py-2 whitespace-pre-wrap break-words max-h-64 overflow-y-auto">{health.data.detail || "没有更多信息"}</pre>
               <div className="grid grid-cols-2 gap-2">
-                <Button variant="primary" disabled={!!op || !!health.data.op} onClick={repair}>
+                <Button variant="primary" disabled={!!op || !!health.data.op} onClick={() => void repair()}>
                   <Wrench className="size-4" /> 修复
                 </Button>
                 <Button loading={health.isFetching} onClick={() => void health.refetch()}>
@@ -501,7 +491,7 @@ export default function DesktopView() {
               </div>
               <div className="text-xs text-muted">修复会先正常停止实例、清理上次强制停止留下的锁文件再启动；还不行就重建容器。浏览器登录状态、文件和安卓数据都会保留。</div>
               {android && (
-                <Button variant="danger" className="w-full" disabled={!!op || !!health.data.op} onClick={reset}>
+                <Button variant="danger" className="w-full" disabled={!!op || !!health.data.op} onClick={() => void reset()}>
                   <Eraser className="size-4" /> 清空重建（丢掉 App 和数据）
                 </Button>
               )}

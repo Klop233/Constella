@@ -1,5 +1,5 @@
-import { Check, ChevronDown, ChevronLeft, CircleAlert, Loader2, Minus, X } from "lucide-react";
-import { useEffect, useId, useLayoutEffect, useRef, useState, type ButtonHTMLAttributes, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
+import { Check, ChevronDown, ChevronLeft, CircleAlert, CircleDot, Loader2, Minus, X } from "lucide-react";
+import { useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore, type ButtonHTMLAttributes, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate } from "react-router";
 
@@ -86,25 +86,55 @@ export function Empty({ icon, title, hint, action }: { icon?: ReactNode; title: 
   );
 }
 
+/**
+ * Page top bar. Top-level pages (no `back`) get a large page title on wide screens, like Claude's pages:
+ * it scrolls away with the page instead of sticking, with the description under it and actions on the right.
+ * Phones and pages with a back button keep the compact 48px sticky bar.
+ */
 export function Header({ title, back, backMobileOnly, right, sub }: { title: ReactNode; back?: boolean | string; backMobileOnly?: boolean; right?: ReactNode; sub?: ReactNode }) {
   const nav = useNavigate();
+  const large = !back;
   return (
-    <header className="safe-top sticky top-0 z-20 bg-app/90 backdrop-blur-md">
-      <div className="h-12 flex items-center gap-1 px-2">
+    <header className={cx("safe-top sticky top-0 z-20 bg-app/90 backdrop-blur-md", large && "lg:static lg:bg-transparent lg:backdrop-blur-none")}>
+      <div className={cx("h-12 flex items-center gap-1 px-2", large && "lg:h-auto lg:items-end lg:gap-3 lg:px-4 lg:pt-8 lg:pb-6")}>
         {back ? (
           <button aria-label="返回" className={cx("size-8 grid place-items-center rounded-md hover:bg-surface-2 active:bg-surface-2", backMobileOnly && "lg:hidden")} onClick={() => (typeof back === "string" ? nav(back) : history.length > 1 ? nav(-1) : nav("/"))}>
             <ChevronLeft className="size-4" />
           </button>
         ) : (
-          <div className="w-2" />
+          <div className="w-2 lg:hidden" />
         )}
         <div className="flex-1 min-w-0">
-          <div className="font-display font-semibold text-[15px] truncate">{title}</div>
-          {sub && <div className="text-xs text-muted truncate -mt-0.5">{sub}</div>}
+          <h1 className={cx("font-display font-semibold text-[15px] truncate", large && "lg:text-2xl lg:font-medium lg:leading-tight")}>{title}</h1>
+          {sub && <div className={cx("text-xs text-muted truncate -mt-0.5", large && "lg:mt-1 lg:text-[13px]")}>{sub}</div>}
         </div>
-        <div className="flex items-center gap-1 pr-1">{right}</div>
+        <div className={cx("flex items-center gap-1 pr-1", large && "lg:gap-2 lg:pr-0")}>{right}</div>
       </div>
     </header>
+  );
+}
+
+/**
+ * A page's main action in the top bar (新建实例、新建任务…): an icon button on phones, a labelled
+ * secondary button next to the large page title on wide screens. `wide` keeps the label on phones
+ * too, for actions an icon alone doesn't explain (导入记忆).
+ */
+export function HeaderButton({ icon, label, onClick, wide }: { icon: ReactNode; label: string; onClick: () => void; wide?: boolean }) {
+  return (
+    <button
+      type="button"
+      aria-label={wide ? undefined : label}
+      title={wide ? undefined : label}
+      onClick={onClick}
+      className={cx(
+        "h-8 rounded-md text-muted hover:text-[var(--text)] hover:bg-surface-2 active:bg-surface-2 [&_svg]:size-4",
+        wide ? "inline-flex items-center gap-1.5 px-2 text-[13px]" : "w-8 grid place-items-center",
+        "lg:w-auto lg:inline-flex lg:items-center lg:gap-1.5 lg:px-3 lg:border lg:border-line lg:bg-surface lg:text-[var(--text)] lg:text-[13.5px] lg:font-medium",
+      )}
+    >
+      {icon}
+      <span className={wide ? undefined : "hidden lg:inline"}>{label}</span>
+    </button>
   );
 }
 
@@ -135,6 +165,74 @@ export function Sheet({ open, onClose, title, children }: { open: boolean; onClo
           </IconButton>
         </div>
         <div className="px-4 pb-5">{children}</div>
+      </div>
+    </div>
+  );
+}
+
+interface ConfirmRequest {
+  title: string;
+  body?: ReactNode;
+  /** The confirming button's text, a verb (删除、重启、继续). */
+  ok?: string;
+  /** Red confirming button: the action deletes or throws something away. */
+  danger?: boolean;
+  resolve: (ok: boolean) => void;
+}
+let confirming: ConfirmRequest | null = null;
+const confirmListeners = new Set<() => void>();
+const setConfirming = (next: ConfirmRequest | null) => {
+  confirming = next;
+  for (const l of confirmListeners) l();
+};
+
+/** Ask before doing something hard to undo; resolves true when confirmed. Use instead of window.confirm. */
+export function confirmDialog(request: Omit<ConfirmRequest, "resolve">): Promise<boolean> {
+  return new Promise((resolve) => {
+    confirming?.resolve(false);
+    setConfirming({ ...request, resolve });
+  });
+}
+
+/** Renders `confirmDialog` requests; mounted once at the app root. */
+export function ConfirmHost() {
+  const req = useSyncExternalStore(
+    (l) => {
+      confirmListeners.add(l);
+      return () => confirmListeners.delete(l);
+    },
+    () => confirming,
+  );
+  const done = (ok: boolean) => {
+    req?.resolve(ok);
+    setConfirming(null);
+  };
+  useEffect(() => {
+    if (!req) return;
+    // Capture phase, so Esc cancels only this dialog and not the sheet or panel under it.
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      req.resolve(false);
+      setConfirming(null);
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [req]);
+  if (!req) return null;
+  return (
+    <div className="fixed inset-0 z-[70] grid place-items-center p-4" role="alertdialog" aria-modal="true" aria-label={req.title}>
+      <div className="absolute inset-0 bg-black/30 backdrop-blur-[2px]" onClick={() => done(false)} />
+      <div className="relative w-full max-w-sm rounded-2xl border border-line bg-surface shadow-xl p-5">
+        <div className="font-display text-[15px] font-semibold">{req.title}</div>
+        {req.body && <div className="mt-1.5 text-[13.5px] text-muted leading-relaxed">{req.body}</div>}
+        <div className="mt-5 flex justify-end gap-2">
+          <Button onClick={() => done(false)}>取消</Button>
+          <Button autoFocus variant={req.danger ? "danger" : "primary"} onClick={() => done(true)}>
+            {req.ok ?? "确定"}
+          </Button>
+        </div>
       </div>
     </div>
   );
@@ -219,15 +317,28 @@ export function Segmented<T extends string>({ value, options, onChange }: { valu
   );
 }
 
-export function Section({ title, action, children }: { title: string; action?: ReactNode; children: ReactNode }) {
+/**
+ * A block of a page under its heading (15px, like a settings group); blocks stack with `space-y-8`.
+ * `small` is for blocks inside a sheet or panel, where the heading is a 12px muted label.
+ */
+export function Section({ title, action, children, small }: { title: string; action?: ReactNode; children: ReactNode; small?: boolean }) {
   return (
-    <section className="space-y-1.5">
-      <div className="flex items-center px-1">
-        <h2 className="flex-1 text-xs font-medium text-muted">{title}</h2>
+    <section className={small ? "space-y-1.5" : "space-y-2.5"}>
+      <div className={cx("flex items-center gap-2", small ? "px-1" : "min-h-7")}>
+        <h2 className={cx("flex-1", small ? "text-xs font-medium text-muted" : "text-[15px] font-semibold")}>{title}</h2>
         {action}
       </div>
       {children}
     </section>
+  );
+}
+
+/** A quiet text action at the right of a section heading (查看全部、新建…). */
+export function SectionLink({ onClick, children }: { onClick: () => void; children: ReactNode }) {
+  return (
+    <button type="button" onClick={onClick} className="flex items-center gap-1 text-[13px] text-muted hover:text-[var(--text)] [&_svg]:size-3.5">
+      {children}
+    </button>
   );
 }
 
@@ -375,14 +486,67 @@ export function SettingRow({ title, desc, children, wide, dense, onClick }: { ti
   );
 }
 
-/** Read-only state at the end of a row (可用 / 不可用 / 正常…): muted text after a small icon, no tinted chip. */
-export function StatusText({ tone = "muted", children }: { tone?: "ok" | "muted" | "danger" | "busy"; children: ReactNode }) {
-  const Icon = { ok: Check, muted: Minus, danger: CircleAlert, busy: Loader2 }[tone];
+/**
+ * Read-only state (可用 / 不可用 / 正常 / 进行中 / 已批准…): muted text after a small icon, no tinted chip.
+ * ✓ ok, — muted, spinner busy, ● warn (needs you), ⚠ danger (text turns red too). `icon` swaps the glyph (🔒 for a locked vault).
+ */
+export function StatusText({ tone = "muted", icon, children, className }: { tone?: "ok" | "muted" | "warn" | "danger" | "busy"; icon?: ReactNode; children: ReactNode; className?: string }) {
+  const Icon = { ok: Check, muted: Minus, warn: CircleDot, danger: CircleAlert, busy: Loader2 }[tone];
+  const color = { ok: "text-ok", muted: "", warn: "text-warn", danger: "", busy: "" }[tone];
   return (
-    <span className={cx("inline-flex items-center gap-1.5 text-[13px] whitespace-nowrap", tone === "danger" ? "text-danger" : "text-muted")}>
-      <Icon className={cx("size-3.5 shrink-0", tone === "ok" && "text-ok", tone === "busy" && "animate-spin")} strokeWidth={2} />
+    <span className={cx("inline-flex items-center gap-1.5 text-[13px] whitespace-nowrap", tone === "danger" ? "text-danger" : "text-muted", className)}>
+      {icon ? (
+        <span className={cx("shrink-0 [&_svg]:size-3.5", color)}>{icon}</span>
+      ) : (
+        <Icon className={cx("size-3.5 shrink-0", color, tone === "busy" && "animate-spin")} strokeWidth={2} />
+      )}
       {children}
     </span>
+  );
+}
+
+/**
+ * Presence (在线 / 休眠 / 空闲 / 使用中 / 你在操作): a 6px dot, then muted text. `busy` pulses in the accent color;
+ * `off` is a muted dot. Without children it is just the dot, with the state as its tooltip (`label`).
+ */
+export function StatusDot({ tone = "off", children, label, className }: { tone?: "ok" | "busy" | "warn" | "danger" | "off"; children?: ReactNode; label?: string; className?: string }) {
+  const dot = {
+    ok: "bg-[var(--ok)]",
+    busy: "bg-accent pulse-dot",
+    warn: "bg-[var(--warn)]",
+    danger: "bg-[var(--danger)]",
+    off: "bg-[color-mix(in_oklab,var(--muted)_70%,transparent)]",
+  }[tone];
+  if (children == null) return <span title={label} aria-label={label} role={label ? "img" : undefined} className={cx("size-1.5 rounded-full shrink-0", dot, className)} />;
+  return (
+    <span className={cx("inline-flex items-center gap-1.5 min-w-0 text-muted", className)}>
+      <span className={cx("size-1.5 rounded-full shrink-0", dot)} />
+      <span className="truncate">{children}</span>
+    </span>
+  );
+}
+
+/** Checkbox drawn the same everywhere (the native one follows the OS theme): 16px, accent fill with a check when on. */
+export function Checkbox({ checked, onChange, disabled, label, className }: { checked: boolean; onChange: (v: boolean) => void; disabled?: boolean; label?: string; className?: string }) {
+  return (
+    <button
+      type="button"
+      role="checkbox"
+      aria-checked={checked}
+      aria-label={label}
+      disabled={disabled}
+      onClick={(e) => {
+        e.stopPropagation();
+        onChange(!checked);
+      }}
+      className={cx(
+        "size-4 shrink-0 grid place-items-center rounded border transition-colors disabled:opacity-45",
+        checked ? "bg-accent border-transparent text-white" : "bg-surface border-[color-mix(in_oklab,var(--text)_30%,transparent)] hover:border-[color-mix(in_oklab,var(--text)_50%,transparent)]",
+        className,
+      )}
+    >
+      {checked && <Check className="size-3" strokeWidth={3} />}
+    </button>
   );
 }
 
@@ -394,10 +558,13 @@ export function navItemClass(active: boolean): string {
   );
 }
 
-/** Underline tabs: different views of the same data (请求日志 / 模型 / …). */
-export function Tabs<T extends string>({ value, options, onChange, right }: { value: T; options: { value: T; label: string }[]; onChange: (v: T) => void; right?: ReactNode }) {
+/**
+ * Underline tabs: different views of the same data (请求日志 / 模型 / …) or the parts of one object (对话 / 成果 / 管理).
+ * `count` is shown as a muted number after the label (待处理 3). Labels keep one weight so switching doesn't shift them.
+ */
+export function Tabs<T extends string>({ value, options, onChange, right }: { value: T; options: { value: T; label: string; count?: number }[]; onChange: (v: T) => void; right?: ReactNode }) {
   return (
-    <div className="flex items-end gap-5 border-b border-line">
+    <div role="tablist" className="flex items-end gap-5 border-b border-line">
       {options.map((o) => (
         <button
           key={o.value}
@@ -405,9 +572,10 @@ export function Tabs<T extends string>({ value, options, onChange, right }: { va
           role="tab"
           aria-selected={value === o.value}
           onClick={() => onChange(o.value)}
-          className={cx("-mb-px pb-2 text-[13.5px] border-b-2 transition-colors", value === o.value ? "border-[var(--color-accent)] font-semibold" : "border-transparent text-muted hover:text-[var(--text)]")}
+          className={cx("-mb-px pb-2 text-[13.5px] font-medium border-b-2 transition-colors whitespace-nowrap", value === o.value ? "border-[var(--color-accent)]" : "border-transparent text-muted hover:text-[var(--text)]")}
         >
           {o.label}
+          {o.count != null && <span className="ml-1.5 text-muted font-normal tabular-nums">{o.count}</span>}
         </button>
       ))}
       {right && <div className="ml-auto pb-2 text-xs text-muted">{right}</div>}

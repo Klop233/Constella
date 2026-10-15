@@ -50,20 +50,20 @@ export const OP_NAME: Record<InstanceOp, string> = {
   resetting: "清空重建",
 };
 
-/** Who is on an instance, or what state it is in, for badges. An operation under way and a failure come first. */
-export function leaseText(d: Desktop, agents: Agent[] | undefined): { text: string; tone: "ok" | "warn" | "accent" | "muted" | "danger" } {
-  if (d.op) return { text: OP_LABEL[d.op], tone: "muted" };
+/** Who is on an instance, or what state it is in, for its status line (a `StatusDot` tone). An operation under way and a failure come first. */
+export function leaseText(d: Desktop, agents: Agent[] | undefined): { text: string; tone: "ok" | "warn" | "busy" | "off" | "danger" } {
+  if (d.op) return { text: OP_LABEL[d.op], tone: "busy" };
   if (d.error) return { text: "出错了", tone: "danger" };
   const l = d.leaseInfo;
   if (l.holder === "human") return { text: "你在操作", tone: "warn" };
   if (l.holder === "agent") {
     const a = agents?.find((x) => x.id === l.agentId);
-    return { text: `${a ? `${a.emoji} ${a.name}` : "agent"} 使用中`, tone: "accent" };
+    return { text: `${a ? `${a.emoji} ${a.name}` : "agent"} 使用中`, tone: "busy" };
   }
   if (d.state === "running") return { text: "空闲", tone: "ok" };
-  if (d.state === "paused") return { text: "已暂停", tone: "muted" };
-  if (d.state === "starting") return { text: "启动中", tone: "muted" };
-  return { text: "已停止", tone: "muted" };
+  if (d.state === "paused") return { text: "已暂停", tone: "off" };
+  if (d.state === "starting") return { text: "启动中", tone: "off" };
+  return { text: "已停止", tone: "off" };
 }
 
 /** Whether a thumbnail (live, or the last frame kept when paused / stopped) may exist. */

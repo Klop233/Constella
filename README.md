@@ -4,10 +4,13 @@
 
 名字取自 constellation（星座）：每个 agent 是一颗星。
 
+> **English summary**: Constella is a self-hosted platform for running several agents from your phone. Each agent runs [Codex](https://github.com/openai/codex) in its own Docker container; browsers, Linux desktops and Android devices are lent out on demand and you can take over when a step needs a human; what agents learn is kept as git-versioned memory and skills. Models go through [new-api](https://github.com/QuantumNous/new-api) or any OpenAI Responses-compatible provider. The app and docs are Chinese-only for now. Licensed under AGPL-3.0.
+
 ## 为什么做这个
 
+手机上管 agent，常见做法是靠聊天机器人，桌面画面只能在电脑客户端看，配置项又多，出了问题得自己翻日志。
 
-Constella 的思路是：**干活的部分不自己写**，直接用 OpenAI 开源的 Codex 作为 agent 内核；自己只做外面那层，也就是多 agent 管理、桌面、记忆和手机端。模型默认走 [new-api](https://github.com/QuantumNous/new-api)，也可以在设置里再加别的 provider（任何支持 OpenAI Responses API 的地址），不绑定任何一家。
+Constella 的思路是：**干活的部分不自己写**，直接用 OpenAI 开源的 Codex 作为 agent 内核；自己只做外面那层，也就是多 agent 管理、实例、记忆和手机端。模型默认走 [new-api](https://github.com/QuantumNous/new-api)，也可以在设置里再加别的 provider（任何支持 OpenAI Responses API 的地址），不绑定任何一家。
 
 ## 能做什么
 
@@ -43,7 +46,7 @@ Constella 的思路是：**干活的部分不自己写**，直接用 OpenAI 开�
 **其他**
 - 定时任务：定时推送提醒，或者定时让 agent 去做某件事。也可以直接对 agent 说「每天早上 8 点提醒我……」
 - 推送走浏览器原生的 Web Push，可以再配 Telegram 当备用
-- 每个 agent 跑在独立容器里，搞坏了重建就行；需要操作宿主机的（比如运维用的 agent）要单独开权限，非只读命令每条都要你批
+- 每个 agent 跑在独立容器里，搞坏了重建就行；需要操作宿主机的（比如运维用的 agent）要单独开权限，非只读命令按「设置 → 权限」里的策略审批（默认自动批准，建议改成「危险时问我」）
 - 「设置 → 模型」：添加多个 provider，每个模型绑定一个 provider，显示成 `model (provider)`；同名模型可以挑一个省略 provider；每个模型一键测试连通；用量按模型、provider、agent 拆开看
 - 可以给每个 agent 在 new-api 里单独开令牌，分开统计花费、设每日预算
 - 「性能」页看这台服务器：CPU、内存、交换、负载、运行时间、磁盘和实时网速，带最近 1 小时 / 24 小时的曲线；下面按实例、agent 和 hub 服务列出各自占用的 CPU、内存、网络和进程数，点开是每个容器的明细；打开某个实例时也能看到它自己的性能曲线
@@ -295,7 +298,15 @@ scripts/e2e/run.sh     # 端到端测试
 | `images` | hub、agent、桌面（浏览器 / Linux），以及安卓的桥接、Redroid、模拟器镜像 |
 | `deploy` | docker-compose 和配置模板 |
 | `scripts` | 部署、测试用的脚本 |
-| `docs` | 设计文档、开发进度、技术选型记录 |
+| `docs` | 设计文档、前端规范、凭据说明、路线图、决策记录、实测记录 |
+
+## 安全
+
+hub 挂载了 `docker.sock`（等同宿主 root），agent 执行的是模型生成的命令，而且默认所有操作自动批准。部署前请读一遍 [SECURITY.md](SECURITY.md)，发现漏洞也请按里面的方式私下报告。
+
+## 参与贡献
+
+见 [CONTRIBUTING.md](CONTRIBUTING.md)；代码地图和约定在 [AGENTS.md](AGENTS.md)。
 
 ## 许可证
 
