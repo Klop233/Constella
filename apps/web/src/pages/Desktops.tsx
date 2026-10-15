@@ -1,11 +1,12 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Monitor, Plus } from "lucide-react";
+import { LayoutGrid, List, Monitor, Plus } from "lucide-react";
 import { useState } from "react";
 import { useNavigate } from "react-router";
 import { InstanceFields, type InstanceDraft } from "../components/InstanceFields";
 import { InstanceThumb } from "../components/InstanceThumb";
-import { Badge, Button, Card, Empty, Header, IconButton, Loading, Sheet, toast } from "../components/ui";
+import { Badge, Button, Card, Empty, Header, IconButton, Loading, Segmented, Sheet, toast } from "../components/ui";
 import { api } from "../lib/api";
+import { setAppearance, useAppearance } from "../lib/appearance";
 import { timeAgo } from "../lib/format";
 import { KIND_INFO, leaseText } from "../lib/instances";
 import { bytes, cores, type PerfData } from "../lib/perf";
@@ -15,6 +16,7 @@ const EMPTY: InstanceDraft = { name: "", kind: "browser", options: {}, agentIds:
 
 export default function Desktops() {
   const nav = useNavigate();
+  const view = useAppearance().instanceView;
   const qc = useQueryClient();
   const list = useQuery({ queryKey: ["desktops"], queryFn: () => api.get<Desktop[]>("/api/desktops"), refetchInterval: 20_000 });
   const agents = useQuery({ queryKey: ["agents"], queryFn: () => api.get<Agent[]>("/api/agents") });
@@ -51,9 +53,21 @@ export default function Desktops() {
         title="实例"
         sub="浏览器、Linux 桌面和安卓实例，随时查看和接管"
         right={
-          <IconButton label="新建实例" onClick={open}>
-            <Plus className="size-4" />
-          </IconButton>
+          <div className="flex items-center gap-2">
+            <div className="w-16">
+              <Segmented
+                value={view}
+                onChange={(v) => setAppearance({ instanceView: v })}
+                options={[
+                  { value: "card", label: <LayoutGrid className="size-3.5" />, title: "卡片" },
+                  { value: "list", label: <List className="size-3.5" />, title: "列表" },
+                ]}
+              />
+            </div>
+            <IconButton label="新建实例" onClick={open}>
+              <Plus className="size-4" />
+            </IconButton>
+          </div>
         }
       />
       <div className="px-4 pb-6">
@@ -73,28 +87,41 @@ export default function Desktops() {
             />
           </Card>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+          <div className={view === "card" ? "grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3" : "bg-surface rounded-xl border border-line divide-y divide-line overflow-hidden"}>
             {list.data.map((d) => {
               const l = leaseText(d, agents.data);
               const Icon = KIND_INFO[d.kind].icon;
               const users = agents.data?.filter((a) => d.agentIds.includes(a.id)) ?? [];
               const p = perf.data?.groups.find((g) => g.type === "instance" && g.id === d.id);
+              const info = (
+                <div className="flex-1 min-w-0">
+                  <div className="font-medium truncate">{d.name}</div>
+                  <div className="text-xs text-muted truncate">
+                    {KIND_INFO[d.kind].label} · {users.length ? users.map((a) => a.emoji).join("") : "没有分给 agent"} · {timeAgo(d.last_used_at)}
+                  </div>
+                  {p?.running && p.now && (
+                    <div className="text-[11.5px] text-muted tabular-nums truncate">
+                      CPU {cores(p.now.cpu)} · {p.memLimit ? `${bytes(p.now.mem).replace(" GB", "")}/${bytes(p.memLimit)}` : bytes(p.now.mem)}
+                    </div>
+                  )}
+                </div>
+              );
+              if (view === "list") {
+                return (
+                  <div key={d.id} onClick={() => nav(`/instances/${d.id}`)} className="flex items-center gap-3 px-3 py-2 cursor-pointer hover:bg-surface-2 active:bg-surface-2">
+                    <InstanceThumb d={d} width={160} className="w-20 sm:w-24 aspect-[16/10] rounded-md shrink-0" />
+                    <Icon className="size-4 text-muted shrink-0 hidden sm:block" aria-label={KIND_INFO[d.kind].label} />
+                    {info}
+                    <Badge tone={l.tone}>{l.text}</Badge>
+                  </div>
+                );
+              }
               return (
                 <Card key={d.id} className="overflow-hidden" onClick={() => nav(`/instances/${d.id}`)}>
                   <InstanceThumb d={d} width={640} className="aspect-[16/10]" />
                   <div className="px-4 py-3 flex items-center gap-2">
                     <Icon className="size-4 text-muted shrink-0" aria-label={KIND_INFO[d.kind].label} />
-                    <div className="flex-1 min-w-0">
-                      <div className="font-medium truncate">{d.name}</div>
-                      <div className="text-xs text-muted truncate">
-                        {KIND_INFO[d.kind].label} · {users.length ? users.map((a) => a.emoji).join("") : "没有分给 agent"} · {timeAgo(d.last_used_at)}
-                      </div>
-                      {p?.running && p.now && (
-                        <div className="text-[11.5px] text-muted tabular-nums truncate">
-                          CPU {cores(p.now.cpu)} · {p.memLimit ? `${bytes(p.now.mem).replace(" GB", "")}/${bytes(p.memLimit)}` : bytes(p.now.mem)}
-                        </div>
-                      )}
-                    </div>
+                    {info}
                     <Badge tone={l.tone}>{l.text}</Badge>
                   </div>
                 </Card>

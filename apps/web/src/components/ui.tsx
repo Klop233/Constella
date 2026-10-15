@@ -198,15 +198,18 @@ export function Toggle({ checked, onChange, label, disabled }: { checked: boolea
   );
 }
 
-export function Segmented<T extends string>({ value, options, onChange }: { value: T; options: { value: T; label: string }[]; onChange: (v: T) => void }) {
+/** `label` may be an icon; give such options a `title` so they keep an accessible name. */
+export function Segmented<T extends string>({ value, options, onChange }: { value: T; options: { value: T; label: ReactNode; title?: string }[]; onChange: (v: T) => void }) {
   return (
     <div className="flex h-7 p-0.5 rounded-md bg-surface-2 gap-0.5">
       {options.map((o) => (
         <button
           key={o.value}
           type="button"
+          title={o.title}
+          aria-label={o.title}
           onClick={() => onChange(o.value)}
-          className={cx("flex-1 h-6 rounded text-[13px] font-medium transition border", value === o.value ? "bg-surface border-line" : "border-transparent text-muted hover:text-[var(--text)]")}
+          className={cx("flex-1 h-6 rounded text-[13px] font-medium transition border grid place-items-center", value === o.value ? "bg-surface border-line" : "border-transparent text-muted hover:text-[var(--text)]")}
         >
           {o.label}
         </button>
