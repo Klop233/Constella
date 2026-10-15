@@ -133,7 +133,7 @@ export const GENUI_SCHEMA: Record<string, ComponentSpec> = {
   Step: { group: "结构", desc: "Steps 里的一步，可放任意组件", parent: "Steps", props: { title: s(), desc: s() } },
   Timeline: { group: "结构", desc: "时间线：放 Event，或用 items", props: { items: { type: "array" } } },
   Event: { group: "结构", desc: "Timeline 里的一项", parent: "Timeline", props: { time: s(), title: s(), desc: s(), done: b(), active: b(), tone: tone() } },
-  Tabs: { group: "结构", desc: "标签页：放 Tab", props: { value: s(), onChange: fn() } },
+  Tabs: { group: "结构", desc: "标签页：放 Tab", props: { value: s(), defaultValue: s("默认打开哪页（Tab 的 value 或 label）"), onChange: fn() } },
   Tab: { group: "结构", desc: "Tabs 里的一页", parent: "Tabs", props: { label: { type: "string", alias: ["title"] }, icon, value: s() } },
   Accordion: { group: "结构", desc: "折叠面板组：放 Details", props: { open: n("默认展开第几个") } },
   Details: { group: "结构", desc: "可展开的一段", props: { summary: { type: "string", alias: ["title"] }, icon, open: b() } },

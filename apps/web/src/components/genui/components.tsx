@@ -497,7 +497,11 @@ function Steps({ p, kids, render }: CompProps) {
 
 function Tabs({ p, kids, render }: CompProps) {
   const tabs = kids.filter((k): k is Node => typeof k !== "string" && k.t === "Tab");
-  const [cur, setCur] = useState(0);
+  const [cur, setCur] = useState(() => {
+    if (p.defaultValue === undefined) return 0;
+    const i = tabs.findIndex((t, k) => [str(t.p.value, String(k)), str(t.p.label ?? t.p.title)].includes(str(p.defaultValue)));
+    return Math.max(0, i);
+  });
   const onChange = fn(p.onChange);
   const controlled = p.value !== undefined ? Math.max(0, tabs.findIndex((t, i) => str(t.p.value, String(i)) === str(p.value))) : null;
   const i = Math.min(controlled ?? cur, Math.max(0, tabs.length - 1));
