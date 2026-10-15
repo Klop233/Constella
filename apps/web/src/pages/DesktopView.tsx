@@ -1,10 +1,10 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Activity, ChevronLeft, ClipboardPaste, Hand, Keyboard, Maximize, MoreVertical, Pause, Play, Power, RotateCcw, Settings2, Undo2 } from "lucide-react";
+import { Activity, ChevronLeft, ClipboardPaste, Hand, Keyboard, Maximize, MoreVertical, Pause, Play, Power, RotateCcw, Settings2, Smartphone, Trash2, Undo2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router";
 import { InstanceFields, type InstanceDraft } from "../components/InstanceFields";
 import { PerfChart, compactBytes, compactCores, compactRate, type PerfSeriesDef } from "../components/PerfChart";
-import { Button, Empty, Field, Loading, Segmented, Sheet, StatTile, cx, inputClass, toast } from "../components/ui";
+import { Button, confirmDialog, Empty, Field, Loading, MenuDivider, MenuItem, Popover, Segmented, Sheet, StatTile, cx, inputClass, toast } from "../components/ui";
 import { api } from "../lib/api";
 import { KIND_INFO, leaseText } from "../lib/instances";
 import { RANGES, ROLE_LABEL, bytes, cores, rate, type InstancePerf, type PerfPoint, type PerfRange } from "../lib/perf";
@@ -46,7 +46,6 @@ export default function DesktopView() {
   const kbd = useRef<HTMLTextAreaElement>(null);
   const [fit, setFit] = useState(true);
   const [ctrl, setCtrl] = useState(false);
-  const [menu, setMenu] = useState(false);
   const [handback, setHandback] = useState(false);
   const [note, setNote] = useState("");
   const [paste, setPaste] = useState(false);
@@ -156,7 +155,6 @@ export default function DesktopView() {
   const openSettings = () => {
     if (!d) return;
     setEditing({ name: d.name, kind: d.kind, options: d.options, agentIds: d.agentIds });
-    setMenu(false);
   };
   const saveSettings = async (confirmDataLoss = false) => {
     if (!editing || !d) return;
@@ -174,7 +172,7 @@ export default function DesktopView() {
       void qc.invalidateQueries({ queryKey: ["agents"] });
     } catch (err) {
       const e = err as Error & { code?: string };
-      if (e.code === "confirm" && confirm(`${e.message}。继续吗？`)) return saveSettings(true);
+      if (e.code === "confirm" && (await confirmDialog({ title: "继续保存？", body: e.message, ok: "继续", danger: true }))) return saveSettings(true);
       toast(e.message ?? String(err), "danger");
     } finally {
       setBusy(false);
@@ -209,9 +207,70 @@ export default function DesktopView() {
               <Undo2 className="size-4" /> 交还
             </Button>
           )}
-          <button aria-label="更多" className="size-10 grid place-items-center" onClick={() => setMenu(true)}>
-            <MoreVertical className="size-5" />
-          </button>
+          <Popover
+            label="更多"
+            side="bottom"
+            align="right"
+            className="w-64 p-1.5 text-[var(--text)]"
+            triggerClassName="size-10 grid place-items-center rounded-md hover:bg-white/10 aria-expanded:bg-white/10"
+            trigger={<MoreVertical className="size-5" />}
+          >
+            {(close) => {
+              const run = (fn: () => unknown) => () => {
+                close();
+                void fn();
+              };
+              return (
+                <>
+                  <MenuItem icon={<Maximize />} label={fit ? "原始大小（拖动查看）" : "适应屏幕"} onClick={run(() => setFit(!fit))} />
+                  <MenuItem icon={<Settings2 />} label="实例设置" onClick={run(openSettings)} />
+                  <MenuItem icon={<Activity />} label="性能" onClick={run(() => setPerfOpen(true))} />
+                  {android && d?.options.googlePlay && running && (
+                    <MenuItem
+                      icon={<Smartphone />}
+                      label="Google 设备登记"
+                      onClick={run(() =>
+                        act(async () => {
+                          const r = await api.get<{ id: string | null; error?: string }>(`/api/desktops/${id}/android/gsf-id`);
+                          if (!r.id) throw new Error(r.error ?? "还没有生成设备 ID，打开一次 Play 商店后再试");
+                          setGsf(r.id);
+                        }),
+                      )}
+                    />
+                  )}
+                  {(running || d?.state === "paused") && <MenuDivider />}
+                  {running && d?.leaseInfo.holder === "none" && <MenuItem icon={<Pause />} label="暂停（保留内存）" onClick={run(() => act(() => api.post(`/api/desktops/${id}/pause`), "已暂停"))} />}
+                  {(running || d?.state === "paused") && (
+                    <MenuItem
+                      icon={<RotateCcw />}
+                      label="重启"
+                      onClick={run(async () => {
+                        if (d?.leaseInfo.holder === "agent" && !(await confirmDialog({ title: "重启这个实例？", body: "agent 正在使用它，重启会打断它的操作。", ok: "重启", danger: true }))) return;
+                        return act(() => api.post(`/api/desktops/${id}/restart`), "已重启");
+                      })}
+                    />
+                  )}
+                  {(running || d?.state === "paused") && d?.leaseInfo.holder === "none" && <MenuItem icon={<Power />} label="停止" onClick={run(() => act(() => api.post(`/api/desktops/${id}/stop`), "已停止"))} />}
+                  <MenuDivider />
+                  <MenuItem
+                    icon={<Trash2 />}
+                    label="删除实例"
+                    danger
+                    onClick={run(async () => {
+                      if (!(await confirmDialog({ title: `删除「${d?.name ?? ""}」？`, body: `里面的${android ? "App 和数据" : "浏览器登录状态和文件"}会一并删除，分给它的 agent 也会解除绑定。`, ok: "删除", danger: true }))) return;
+                      return act(() => api.del(`/api/desktops/${id}`), "已删除").then(() => nav("/instances", { replace: true }));
+                    })}
+                  />
+                  <MenuDivider />
+                  <div className="px-2.5 py-1.5 text-xs text-muted leading-5">
+                    {android
+                      ? "接管后：点击＝点按，拖动＝滑动，右键＝返回；输入中文用「键盘」或「粘贴文字」。"
+                      : "横屏查看更清楚。接管后：单指点击＝左键，双指点击＝右键，双指拖动＝滚动。"}
+                  </div>
+                </>
+              );
+            }}
+          </Popover>
         </div>
       </div>
 
@@ -314,70 +373,6 @@ export default function DesktopView() {
           />
         </div>
       )}
-
-      <Sheet open={menu} onClose={() => setMenu(false)} title={d?.name ?? "实例"}>
-        <div className="space-y-2 text-[var(--text)]">
-          <Button className="w-full" onClick={() => (setFit(!fit), setMenu(false))}>
-            <Maximize className="size-4" /> {fit ? "原始大小（拖动查看）" : "适应屏幕"}
-          </Button>
-          <div className="text-xs text-muted px-1">
-            {android
-              ? "接管后：点击＝点按，拖动＝滑动，右键＝返回；输入中文用「键盘」或「粘贴文字」。"
-              : "提示：横屏查看更清楚。接管后：单指点击＝左键，双指点击＝右键，双指拖动＝滚动。"}
-          </div>
-          <Button className="w-full" onClick={openSettings}>
-            <Settings2 className="size-4" /> 实例设置
-          </Button>
-          <Button className="w-full" onClick={() => (setMenu(false), setPerfOpen(true))}>
-            <Activity className="size-4" /> 性能
-          </Button>
-          {android && d?.options.googlePlay && running && (
-            <Button
-              className="w-full"
-              onClick={() =>
-                act(async () => {
-                  const r = await api.get<{ id: string | null; error?: string }>(`/api/desktops/${id}/android/gsf-id`);
-                  if (!r.id) throw new Error(r.error ?? "还没有生成设备 ID，打开一次 Play 商店后再试");
-                  setGsf(r.id);
-                })
-              }
-            >
-              Google 设备登记
-            </Button>
-          )}
-          {running && d?.leaseInfo.holder === "none" && (
-            <Button className="w-full" onClick={() => act(() => api.post(`/api/desktops/${id}/pause`), "已暂停").then(() => setMenu(false))}>
-              <Pause className="size-4" /> 暂停（保留内存）
-            </Button>
-          )}
-          {(running || d?.state === "paused") && (
-            <Button
-              className="w-full"
-              onClick={() => {
-                if (d?.leaseInfo.holder === "agent" && !confirm("agent 正在使用这个实例，重启会打断它的操作。继续吗？")) return;
-                void act(() => api.post(`/api/desktops/${id}/restart`), "已重启").then(() => setMenu(false));
-              }}
-            >
-              <RotateCcw className="size-4" /> 重启
-            </Button>
-          )}
-          {(running || d?.state === "paused") && d?.leaseInfo.holder === "none" && (
-            <Button className="w-full" onClick={() => act(() => api.post(`/api/desktops/${id}/stop`), "已停止").then(() => setMenu(false))}>
-              <Power className="size-4" /> 停止
-            </Button>
-          )}
-          <Button
-            variant="danger"
-            className="w-full"
-            onClick={() => {
-              if (!confirm(`删除「${d?.name ?? ""}」？里面的${android ? "App 和数据" : "浏览器登录状态和文件"}会一并删除，分给它的 agent 也会解除绑定。`)) return;
-              void act(() => api.del(`/api/desktops/${id}`), "已删除").then(() => nav("/desktops", { replace: true }));
-            }}
-          >
-            删除
-          </Button>
-        </div>
-      </Sheet>
 
       <Sheet open={perfOpen} onClose={() => setPerfOpen(false)} title={`性能 · ${d?.name ?? "实例"}`}>
         <div className="space-y-3 text-[var(--text)]">

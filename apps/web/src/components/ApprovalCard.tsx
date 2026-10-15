@@ -4,7 +4,7 @@ import { useState } from "react";
 import { api } from "../lib/api";
 import { timeAgo } from "../lib/format";
 import type { Approval, SecretSpec } from "../lib/types";
-import { Badge, Button, Card, cx, inputClass, Select, toast } from "./ui";
+import { Badge, Button, Card, Checkbox, cx, inputClass, Select, toast } from "./ui";
 
 const KIND: Record<string, string> = {
   command: "执行命令",
@@ -77,7 +77,7 @@ export function ApprovalCard({ approval, showAgent = true, onResolved, className
       <pre className="mt-2 text-[13px] font-mono whitespace-pre-wrap break-all bg-surface-2 rounded-lg p-3 max-h-48 overflow-auto">{approval.summary}</pre>
       {approval.detail && <div className="mt-1.5 text-xs text-muted whitespace-pre-wrap">{approval.detail}</div>}
       <div className="mt-2.5 grid grid-cols-2 gap-2">
-        <Button variant="secondary" loading={busy === "deny"} disabled={!!busy} onClick={() => decide("deny")}>
+        <Button variant="soft" loading={busy === "deny"} disabled={!!busy} onClick={() => decide("deny")}>
           拒绝
         </Button>
         <Button variant="primary" loading={busy === "approve"} disabled={!!busy} onClick={() => decide("approve")}>
@@ -198,7 +198,7 @@ function SecretForm({ approval, spec, onDone }: { approval: Approval; spec: Secr
       </div>
       {targets.length > 0 && (
         <label className="flex items-center gap-2 text-[13px]">
-          <input type="checkbox" checked={save} onChange={(e) => setSave(e.target.checked)} disabled={!!busy} className="size-4 accent-[var(--color-accent)]" />
+          <Checkbox checked={save} onChange={setSave} disabled={!!busy} />
           <span className="min-w-0">
             保存到密码库
             {targets.length === 1 ? `「${targets[0]!.name}」` : null}，下次自动使用
@@ -218,10 +218,10 @@ function SecretForm({ approval, spec, onDone }: { approval: Approval; spec: Secr
       )}
       <div className="text-xs text-muted">{spec.target ? `用于 ${spec.target}。` : ""}只会填进页面，不会写进聊天记录，也不会给到模型。</div>
       <div className="grid grid-cols-2 gap-2">
-        <Button type="button" variant="secondary" loading={busy === "deny"} disabled={!!busy} onClick={() => void run("deny", () => api.post(`/api/approvals/${approval.id}`, { decision: "deny" }), "已告诉它不提供")}>
+        <Button type="button" variant="soft" loading={busy === "deny"} disabled={!!busy} onClick={() => void run("deny", () => api.post(`/api/approvals/${approval.id}`, { decision: "deny" }), "已告诉它不提供")}>
           不提供
         </Button>
-        <Button type="submit" variant={spec.vault ? "secondary" : "primary"} loading={busy === "submit"} disabled={!ready || !!busy}>
+        <Button type="submit" variant={spec.vault ? "soft" : "primary"} loading={busy === "submit"} disabled={!ready || !!busy}>
           提交
         </Button>
       </div>

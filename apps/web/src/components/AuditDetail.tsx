@@ -17,7 +17,7 @@ import {
 } from "../lib/audit";
 import { describeCron, fullTime, STATUS_TEXT, timeAgo } from "../lib/format";
 import type { Agent, AuditEntry, AuditEntryDetail } from "../lib/types";
-import { Badge, Loading, Section, Sheet, cx } from "./ui";
+import { Loading, Section, Sheet, cx } from "./ui";
 
 function Kv({ label, children, mono }: { label: string; children: React.ReactNode; mono?: boolean }) {
   return (
@@ -100,7 +100,7 @@ function Body({ entry, refs, loading, agents }: { entry: AuditEntry; refs: Audit
         <Loading />
       ) : (
         hasObject && (
-          <Section title="涉及">
+          <Section small title="涉及">
             <dl className="divide-y divide-[var(--border)]">
               {r.agent && (
                 <Kv label="agent">
@@ -177,8 +177,7 @@ function Body({ entry, refs, loading, agents }: { entry: AuditEntry; refs: Audit
                   <Link to="/credentials" className="hover:underline">
                     {r.credentialRequest.item || "凭据条目"}
                   </Link>
-                  <Badge className="ml-1.5">{CREDENTIAL_REQUEST_STATUS[r.credentialRequest.status] ?? r.credentialRequest.status}</Badge>
-                  <span className="text-muted"> · {r.credentialRequest.fields.map(fieldLabel).join("、") || "未指定字段"} · 提出 {fullTime(r.credentialRequest.createdAt)}</span>
+                  <span className="text-muted"> · {CREDENTIAL_REQUEST_STATUS[r.credentialRequest.status] ?? r.credentialRequest.status} · {r.credentialRequest.fields.map(fieldLabel).join("、") || "未指定字段"} · 提出 {fullTime(r.credentialRequest.createdAt)}</span>
                 </Kv>
               )}
               {r.incident && (
@@ -186,7 +185,7 @@ function Body({ entry, refs, loading, agents }: { entry: AuditEntry; refs: Audit
                   <Link to={`/audit?id=${r.incident.id}`} className="hover:underline">
                     {r.incident.title}
                   </Link>
-                  <Badge className="ml-1.5">{INCIDENT_STATUS[r.incident.status] ?? r.incident.status}</Badge>
+                  <span className="text-muted"> · {INCIDENT_STATUS[r.incident.status] ?? r.incident.status}</span>
                 </Kv>
               )}
             </dl>
@@ -195,7 +194,7 @@ function Body({ entry, refs, loading, agents }: { entry: AuditEntry; refs: Audit
       )}
 
       {changes.length > 0 && (
-        <Section title="变更">
+        <Section small title="变更">
           <dl className="divide-y divide-[var(--border)]">
             {changes.map(([key, c]) => (
               <Kv key={key} label={fieldLabel(key)}>
@@ -215,7 +214,7 @@ function Body({ entry, refs, loading, agents }: { entry: AuditEntry; refs: Audit
       )}
 
       {rest.length > 0 && (
-        <Section title="详情">
+        <Section small title="详情">
           <dl className="divide-y divide-[var(--border)]">
             {rest.map(([k, v]) => (
               <Kv key={k} label={k === "fields" ? "修改了" : detailKeyLabel(k)} mono={/Id$|^id$|^ref$/.test(k)}>

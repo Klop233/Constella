@@ -2,7 +2,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { ClipboardCopy, Loader2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
-import { Badge, Button, Sheet, cx, inputClass, toast } from "./ui";
+import { Badge, Button, Checkbox, Sheet, cx, inputClass, toast } from "./ui";
 
 interface PreviewItem {
   scope: "agent" | "user";
@@ -218,7 +218,7 @@ function Review({
                 const ok = it.status === "new";
                 return (
                   <label key={n} className={cx("flex items-start gap-2.5 rounded-lg border border-line px-3 py-2 text-[13px] leading-snug", ok ? "bg-surface cursor-pointer hover:bg-surface-2" : "bg-surface-2 text-muted")}>
-                    <input type="checkbox" className="mt-0.5 accent-[var(--color-accent)]" checked={picked.has(n)} disabled={!ok} onChange={() => onToggle(n)} />
+                    <Checkbox className="mt-px" checked={picked.has(n)} disabled={!ok} onChange={() => onToggle(n)} />
                     <span className="flex-1 min-w-0">{it.text}</span>
                     <span className="shrink-0 flex gap-1">
                       {it.conflict && ok && <Badge tone="warn">与现有记忆冲突</Badge>}

@@ -3,7 +3,6 @@ import { IMAGE_EXT, withAttachments } from "@constella/protocol";
 import { ArrowUp, Archive, ArchiveRestore, Loader2, Monitor, Plus, Square } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router";
-import { AgentDot } from "../components/AgentBits";
 import { ConversationArtifacts } from "../components/ArtifactList";
 import { ComposerAttachments, type PendingFile } from "../components/Attachments";
 import { ContextMeter, EffortPicker, ModelPicker, RunTimeoutPicker } from "../components/ChatControls";
@@ -369,15 +368,18 @@ export default function Chat() {
           )
         }
         title={
-          <span className="flex items-center gap-2 min-w-0">
-            <span className="truncate">{data?.conversation.title ?? "新对话"}</span>
+          // Claude-style breadcrumb: the agent (muted, opens its page) / this conversation.
+          <span className="flex items-center gap-1.5 min-w-0">
             {a && (
-              <button onClick={() => nav(`/agents/${a.id}`)} className="flex items-center gap-1.5 shrink-0 h-6 px-2 rounded-md bg-surface-2 text-xs font-normal text-muted hover:text-[var(--text)]">
-                <span>{a.emoji}</span>
-                {a.name}
-                <AgentDot agent={a} />
-              </button>
+              <>
+                <button onClick={() => nav(`/agents/${a.id}`)} title={a.name} className="flex items-center gap-1.5 shrink-0 max-w-[40%] font-normal text-muted hover:text-[var(--text)]">
+                  <span>{a.emoji}</span>
+                  <span className="truncate hidden sm:inline">{a.name}</span>
+                </button>
+                <span className="text-muted font-normal shrink-0">/</span>
+              </>
             )}
+            <span className="truncate">{data?.conversation.title ?? "新对话"}</span>
           </span>
         }
       />

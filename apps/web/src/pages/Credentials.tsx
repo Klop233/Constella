@@ -1,8 +1,8 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, KeyRound, Lock, LockOpen, Plus, RefreshCw, Search, Shield, Trash2, Unlock, X } from "lucide-react";
+import { Check, KeyRound, Lock, LockOpen, Plus, RefreshCw, Search, Shield, Trash2, Unlock } from "lucide-react";
 import { useState } from "react";
 import { api } from "../lib/api";
-import { Badge, Button, Card, Empty, Field, Header, Loading, Section, Select, Sheet, Tabs, cx, inputClass, toast } from "../components/ui";
+import { Button, Card, confirmDialog, Empty, Field, Header, HeaderButton, Loading, Select, SettingRow, Sheet, StatusText, Tabs, cx, inputClass, toast } from "../components/ui";
 
 type Connection = { id: string; name: string; provider: "bitwarden"; server: string; status: "locked" | "unlocked" | "error"; error?: string };
 type Item = { id: string; name: string; username?: string; uris: string[]; fields: string[] };
@@ -32,7 +32,8 @@ const actionLabel: Record<string, string> = {
   read: "读取凭据",
   "read.failed": "读取失败",
 };
-function tone(status: string): "muted" | "ok" | "warn" | "danger" | "accent" { if (["unlocked", "approved", "consumed"].includes(status)) return "ok"; if (["pending", "locked"].includes(status)) return "warn"; if (["error", "denied"].includes(status)) return "danger"; return "muted"; }
+/** Request states as quiet status text: waiting on someone is warn, granted is ok, the rest just ended. */
+function tone(status: Request["status"]): "muted" | "ok" | "warn" { return status === "pending" ? "warn" : status === "approved" || status === "consumed" ? "ok" : "muted"; }
 function ago(value: string) { const d = Date.parse(value); if (!Number.isFinite(d)) return value; const m = Math.floor((Date.now() - d) / 60000); return m < 1 ? "刚刚" : m < 60 ? `${m} 分钟前` : m < 1440 ? `${Math.floor(m / 60)} 小时前` : new Date(d).toLocaleDateString("zh-CN"); }
 
 export default function Credentials() {
@@ -49,14 +50,22 @@ export default function Credentials() {
   const refresh = () => void qc.invalidateQueries({ queryKey: ["credentials"] });
   const act = async (key: string, fn: () => Promise<unknown>, ok: string) => { setBusy(key); try { await fn(); toast(ok); refresh(); } catch (e) { toast(e instanceof Error ? e.message : String(e), "danger"); } finally { setBusy(null); } };
   const saveApprover = (approverAgentId: string | null) => act("approver", () => api.put("/api/credentials/settings", { approverAgentId }), "审批 agent 已保存");
-  return <div className="pb-8"><Header title="凭据与隐私" sub="Bitwarden 连接与访问审批" />
-    <div className="px-4 space-y-5">
-      <Card className="p-3.5 space-y-2"><div className="flex items-center gap-2"><Shield className="size-4 text-accent" /><div className="font-medium">安全边界</div></div><p className="text-xs text-muted leading-relaxed">主密码只在解锁时提交给服务器，不保存也不显示；连接信息加密存放。批准记录和访问历史里只有条目名、字段名和用途，没有密码本身。</p><p className="text-xs text-muted leading-relaxed">批准后，被申请的字段值会交给申请它的 agent，进入那次对话和模型上下文，也可能留在它自己的会话记录里。锁定、撤销和任务结束只能阻止之后的读取，收不回已经交出去的值。</p></Card>
-      <Section title="审批 agent"><div className="flex items-center gap-2"><Select label="审批 agent" className="flex-1 min-w-0" value={d.approverAgentId ?? ""} onChange={(v) => void saveApprover(v || null)} options={[{ value: "", label: "不指定（手动审批）" }, ...(agents.data ?? []).map(a => ({ value: a.id, label: `${a.emoji ? `${a.emoji} ` : ""}${a.name}` }))]} /><Badge tone={d.approverAgentId ? "accent" : "muted"}>{d.approverAgentId ? "已指定" : "手动"}</Badge></div></Section>
-      <Tabs value={tab} options={[{ value: "connections", label: `连接 (${d.connections.length})` }, { value: "requests", label: `访问请求 (${d.requests.filter(r => r.status === "pending").length})` }, { value: "history", label: "访问历史" }]} onChange={setTab} />
-      {tab === "connections" && <Connections data={d.connections} onAdd={() => setAdd(true)} onUnlock={setUnlock} onItems={setItems} act={act} busy={busy} />}
-      {tab === "requests" && <Requests requests={d.requests} agents={agents.data ?? []} act={act} busy={busy} />}
-      {tab === "history" && <History entries={d.accessLog} />}
+  return <div className="pb-8 lg:max-w-3xl"><Header title="凭据与隐私" sub="Bitwarden 连接与访问审批" right={<HeaderButton icon={<Plus />} label="添加连接" onClick={() => setAdd(true)} />} />
+    <div className="px-4 space-y-6">
+      <Card className="p-3.5 space-y-1.5">
+        <div className="flex items-center gap-2 text-[13.5px] font-medium"><Shield className="size-4 text-muted" strokeWidth={1.8} />安全边界</div>
+        <p className="text-[13px] text-muted leading-5">主密码只在解锁时提交给服务器，不保存也不显示；连接信息加密存放。批准记录和访问历史里只有条目名、字段名和用途，没有密码本身。</p>
+        <p className="text-[13px] text-muted leading-5">批准后，被申请的字段值会交给申请它的 agent，进入那次对话和模型上下文，也可能留在它自己的会话记录里。锁定、撤销和任务结束只能阻止之后的读取，收不回已经交出去的值。</p>
+      </Card>
+      <SettingRow wide title="审批 agent" desc="agent 申请凭据时先交给它审核；不指定就由你手动批准或拒绝。">
+        <Select label="审批 agent" className="w-full sm:w-44" value={d.approverAgentId ?? ""} onChange={(v) => void saveApprover(v || null)} options={[{ value: "", label: "不指定（手动审批）" }, ...(agents.data ?? []).map(a => ({ value: a.id, label: `${a.emoji ? `${a.emoji} ` : ""}${a.name}` }))]} />
+      </SettingRow>
+      <div className="space-y-3">
+        <Tabs value={tab} options={[{ value: "connections", label: "连接", count: d.connections.length }, { value: "requests", label: "访问请求", count: d.requests.filter(r => r.status === "pending").length || undefined }, { value: "history", label: "访问历史" }]} onChange={setTab} />
+        {tab === "connections" && <Connections data={d.connections} onUnlock={setUnlock} onItems={setItems} act={act} busy={busy} />}
+        {tab === "requests" && <Requests requests={d.requests} agents={agents.data ?? []} act={act} busy={busy} />}
+        {tab === "history" && <History entries={d.accessLog} />}
+      </div>
     </div>
     <AddSheet open={add} onClose={() => setAdd(false)} onSaved={refresh} />
     <UnlockSheet connection={unlock} onClose={() => setUnlock(null)} onSaved={refresh} />
@@ -64,20 +73,36 @@ export default function Credentials() {
   </div>;
 }
 
-function Connections({ data, onAdd, onUnlock, onItems, act, busy }: { data: Connection[]; onAdd: () => void; onUnlock: (c: Connection) => void; onItems: (s: { connection: Connection; values: Item[] }) => void; act: (key: string, fn: () => Promise<unknown>, ok: string) => Promise<void>; busy: string | null }) {
- return <Section title="Bitwarden 连接" action={<Button size="sm" variant="secondary" onClick={onAdd}><Plus className="size-3.5" />添加连接</Button>}><div className="divide-y divide-line border border-line rounded-xl bg-surface">{data.length === 0 ? <Empty icon={<KeyRound className="size-6" />} title="还没有 Bitwarden 连接" hint="添加连接后，agent 才能申请访问凭据。" action={<Button size="sm" onClick={onAdd}>添加连接</Button>} /> : data.map(c => <div key={c.id} className="p-3.5 space-y-2.5"><div className="flex items-start gap-2"><KeyRound className="size-4 mt-0.5 text-muted" /><div className="min-w-0 flex-1"><div className="font-medium truncate">{c.name}</div><div className="text-xs text-muted">Bitwarden · {serverText(c.server)}</div></div><Badge tone={tone(c.status)}>{c.status === "unlocked" ? <LockOpen className="size-3" /> : <Lock className="size-3" />}{statusLabel[c.status]}</Badge></div>{c.error && <div className="text-xs text-danger">{c.error}</div>}<div className="flex gap-1.5 justify-end">{c.status === "unlocked" ? <><Button size="sm" variant="soft" loading={busy === `sync-${c.id}`} onClick={() => void act(`sync-${c.id}`, () => api.post(`/api/credentials/connections/${c.id}/sync`), "已同步密码库")}><RefreshCw className="size-3.5" />同步</Button><Button size="sm" variant="soft" onClick={() => onItems({ connection: c, values: [] })}>查看项目</Button><Button size="sm" variant="secondary" onClick={() => void act(`lock-${c.id}`, () => api.post(`/api/credentials/connections/${c.id}/lock`), "连接已锁定")}><Lock className="size-3.5" />锁定</Button></> : <Button size="sm" onClick={() => onUnlock(c)}><Unlock className="size-3.5" />解锁</Button>}<Button size="sm" variant="ghost" className="text-danger" aria-label={`删除连接 ${c.name}`} onClick={() => { if (confirm(`确定删除“${c.name}”吗？`)) void act(`delete-${c.id}`, () => api.del(`/api/credentials/connections/${c.id}`), "连接已删除"); }}><Trash2 className="size-3.5" /></Button></div></div>)}</div></Section>;
+function Connections({ data, onUnlock, onItems, act, busy }: { data: Connection[]; onUnlock: (c: Connection) => void; onItems: (s: { connection: Connection; values: Item[] }) => void; act: (key: string, fn: () => Promise<unknown>, ok: string) => Promise<void>; busy: string | null }) {
+  if (!data.length) return <Card><Empty icon={<KeyRound className="size-6" strokeWidth={1.8} />} title="还没有 Bitwarden 连接" hint="点右上角「添加连接」，之后 agent 才能申请访问凭据。" /></Card>;
+  return <Card className="divide-y divide-line">{data.map(c => <div key={c.id} className="px-3.5 py-3 space-y-2.5">
+    <div className="flex items-center gap-2.5">
+      <KeyRound className="size-4 text-muted shrink-0" strokeWidth={1.8} />
+      <div className="min-w-0 flex-1"><div className="font-medium truncate">{c.name}</div><div className="text-xs text-muted truncate">Bitwarden · {serverText(c.server)}</div></div>
+      <StatusText tone={c.status === "unlocked" ? "ok" : c.status === "error" ? "danger" : "muted"} icon={c.status === "unlocked" ? <LockOpen /> : c.status === "locked" ? <Lock /> : undefined}>{statusLabel[c.status]}</StatusText>
+    </div>
+    {c.error && <div className="text-xs text-danger">{c.error}</div>}
+    <div className="flex flex-wrap gap-1.5 justify-end">
+      {c.status === "unlocked" ? <>
+        <Button size="sm" loading={busy === `sync-${c.id}`} onClick={() => void act(`sync-${c.id}`, () => api.post(`/api/credentials/connections/${c.id}/sync`), "已同步密码库")}><RefreshCw className="size-3.5" />同步</Button>
+        <Button size="sm" onClick={() => onItems({ connection: c, values: [] })}>查看项目</Button>
+        <Button size="sm" onClick={() => void act(`lock-${c.id}`, () => api.post(`/api/credentials/connections/${c.id}/lock`), "连接已锁定")}><Lock className="size-3.5" />锁定</Button>
+      </> : <Button size="sm" onClick={() => onUnlock(c)}><Unlock className="size-3.5" />解锁</Button>}
+      <Button size="sm" variant="ghost" className="text-danger" aria-label={`删除连接 ${c.name}`} title="删除连接" onClick={async () => { if (await confirmDialog({ title: `删除连接「${c.name}」？`, body: "agent 之后不能再通过它申请凭据；密码库本身不受影响。", ok: "删除", danger: true })) void act(`delete-${c.id}`, () => api.del(`/api/credentials/connections/${c.id}`), "连接已删除"); }}><Trash2 className="size-3.5" /></Button>
+    </div>
+  </div>)}</Card>;
 }
 
 function Requests({ requests, agents, act, busy }: { requests: Request[]; agents: Agent[]; act: (key: string, fn: () => Promise<unknown>, ok: string) => Promise<void>; busy: string | null }) {
   const name = (id: string) => agents.find(a => a.id === id)?.name ?? id.slice(0, 8);
-  return <Section title="访问请求"><div className="divide-y divide-line border border-line rounded-xl bg-surface">
+  return <Card className="divide-y divide-line">
     {requests.length === 0 ? <Empty title="暂无访问请求" hint="agent 申请凭据时会显示在这里，由指定的审批 agent 或你本人处理。" /> : requests.map(r => <div key={r.id} className="p-3.5 space-y-2">
       <div className="flex items-start gap-2">
         <div className="flex-1 min-w-0">
           <div className="font-medium truncate">{r.itemName}</div>
           <div className="text-xs text-muted">{name(r.agentId)} · {r.target} · {ago(r.createdAt)}</div>
         </div>
-        <Badge tone={tone(r.status)}>{requestLabel[r.status]}</Badge>
+        <StatusText tone={tone(r.status)}>{requestLabel[r.status]}</StatusText>
       </div>
       <div className="text-xs text-muted">申请字段：{fieldsText(r.fields) || "未指定"}{r.reviewerAgentId ? ` · 审批：${name(r.reviewerAgentId)}` : " · 未指定审批 agent"}</div>
       <div className="text-xs">用途：{r.purpose}</div>
@@ -89,9 +114,9 @@ function Requests({ requests, agents, act, busy }: { requests: Request[]; agents
       </div>}
       {["approved", "consumed"].includes(r.status) && <div className="flex justify-end"><Button size="sm" variant="ghost" className="text-danger" onClick={() => void act(`revoke-${r.id}`, () => api.post(`/api/credentials/requests/${r.id}/revoke`), "访问已撤销")}>撤销访问</Button></div>}
     </div>)}
-  </div></Section>;
+  </Card>;
 }
-function History({ entries }: { entries: AccessLog[] }) { return <Section title="访问历史"><div className="border border-line rounded-xl bg-surface divide-y divide-line">{entries.length === 0 ? <Empty title="暂无访问记录" /> : entries.map(e => <div key={e.id} className="px-3.5 py-2.5 flex items-center gap-3"><div className="flex-1"><div className="text-[13px]">{actionLabel[e.action] ?? e.action}</div><div className="text-xs text-muted">{e.agentId ? `agent ${e.agentId.slice(0, 8)}` : "系统"}{e.requestId ? ` · 请求 ${e.requestId.slice(0, 8)}` : ""}</div></div><span className="text-xs text-muted tabular-nums">{ago(e.createdAt)}</span></div>)}</div></Section>; }
+function History({ entries }: { entries: AccessLog[] }) { return <Card className="divide-y divide-line">{entries.length === 0 ? <Empty title="暂无访问记录" /> : entries.map(e => <div key={e.id} className="px-3.5 py-2.5 flex items-center gap-3"><div className="flex-1"><div className="text-[13px]">{actionLabel[e.action] ?? e.action}</div><div className="text-xs text-muted">{e.agentId ? `agent ${e.agentId.slice(0, 8)}` : "系统"}{e.requestId ? ` · 请求 ${e.requestId.slice(0, 8)}` : ""}</div></div><span className="text-xs text-muted tabular-nums">{ago(e.createdAt)}</span></div>)}</Card>; }
 
 /** How a server reads in a list: the official regions, or the third-party address as given. */
 const serverText = (server: string) => (server === "us" ? "Bitwarden（美国）" : server === "eu" ? "Bitwarden（欧洲）" : server);

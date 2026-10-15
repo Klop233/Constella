@@ -3,7 +3,7 @@ import { ArrowUp, Bot, Brain, ClipboardPaste, History, Lightbulb, Loader2, Trash
 import { useState } from "react";
 import { Link } from "react-router";
 import { MemoryImport } from "../components/MemoryImport";
-import { Button, Empty, Header, Loading, Sheet, cx, toast } from "../components/ui";
+import { Button, Empty, Header, HeaderButton, Loading, Sheet, cx, toast } from "../components/ui";
 import { api } from "../lib/api";
 import { timeAgo } from "../lib/format";
 import type { Agent, LearningEvent } from "../lib/types";
@@ -88,19 +88,15 @@ export default function Learning() {
   const user = k ? items(k.memory.user) : [];
   const mine = k ? items(k.memory.agent) : [];
   return (
-    <div className="min-h-[calc(100dvh-5rem)] lg:min-h-dvh flex flex-col">
+    <div className="min-h-[calc(100dvh-5rem)] lg:min-h-dvh flex flex-col lg:max-w-3xl">
       <Header
         title="学习"
         sub="agent 记下的记忆和技能，每一次改动都可以撤销"
         right={
-          agent && (
-            <Button size="sm" variant="ghost" onClick={() => setImporting(true)}>
-              <ClipboardPaste className="size-3.5" /> 导入记忆
-            </Button>
-          )
+          agent && <HeaderButton wide icon={<ClipboardPaste />} label="导入记忆" onClick={() => setImporting(true)} />
         }
       />
-      <div className="flex-1 px-4 pb-4 space-y-8 lg:max-w-3xl">
+      <div className="flex-1 px-4 pb-4 space-y-8">
         <div className="flex gap-1 overflow-x-auto no-scrollbar -mx-4 px-4">
           {agents.data?.map((a) => (
             <Chip key={a.id} active={agentId === a.id} onClick={() => setPicked(a.id)}>

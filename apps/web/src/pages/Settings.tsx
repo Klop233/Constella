@@ -6,7 +6,7 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
 import { ModelSelect } from "./AgentEdit";
 import { AuditDetailSheet } from "../components/AuditDetail";
-import { Badge, Button, Field, Header, Loading, navItemClass, Segmented, Select, SettingGroup, SettingRow, Sheet, StatTile, StatusText, Tabs, Toggle, cx, inputClass, toast } from "../components/ui";
+import { Badge, Button, Checkbox, confirmDialog, Field, Header, Loading, navItemClass, Segmented, Select, SettingGroup, SettingRow, Sheet, StatTile, StatusText, Tabs, Toggle, cx, inputClass, toast } from "../components/ui";
 import { api, logout } from "../lib/api";
 import { setAppearance, useAppearance, type Appearance } from "../lib/appearance";
 import { auditAction, auditActor, auditSummary } from "../lib/audit";
@@ -363,7 +363,7 @@ function ModelsSection({ s, save }: { s: SettingsView; save: Save }) {
     toast(r.ok ? `${p.name} 连接正常` : `${p.name}：${r.error}`, r.ok ? "ok" : "danger");
   };
   const removeProvider = async (p: Provider) => {
-    if (!confirm(`删除 provider「${p.name}」？它下面的 ${p.models} 个模型会一起移除。`)) return;
+    if (!(await confirmDialog({ title: `删除 provider「${p.name}」？`, body: `它下面的 ${p.models} 个模型会一起移除。`, ok: "删除", danger: true }))) return;
     try {
       await api.del(`/api/providers/${p.id}`);
       toast("已删除");
@@ -667,7 +667,7 @@ function AddModelsSheet({ provider, providers, models, onClose, onAdded }: { pro
             {remote.data && !candidates.length && <div className="px-3 py-2.5 text-[13px] text-muted">没有找到模型，可以在下面手动填写</div>}
             {candidates.map((id) => (
               <label key={id} className={cx("flex items-center gap-2.5 px-3 h-9 text-[13px]", have.has(id) ? "text-muted" : "hover:bg-surface-2 cursor-pointer")}>
-                <input type="checkbox" className="accent-[var(--color-accent)]" checked={have.has(id) || picked.has(id)} disabled={have.has(id)} onChange={() => toggle(id)} />
+                <Checkbox checked={have.has(id) || picked.has(id)} disabled={have.has(id)} onChange={() => toggle(id)} />
                 <span className="flex-1 font-mono truncate">{id}</span>
                 {have.has(id) && <span className="text-xs">已添加</span>}
               </label>
@@ -1498,8 +1498,8 @@ function OfficeGroup() {
             variant="secondary"
             loading={busy}
             disabled={o.pulling.active}
-            onClick={() => {
-              if (confirm("卸载在线 Office 编辑器并删除镜像？之后再开启需要重新下载。")) void act(() => api.post("/api/office/uninstall"), "已卸载");
+            onClick={async () => {
+              if (await confirmDialog({ title: "卸载在线 Office 编辑器？", body: "镜像会一并删除，之后再开启需要重新下载。", ok: "卸载", danger: true })) void act(() => api.post("/api/office/uninstall"), "已卸载");
             }}
           >
             卸载
