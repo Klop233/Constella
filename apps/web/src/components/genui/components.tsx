@@ -171,6 +171,21 @@ const Caption = ({ p, children }: CompProps) => (
   </div>
 );
 
+/** A placeholder for something that hasn't been generated yet: fixed height, so the reply doesn't jump. */
+function Loading({ p }: CompProps) {
+  const rows = Math.max(1, Math.min(num(p.rows, 3), 8));
+  const widths = [92, 74, 55, 84, 63, 88, 70, 46];
+  return (
+    <div className="min-w-0 space-y-2.5" aria-busy="true" aria-label={str(p.label, "正在生成")}>
+      {p.label !== undefined && <div className="text-[13px] text-muted"><Inline text={str(p.label)} /></div>}
+      {Array.from({ length: rows }, (_, i) => (
+        <div key={i} className="h-2.5 rounded-full bg-surface-2 pulse-dot" style={{ width: `${widths[i % widths.length]}%` }} />
+      ))}
+      {p.height !== undefined && <div className="rounded-lg bg-surface-2 pulse-dot" style={{ height: Math.max(24, Math.min(num(p.height, 96), 400)) }} />}
+    </div>
+  );
+}
+
 // ── text ─────────────────────────────────────────────────
 
 const SIZES: Record<string, string> = { xs: "text-xs", sm: "text-[13px]", md: "text-sm", lg: "text-[15px]", xl: "text-lg", "2xl": "text-2xl", "3xl": "text-3xl" };
@@ -708,6 +723,24 @@ function useControlled<T>(value: T | undefined, fallback: T): [T, (v: T) => void
 const labelCls = "flex flex-col gap-1.5 min-w-0";
 const fieldCls = "h-8 px-2.5 rounded-lg border border-line bg-surface text-[13.5px] outline-none hover:border-[color-mix(in_oklab,var(--text)_25%,transparent)] focus:border-accent w-full min-w-0";
 
+/** A form: its fields plus one submit button. What it sends is gathered from the fields as they are now. */
+function Form({ p, children }: CompProps) {
+  const submit = fn(p.onSubmit);
+  const label = str(p.submitLabel, "提交");
+  return (
+    <div className="min-w-0 flex flex-col gap-3 rounded-xl border border-line bg-surface p-3.5" style={{ textAlign: ["left", "center", "right"].includes(str(p.textAlign)) ? (str(p.textAlign) as "left") : undefined }}>
+      {p.title !== undefined && <div className="font-semibold text-[14px] leading-snug"><Inline text={str(p.title)} /></div>}
+      {children}
+      {submit && (
+        <button type="button" onClick={() => submit()} className="self-start inline-flex items-center gap-1.5 h-8 px-3 rounded-md bg-accent text-white text-[13.5px] font-medium hover:brightness-105">
+          <Send className="size-3.5" strokeWidth={1.8} />
+          {label}
+        </button>
+      )}
+    </div>
+  );
+}
+
 function Slider({ p }: CompProps) {
   const min = num(p.min, 0);
   const max = num(p.max, 100);
@@ -999,6 +1032,7 @@ const Link = ({ p, children, ctx }: CompProps) => {
 export const COMPONENTS: Record<string, (props: CompProps) => ReactNode> = {
   Box, Row, Col, Stack: Col, Grid, Card, Divider, Spacer, Caption,
   Text, Heading, Markdown: MarkdownC, Code, Icon, Badge, Kbd,
+  Loading, Skeleton: Loading, Form,
   Stat, Progress, Table, Chart: ChartC, KeyValue, List, Item, Flow, Timeline,
   Steps, Tabs, Accordion, Details, Callout, Quiz, Image: ImageC, Suggestions,
   Slider, NumberInput, Input: ({ p }) => <TextInput p={p} />, TextArea: ({ p }) => <TextInput p={p} area />, Select, Segmented,

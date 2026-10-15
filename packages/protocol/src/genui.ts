@@ -125,6 +125,8 @@ export const GENUI_SCHEMA: Record<string, ComponentSpec> = {
   },
 
   // 结构
+  Loading: { group: "结构", desc: "占位骨架：内容还没生成完时先占住位置，别让版面跳动", props: { label: s(), rows: n("骨架条数，默认 3"), height: n("再放一块内容区，给高度 px") } },
+  Skeleton: { group: "结构", desc: "同 Loading", props: { label: s(), rows: n(), height: n() }, hidden: true },
   List: { group: "结构", desc: "列表：放 Item，或用 items 给字符串", props: { items: { type: "array" }, ordered: b(), divided: b() } },
   Item: { group: "结构", desc: "图标块 + 粗体标题 + 说明的一行", props: { icon, title: s(), desc: s(), right: s("右侧小字"), tone: tone(), iconSize: n(), send: s("点击后发给你的话"), onClick: fn() } },
   Flow: { group: "结构", desc: "带箭头的框图：架构、流程、数据流", props: { direction: { type: "string", values: ["vertical", "horizontal", "row"] } } },
@@ -142,6 +144,11 @@ export const GENUI_SCHEMA: Record<string, ComponentSpec> = {
   Suggestions: { group: "结构", desc: "下一步追问，点了直接发给你", props: { items: { type: "array", required: true, desc: '["…"] 或 [{label, text}]' } } },
 
   // 输入
+  Form: {
+    group: "输入",
+    desc: "表单：把里面的输入项一起提交（按钮文字用 submitLabel）",
+    props: { ...layout, title: s(), submitLabel: s("按钮文字，默认「提交」"), prefix: s("发送时的前缀"), confirm: b("发送前先让主人确认"), onSubmit: fn("提交时执行的动作；不给就把表单内容发给你") },
+  },
   Slider: {
     group: "输入",
     desc: "滑块",
