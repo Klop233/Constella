@@ -5,7 +5,7 @@ import { audit, kvGet, kvSet, type Db } from "./db.ts";
 import type { EventStore } from "./events.ts";
 import type { RunManager } from "./runs.ts";
 import type { SecretStore } from "./secrets.ts";
-import { BitwardenProvider, serverProblem, type CredentialConnection, type CredentialProvider } from "./credential-provider.ts";
+import { BitwardenProvider, serverProblem, type CredentialConnection, type CredentialItem, type CredentialProvider } from "./credential-provider.ts";
 
 export const CredentialField = z.enum(["login.username", "login.password", "login.totp"]);
 export const CredentialRequestInput = z.object({ connectionId: z.string().max(80), itemId: z.string().min(1).max(100), fields: z.array(CredentialField).min(1).max(3), purpose: z.string().min(3).max(1000), target: z.string().min(1).max(2000) });
@@ -34,6 +34,27 @@ const GRANT_MS = 10 * 60_000;
 /** Released values kept in memory for redaction, newest last. */
 const REDACTION_MAX = 200;
 const ACTIVE = new Set(["running", "waiting_approval", "paused_by_user"]);
+/** The lower-cased host of a vault URI or a site the agent named (scheme optional), or null. */
+export function siteHost(value: string): string | null {
+  const v = value.trim();
+  if (!v) return null;
+  try {
+    return new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(v) ? v : `https://${v}`).hostname.toLowerCase().replace(/^www\./, "") || null;
+  } catch {
+    return null;
+  }
+}
+
+/** Whether a vault item belongs to a site: the same host, or one is a subdomain of the other. */
+export function itemMatchesHost(uris: string[], host: string): boolean {
+  const h = siteHost(host);
+  if (!h) return false;
+  return uris.some((u) => {
+    const x = siteHost(u);
+    return !!x && (x === h || x.endsWith(`.${h}`) || h.endsWith(`.${x}`));
+  });
+}
+
 export class Credentials {
   #d: CredentialDeps;
   #provider: CredentialProvider;
@@ -154,6 +175,30 @@ export class Credentials {
     } catch { this.#log("read.failed",agentId,id,{ item: r.itemName, fields: r.fields }); throw new Error("凭据读取失败；该次授权已使用，请重新申请"); }
   }
   secretValues(): string[] { return [...this.#redaction]; }
+  /** Values the owner typed in for an agent: not from the vault, but scrubbed from events and notes the same way. */
+  remember(values: string[]): void { this.#remember(values); }
+  /** A login filled into a page by `credentials_fill` (no values): on the access log and the audit trail. */
+  logFill(agentId: string, detail: { target: string; fields: string[]; via: "vault" | "typed" }): void { this.#log("fill", agentId, undefined, detail); }
+  /** Items of unlocked connections that belong to a site and hold every one of `fields`. */
+  async match(site: string, fields: string[]): Promise<{ connection: CredentialConnection; item: CredentialItem }[]> {
+    const out: { connection: CredentialConnection; item: CredentialItem }[] = [];
+    for (const c of this.connections().filter((c) => c.status === "unlocked")) {
+      const items = await this.items(c.id).catch(() => [] as CredentialItem[]);
+      for (const item of items) if (itemMatchesHost(item.uris, site) && fields.every((f) => item.fields.includes(f))) out.push({ connection: c, item });
+    }
+    return out;
+  }
+  /** Wait for a request to leave "pending" (decided, expired, revoked or the run ended) for at most `waitMs`. */
+  async settled(id: string, agentId: string, runId: string, waitMs: number): Promise<CredentialRequest> {
+    const until = Date.now() + waitMs;
+    for (;;) {
+      const r = this.status(id, agentId, runId);
+      if (r.status !== "pending" || Date.now() >= until) return r;
+      const run = this.#d.runs.get(runId);
+      if (!run || !ACTIVE.has(run.status)) return r;
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+    }
+  }
   #remember(values: string[]) { for (const v of values) if (v) { this.#redaction = this.#redaction.filter(x => x !== v); this.#redaction.push(v); } if (this.#redaction.length > REDACTION_MAX) this.#redaction.splice(0, this.#redaction.length - REDACTION_MAX); }
   #update(r: CredentialRequest, status: CredentialRequest["status"]) { this.#d.db.prepare("UPDATE credential_requests SET status = ? WHERE id = ?").run(status,r.id); }
   #expire() { this.#d.db.prepare("UPDATE credential_requests SET status = 'expired' WHERE status IN ('pending','approved') AND expires_at <= ?").run(nowIso()); }

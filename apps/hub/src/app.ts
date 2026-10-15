@@ -420,9 +420,11 @@ export async function createHub(opts: { dbPath?: string; webDist?: string; logge
         (settings.browserHtml()
           ? "\n    读网页上的信息（正文、列表、表格、价格、链接地址、表单当前值等）时，优先用 browser_html 直接读取 HTML：比截图更快更准，一次拿到整页，不用来回滚动截图；页面很长时用 selector 只读需要的部分。browser_snapshot 适合找要点击的元素；要看布局、图片、图表或验证码时再截图。几种方式按需配合。"
           : "");
-      const credentialNote = credentials.connections().length
-        ? "credentials_list / credentials_request / credentials_status / credentials_read：主人的密码库（凭据 / 隐私）里的登录凭据。需要密码、用户名或验证码时，先用 credentials_list 找到条目，再用 credentials_request 申请，写清用途和目标（主人指定的审批 agent 会审核，批准后 10 分钟内用 credentials_read 读一次）。只要真正需要的字段；凭据值不要写进文件、日志或记忆。"
-        : "";
+      const credentialNote =
+        "credentials_fill：登录需要用户名、密码或一次性验证码时用它：先从主人的密码库取，没有就在聊天里弹出输入框请主人输入，值由平台直接填进页面，不会返回给你。不要自己向主人要密码，也不要让主人把密码发在聊天里；主人暂时没提供就把能做的做完，说明在等什么凭据后正常结束这一轮（不算失败）。" +
+        (credentials.connections().length
+          ? "\n  - credentials_list / credentials_request / credentials_status / credentials_read：主人的密码库（凭据 / 隐私）里的登录凭据。只有需要读出凭据值本身（不是填进网页）时才用：先用 credentials_list 找到条目，再用 credentials_request 申请，写清用途和目标（主人指定的审批 agent 会审核，批准后 10 分钟内用 credentials_read 读一次）。只要真正需要的字段；凭据值不要写进文件、日志或记忆。"
+          : "");
       return {
         model: a.model,
         effort: a.effort ?? undefined,

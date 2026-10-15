@@ -1,4 +1,4 @@
-import { Brain, Check, ChevronRight, CircleSlash, CircleX, Eye, FileEdit, Globe, Hand, Layers, Loader2, MessageCircleQuestion, Monitor, Paperclip, RotateCw, ShieldCheck, ShieldX, Stethoscope, Terminal, ThumbsDown, ThumbsUp, Wrench, X } from "lucide-react";
+import { Brain, Check, ChevronRight, CircleSlash, CircleX, Eye, FileEdit, Globe, Hand, KeyRound, Layers, Loader2, MessageCircleQuestion, Monitor, Paperclip, RotateCw, ShieldCheck, ShieldX, Stethoscope, Terminal, ThumbsDown, ThumbsUp, Wrench, X } from "lucide-react";
 import { splitAttachments } from "@constella/protocol";
 import { useQuery } from "@tanstack/react-query";
 import { memo, useMemo, useState, type ReactNode } from "react";
@@ -21,7 +21,7 @@ type Item =
   | { kind: "message"; id: string; text: string; streaming: boolean; user: boolean }
   | { kind: "reasoning"; id: string; text: string }
   | { kind: "tool"; id: string; name: string; input: unknown; output: string; done: boolean; ok: boolean; error?: string; result?: unknown }
-  | { kind: "approval"; id: string; approvalId: string; summary: string; question: boolean; options?: DecisionOption[]; resolved?: "approve" | "deny"; by?: "user" | "policy"; answer?: string }
+  | { kind: "approval"; id: string; approvalId: string; summary: string; question: boolean; secret?: boolean; options?: DecisionOption[]; resolved?: "approve" | "deny"; by?: "user" | "policy"; answer?: string }
   | { kind: "desktop"; id: string; desktopId: string; action: string }
   | ({ kind: "help"; id: string } & DesktopHelp)
   | { kind: "artifact"; id: string; artifact: DeliveredArtifact }
@@ -99,7 +99,7 @@ export function buildItems(events: AgentEvent[]): { items: Item[]; usage: Usage 
         break;
       }
       case "approval.requested": {
-        const a: Item = { kind: "approval", id: ev.id, approvalId: ev.approvalId, summary: ev.summary, question: ev.kind === "decision", options: ev.options };
+        const a: Item = { kind: "approval", id: ev.id, approvalId: ev.approvalId, summary: ev.summary, question: ev.kind === "decision" || ev.kind === "secret", secret: ev.kind === "secret", options: ev.options };
         byId.set(`ap:${ev.approvalId}`, a);
         items.push(a);
         break;
@@ -523,6 +523,13 @@ export function RunView({ run, approvals, incidents = [], onChanged }: { run: Ru
             const a = pending.get(it.approvalId);
             if (a) return <ApprovalCard key={it.id} approval={a} showAgent={false} onResolved={onChanged} />;
             if (!it.question) return null;
+            // What was typed is never part of the record: only whether it was supplied.
+            if (it.secret)
+              return (
+                <StatusLine key={it.id} icon={<KeyRound className="size-3.5" />}>
+                  {it.summary.slice(0, 80)} → {it.resolved === "approve" ? (it.answer === "使用密码库" ? "已允许使用密码库" : "已提供") : it.resolved === "deny" ? (it.by === "policy" ? "没有等到你的输入" : "没有提供") : "已失效"}
+                </StatusLine>
+              );
             return (
               <StatusLine key={it.id} icon={<MessageCircleQuestion className="size-3.5" />}>
                 问「{it.summary.slice(0, 60)}」{it.resolved === "approve" ? <>→ 「{it.answer}」</> : it.resolved === "deny" ? "→ 交给它自己判断" : "→ 已失效"}

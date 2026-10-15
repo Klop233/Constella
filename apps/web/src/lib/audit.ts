@@ -83,6 +83,10 @@ export const AUDIT_ACTION: Record<string, string> = {
   "credentials.revoke": "撤销凭据访问",
   "credentials.read": "读取凭据",
   "credentials.read.failed": "读取凭据失败",
+  "credentials.fill": "agent 登录时填入凭据",
+  "secret.provide": "输入了 agent 需要的登录信息",
+  "secret.vault": "允许 agent 使用密码库条目登录",
+  "secret.decline": "拒绝提供 agent 需要的登录信息",
 };
 
 /** Field names in the `fields` / `changes` of settings.update and agent.update details, and other detail keys. */

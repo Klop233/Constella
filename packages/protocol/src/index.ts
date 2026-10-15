@@ -50,6 +50,21 @@ const envelope = {
   ts: z.iso.datetime(),
 };
 
+/**
+ * What a "secret" approval asks the owner to type: one input per field. The values never appear in events,
+ * the database or the model's context; they go from the owner's browser to the hub's memory to the page.
+ */
+export const SecretSpec = z.object({
+  fields: z.array(z.object({ name: z.string(), label: z.string(), secret: z.boolean() })).min(1).max(3),
+  /** Where it will be used (a site or app), shown on the card. */
+  target: z.string().optional(),
+  /** A matching vault item the owner can allow instead of typing anything. */
+  vault: z.object({ name: z.string(), username: z.string().optional() }).optional(),
+  /** Why the vault wasn't used (declined, slow reviewer), shown above the inputs. */
+  note: z.string().optional(),
+});
+export type SecretSpec = z.infer<typeof SecretSpec>;
+
 export const AgentEvent = z.discriminatedUnion("type", [
   z.object({ ...envelope, type: z.literal("run.status"), status: RunStatus, error: z.string().optional() }),
   z.object({ ...envelope, type: z.literal("message.delta"), messageId: z.string(), text: z.string() }),
@@ -69,9 +84,11 @@ export const AgentEvent = z.discriminatedUnion("type", [
     ...envelope,
     type: z.literal("approval.requested"),
     approvalId: z.string(),
-    kind: z.enum(["command", "file_change", "host_access", "desktop", "decision", "other"]),
+    kind: z.enum(["command", "file_change", "host_access", "desktop", "decision", "secret", "other"]),
     summary: z.string(),
     detail: z.string().optional(),
+    /** kind=secret: the inputs the owner is asked to fill (agent needs a login or password). */
+    secret: SecretSpec.optional(),
     /** kind=decision: the choices the agent offers the owner, and which one it recommends. */
     options: z.array(z.object({ label: z.string(), detail: z.string().optional() })).optional(),
     recommended: z.number().int().nonnegative().optional(),

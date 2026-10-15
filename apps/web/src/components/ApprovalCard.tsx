@@ -1,10 +1,10 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { ArrowUp, Loader2, MessageCircleQuestion, ShieldAlert } from "lucide-react";
+import { ArrowUp, KeyRound, Loader2, MessageCircleQuestion, ShieldAlert } from "lucide-react";
 import { useState } from "react";
 import { api } from "../lib/api";
 import { timeAgo } from "../lib/format";
-import type { Approval } from "../lib/types";
-import { Badge, Button, Card, cx, toast } from "./ui";
+import type { Approval, SecretSpec } from "../lib/types";
+import { Badge, Button, Card, cx, inputClass, toast } from "./ui";
 
 const KIND: Record<string, string> = {
   command: "执行命令",
@@ -44,6 +44,19 @@ export function ApprovalCard({ approval, showAgent = true, onResolved, className
       {extra}
     </div>
   );
+
+  if (approval.kind === "secret" && approval.secret) {
+    return (
+      <Card className={cx("p-3.5 border-[color-mix(in_oklab,var(--warn)_45%,transparent)]", className)}>
+        {head(<KeyRound className="size-4 text-warn" />, "需要你提供登录信息")}
+        <SecretForm approval={approval} spec={approval.secret} onDone={() => {
+          void qc.invalidateQueries({ queryKey: ["overview"] });
+          void qc.invalidateQueries({ queryKey: ["approvals"] });
+          onResolved?.();
+        }} />
+      </Card>
+    );
+  }
 
   if (approval.kind === "decision") {
     return (
@@ -115,5 +128,79 @@ function DecisionOptions({ approval, busy, onPick }: { approval: Approval; busy:
         </button>
       </form>
     </div>
+  );
+}
+
+/**
+ * The inputs for a login the agent needs (nothing typed here goes into the chat record or the model's context:
+ * it is sent to the hub, which fills it straight into the page), or one tap to use a matching vault item.
+ */
+function SecretForm({ approval, spec, onDone }: { approval: Approval; spec: SecretSpec; onDone: () => void }) {
+  const [values, setValues] = useState<Record<string, string>>({});
+  const [busy, setBusy] = useState<"submit" | "vault" | "deny" | null>(null);
+  const ready = spec.fields.every((f) => (values[f.name] ?? "") !== "");
+  const run = async (kind: "submit" | "vault" | "deny", call: () => Promise<unknown>, done: string) => {
+    setBusy(kind);
+    try {
+      await call();
+      toast(done);
+      onDone();
+    } catch (err) {
+      toast(err instanceof Error ? err.message : String(err), "danger");
+    } finally {
+      setBusy(null);
+    }
+  };
+  return (
+    <form
+      className="mt-2 space-y-2.5"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (ready && !busy) void run("submit", () => api.post(`/api/approvals/${approval.id}/secret`, { values }), "已提供");
+      }}
+    >
+      <div className="text-sm whitespace-pre-wrap">{approval.summary}</div>
+      {spec.note && <div className="text-xs text-muted">{spec.note}</div>}
+      {spec.vault && (
+        <Button
+          type="button"
+          variant="primary"
+          className="w-full"
+          loading={busy === "vault"}
+          disabled={!!busy}
+          onClick={() => void run("vault", () => api.post(`/api/approvals/${approval.id}`, { decision: "approve" }), "已允许")}
+        >
+          使用密码库里的「{spec.vault.name}」{spec.vault.username ? `（${spec.vault.username}）` : ""}
+        </Button>
+      )}
+      <div className="space-y-2">
+        {spec.fields.map((f) => (
+          <label key={f.name} className="block space-y-1">
+            <span className="text-xs text-muted">{f.label}</span>
+            <input
+              type={f.secret ? "password" : "text"}
+              name={f.name}
+              value={values[f.name] ?? ""}
+              onChange={(e) => setValues({ ...values, [f.name]: e.target.value })}
+              autoComplete={f.secret ? "new-password" : "off"}
+              autoCapitalize="off"
+              autoCorrect="off"
+              spellCheck={false}
+              disabled={!!busy}
+              className={inputClass}
+            />
+          </label>
+        ))}
+      </div>
+      <div className="text-xs text-muted">{spec.target ? `用于 ${spec.target}。` : ""}只会填进页面，不会写进聊天记录，也不会给到模型。</div>
+      <div className="grid grid-cols-2 gap-2">
+        <Button type="button" variant="secondary" loading={busy === "deny"} disabled={!!busy} onClick={() => void run("deny", () => api.post(`/api/approvals/${approval.id}`, { decision: "deny" }), "已告诉它不提供")}>
+          不提供
+        </Button>
+        <Button type="submit" variant={spec.vault ? "secondary" : "primary"} loading={busy === "submit"} disabled={!ready || !!busy}>
+          提交
+        </Button>
+      </div>
+    </form>
   );
 }

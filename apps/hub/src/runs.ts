@@ -1,4 +1,4 @@
-import { canTransition, IMAGE_EXT, isTerminal, splitAttachments, uploadName, type EngineProvider, type HubToRunner, type RunStatus, type RunnerEvent } from "@constella/protocol";
+import { canTransition, IMAGE_EXT, isTerminal, splitAttachments, uploadName, type EngineProvider, type HubToRunner, type RunStatus, type RunnerEvent, type SecretSpec } from "@constella/protocol";
 import { config, newId, nowIso } from "./config.ts";
 import type { Effort } from "./catalog.ts";
 import { audit, type Db } from "./db.ts";
@@ -125,7 +125,7 @@ export function isTransientError(error: string | null | undefined): boolean {
 type FinishedHook = (run: RunRow) => void;
 
 interface HubApproval {
-  resolve: (r: { approved: boolean; answer?: string }) => void;
+  resolve: (r: { approved: boolean; answer?: string; values?: Record<string, string>; vault?: boolean; actor?: string }) => void;
   runId: string;
 }
 
@@ -136,6 +136,15 @@ export interface DecisionOption {
 
 /** How a question to the owner ended: answered, dismissed ("decide yourself"), no answer in time, or the run ended. */
 export type DecisionResult = { status: "answered"; answer: string } | { status: "dismissed" | "timeout" | "ended" };
+
+/**
+ * How a request for a login ended: typed in (values live only in this result), the owner allowed the matching
+ * vault item (`actor` is who), declined, no answer in time, or the run ended.
+ */
+export type SecretResult =
+  | { status: "provided"; values: Record<string, string>; actor: string }
+  | { status: "vault"; actor: string }
+  | { status: "declined" | "timeout" | "ended" };
 
 interface ResumeRow {
   id: string;
@@ -595,6 +604,7 @@ export class RunManager {
       }
       return this.#answerDecision(row, answer ?? "", actor);
     }
+    if (row.kind === "secret") return this.#resolveSecret(row, decision, actor);
     db.prepare("UPDATE approvals SET status = ?, resolved_at = ? WHERE id = ?").run(
       decision === "approve" ? "approved" : "denied",
       nowIso(),
@@ -683,6 +693,90 @@ export class RunManager {
     void this.send({ agentId: run.agent_id, conversationId: run.conversation_id, text: `${ANSWER_PREFIX}${row.summary}\n→ ${text}`, source: "decision" }).catch((err) =>
       console.error("deliver answer failed", row.id, err),
     );
+  }
+
+  /**
+   * A request for a login (username, password, one-time code) the owner has to supply. Resolves with what they
+   * typed, or with their go-ahead to use the matching vault item. Unlike a question, an unanswered request is
+   * closed when the wait ends: values are only ever handed over to a call that is still waiting for them.
+   */
+  requestSecret(runId: string, summary: string, spec: SecretSpec, waitMs: number): Promise<SecretResult> {
+    const run = this.get(runId);
+    if (!run || isTerminal(run.status)) return Promise.resolve({ status: "ended" });
+    const approvalId = newId("ap");
+    this.#d.db
+      .prepare("INSERT INTO approvals (id, run_id, agent_id, kind, summary, detail, status, created_at, source, options) VALUES (?, ?, ?, 'secret', ?, NULL, 'pending', ?, 'hub', ?)")
+      .run(approvalId, runId, run.agent_id, summary, nowIso(), JSON.stringify(spec));
+    this.#append(run, { type: "approval.requested", runId, approvalId, kind: "secret", summary, secret: spec });
+    const decided = new Promise<Parameters<HubApproval["resolve"]>[0]>((resolve) => this.#hubApprovals.set(approvalId, { resolve, runId }));
+    this.transition(runId, "waiting_approval");
+    this.#d.notify(`${this.#agentName(run.agent_id)} 需要你提供密码`, summary.slice(0, 140), `/c/${run.conversation_id}`, "approval");
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      const waiting = this.#hubApprovals.get(approvalId);
+      if (!waiting) return;
+      timedOut = true;
+      this.#hubApprovals.delete(approvalId);
+      this.#d.db.prepare("UPDATE approvals SET status = 'expired', resolved_at = ? WHERE id = ? AND status = 'pending'").run(nowIso(), approvalId);
+      this.#append(run, { type: "approval.resolved", runId, approvalId, decision: "deny", by: "policy" });
+      waiting.resolve({ approved: false });
+      this.#resumeIfNotWaiting(runId);
+    }, waitMs);
+    timer.unref?.();
+    return decided.then((r): SecretResult => {
+      clearTimeout(timer);
+      if (r.approved && r.values) return { status: "provided", values: r.values, actor: r.actor ?? "user" };
+      if (r.approved && r.vault) return { status: "vault", actor: r.actor ?? "user" };
+      if (timedOut) return { status: "timeout" };
+      const row = this.#d.db.prepare("SELECT status FROM approvals WHERE id = ?").get(approvalId) as { status: string } | undefined;
+      return { status: row?.status === "denied" ? "declined" : "ended" };
+    });
+  }
+
+  /** What the owner typed into a "secret" card. Nothing here is stored or put in an event: it goes to the waiting call. */
+  provideSecret(approvalId: string, values: Record<string, string>, actor: string): void {
+    const { db } = this.#d;
+    const row = db.prepare("SELECT * FROM approvals WHERE id = ?").get(approvalId) as ApprovalRow | undefined;
+    if (!row || row.kind !== "secret") throw new Error("approval not found");
+    if (row.status !== "pending") throw new Error("这个请求已经处理或过期了，需要的话让 agent 再申请一次");
+    const waiting = this.#hubApprovals.get(approvalId);
+    if (!waiting) {
+      db.prepare("UPDATE approvals SET status = 'expired', resolved_at = ? WHERE id = ?").run(nowIso(), approvalId);
+      throw new Error("agent 已经不在等这个输入了，需要的话让它再申请一次");
+    }
+    const spec = JSON.parse(row.options ?? "{}") as SecretSpec;
+    const given: Record<string, string> = {};
+    for (const f of spec.fields) {
+      const v = values[f.name];
+      if (typeof v !== "string" || v === "") throw new Error(`请填写「${f.label}」`);
+      given[f.name] = v;
+    }
+    db.prepare("UPDATE approvals SET status = 'approved', resolved_at = ? WHERE id = ?").run(nowIso(), approvalId);
+    audit(db, actor, "secret.provide", { approvalId, fields: spec.fields.map((f) => f.name), target: spec.target ?? "" });
+    const run = this.get(row.run_id);
+    if (run) this.#append(run, { type: "approval.resolved", runId: run.id, approvalId, decision: "approve", by: "user", answer: "已输入" });
+    this.#hubApprovals.delete(approvalId);
+    waiting.resolve({ approved: true, values: given, actor });
+    this.#resumeIfNotWaiting(row.run_id);
+  }
+
+  /** The owner's other answers to a "secret" card: allow the vault item, or decline. */
+  #resolveSecret(row: ApprovalRow, decision: "approve" | "deny", actor: string): void {
+    const { db } = this.#d;
+    const spec = JSON.parse(row.options ?? "{}") as SecretSpec;
+    if (decision === "approve" && !spec.vault) throw new Error("这个请求没有可用的密码库条目，请直接输入");
+    const waiting = this.#hubApprovals.get(row.id);
+    if (!waiting) {
+      db.prepare("UPDATE approvals SET status = 'expired', resolved_at = ? WHERE id = ?").run(nowIso(), row.id);
+      throw new Error("agent 已经不在等这个输入了，需要的话让它再申请一次");
+    }
+    db.prepare("UPDATE approvals SET status = ?, resolved_at = ? WHERE id = ?").run(decision === "approve" ? "approved" : "denied", nowIso(), row.id);
+    audit(db, actor, decision === "approve" ? "secret.vault" : "secret.decline", { approvalId: row.id, target: spec.target ?? "" });
+    const run = this.get(row.run_id);
+    if (run) this.#append(run, { type: "approval.resolved", runId: run.id, approvalId: row.id, decision, by: "user", ...(decision === "approve" ? { answer: "使用密码库" } : {}) });
+    this.#hubApprovals.delete(row.id);
+    waiting.resolve(decision === "approve" ? { approved: true, vault: true, actor } : { approved: false });
+    this.#resumeIfNotWaiting(row.run_id);
   }
 
   /** Approval raised by a hub-side tool (e.g. host_exec); resolves when the user decides. */
@@ -795,6 +889,8 @@ interface ApprovalRow {
   summary: string;
   status: string;
   source: string;
+  /** JSON: a question's choices, or a secret request's SecretSpec. */
+  options: string | null;
 }
 
 function errMessage(err: unknown): string {
