@@ -11,6 +11,7 @@ import { InstanceThumb } from "./InstanceThumb";
 import { cx, toast } from "./ui";
 
 const HEADER = 32;
+const HEADER_BASE_LONG = 420;
 const MARGIN = 8;
 const GEO_KEY = "constella.instanceWindow.geo";
 
@@ -45,18 +46,25 @@ function screenSize(d: Desktop, long: number): { w: number; h: number } {
   return W >= H ? { w: long, h: Math.round((long * H) / W) } : { w: Math.round((long * W) / H), h: long };
 }
 
+/** The title bar scales with the screen so the outer floating window keeps one aspect ratio. */
+function headerSize(long: number): number {
+  return Math.max(1, Math.round((long * HEADER) / HEADER_BASE_LONG));
+}
+
 /** Keeps the window on screen: caps its size to the viewport, then its position. */
 function clampGeo(d: Desktop, g: Geo): Geo {
   const vw = window.innerWidth;
   const vh = window.innerHeight;
   const one = screenSize(d, 1000);
-  const maxLong = Math.floor(Math.min(((vw - 2 * MARGIN) * 1000) / one.w, ((vh - 2 * MARGIN - HEADER) * 1000) / one.h));
+  const headerAt1000 = (1000 * HEADER) / HEADER_BASE_LONG;
+  const maxLong = Math.floor(Math.min(((vw - 2 * MARGIN) * 1000) / one.w, ((vh - 2 * MARGIN) * 1000) / (one.h + headerAt1000)));
   const long = Math.max(Math.min(160, maxLong), Math.min(g.long, maxLong));
   const { w, h } = screenSize(d, long);
+  const header = headerSize(long);
   return {
     long,
     x: Math.min(Math.max(MARGIN, g.x), vw - w - MARGIN),
-    y: Math.min(Math.max(MARGIN, g.y), vh - h - HEADER - MARGIN),
+    y: Math.min(Math.max(MARGIN, g.y), vh - h - header - MARGIN),
   };
 }
 
@@ -64,7 +72,7 @@ function defaultGeo(d: Desktop): Geo {
   const long = window.innerWidth < 640 ? 260 : 420;
   const { w, h } = screenSize(d, long);
   // Bottom right, above a conversation's composer.
-  return { long, x: window.innerWidth - w - 16, y: window.innerHeight - h - HEADER - 140 };
+  return { long, x: window.innerWidth - w - 16, y: window.innerHeight - h - headerSize(long) - 140 };
 }
 
 const pipSupported = typeof document !== "undefined" && document.pictureInPictureEnabled && "captureStream" in HTMLCanvasElement.prototype;
@@ -113,9 +121,11 @@ function Window({ d }: { d: Desktop }) {
 
   const g = clampGeo(d, geo);
   const { w, h } = screenSize(d, g.long);
+  const header = headerSize(g.long);
+  const headerScale = header / HEADER;
   // The resize grip sits on the corner facing the middle of the viewport, so there's always room to grow.
   const gripRight = g.x + w / 2 < window.innerWidth / 2;
-  const gripBottom = g.y + (h + HEADER) / 2 < window.innerHeight / 2;
+  const gripBottom = g.y + (h + header) / 2 < window.innerHeight / 2;
   const Icon = KIND_INFO[d.kind].icon;
   const open = () => nav(`/instances/${d.id}`);
 
@@ -129,16 +139,23 @@ function Window({ d }: { d: Desktop }) {
     const sy = e.clientY;
     const start = g;
     const s0 = screenSize(d, start.long);
+    const header0 = headerSize(start.long);
+    const outerH0 = s0.h + header0;
     let last = start;
     const move = (ev: PointerEvent) => {
       const dx = ev.clientX - sx;
       const dy = ev.clientY - sy;
       if (mode === "move") last = clampGeo(d, { ...start, x: start.x + dx, y: start.y + dy });
       else {
-        const scale = Math.max((s0.w + (gripRight ? dx : -dx)) / s0.w, (s0.h + (gripBottom ? dy : -dy)) / s0.h);
+        const scale = Math.max((s0.w + (gripRight ? dx : -dx)) / s0.w, (outerH0 + (gripBottom ? dy : -dy)) / outerH0);
         const long = clampGeo(d, { ...start, long: start.long * scale }).long;
         const s1 = screenSize(d, long);
-        last = clampGeo(d, { long, x: gripRight ? start.x : start.x + s0.w - s1.w, y: gripBottom ? start.y : start.y + s0.h - s1.h });
+        const outerH1 = s1.h + headerSize(long);
+        last = clampGeo(d, {
+          long,
+          x: gripRight ? start.x : start.x + s0.w - s1.w,
+          y: gripBottom ? start.y : start.y + outerH0 - outerH1,
+        });
       }
       setGeo(last);
     };
@@ -216,28 +233,33 @@ function Window({ d }: { d: Desktop }) {
       className="fixed z-40 rounded-xl border border-line bg-surface shadow-xl overflow-hidden select-none"
       style={{ left: g.x, top: g.y, width: w }}
     >
-      <div className="h-8 flex items-center gap-1.5 pl-2.5 pr-1 cursor-grab active:cursor-grabbing touch-none" onPointerDown={(e) => track(e, "move")} onDoubleClick={open}>
-        <Icon className="size-3.5 text-muted shrink-0" />
-        <div className="flex-1 min-w-0 truncate text-[12.5px]">
-          <span className="font-medium">{d.name}</span>
-          <span className="ml-1.5 text-muted">{status}</span>
+      <div style={{ height: header }} className="flex items-center overflow-hidden cursor-grab active:cursor-grabbing touch-none" onPointerDown={(e) => track(e, "move")} onDoubleClick={open}>
+        <div
+          className="h-8 flex-none items-center flex gap-1.5 pl-2.5 pr-1"
+          style={{ width: `${100 / headerScale}%`, transform: `scale(${headerScale})`, transformOrigin: "left center" }}
+        >
+          <Icon className="size-3.5 text-muted shrink-0" />
+          <div className="flex-1 min-w-0 truncate text-[12.5px]">
+            <span className="font-medium">{d.name}</span>
+            <span className="ml-1.5 text-muted">{status}</span>
+          </div>
+          {pipSupported && running && state === "connected" && !pip && (
+            <WinButton label="系统小窗（切到别的标签页也能看）" onClick={() => void popOut()}>
+              <PictureInPicture2 className="size-3.5" />
+            </WinButton>
+          )}
+          {running && d.leaseInfo.holder !== "human" && (
+            <WinButton label="接管" onClick={() => void takeover()} disabled={busy}>
+              {busy ? <Loader2 className="size-3.5 animate-spin" /> : <Hand className="size-3.5" />}
+            </WinButton>
+          )}
+          <WinButton label="打开实例页" onClick={open}>
+            <Maximize2 className="size-3.5" />
+          </WinButton>
+          <WinButton label="关闭小窗" onClick={() => closeInstanceWindow()}>
+            <X className="size-3.5" />
+          </WinButton>
         </div>
-        {pipSupported && running && state === "connected" && !pip && (
-          <WinButton label="系统小窗（切到别的标签页也能看）" onClick={() => void popOut()}>
-            <PictureInPicture2 className="size-3.5" />
-          </WinButton>
-        )}
-        {running && d.leaseInfo.holder !== "human" && (
-          <WinButton label="接管" onClick={() => void takeover()} disabled={busy}>
-            {busy ? <Loader2 className="size-3.5 animate-spin" /> : <Hand className="size-3.5" />}
-          </WinButton>
-        )}
-        <WinButton label="打开实例页" onClick={open}>
-          <Maximize2 className="size-3.5" />
-        </WinButton>
-        <WinButton label="关闭小窗" onClick={() => closeInstanceWindow()}>
-          <X className="size-3.5" />
-        </WinButton>
       </div>
       <div className="relative bg-[#0b0d18]" style={{ height: h }}>
         {running ? <div ref={screen} className="absolute inset-0" /> : <InstanceThumb d={d} width={480} className="absolute inset-0" />}
