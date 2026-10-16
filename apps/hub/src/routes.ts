@@ -1,5 +1,4 @@
 import { registerCredentialRoutes } from "./credential-routes.ts";
-import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import type { FastifyReply, FastifyRequest } from "fastify";
@@ -8,7 +7,8 @@ import { z } from "zod";
 import { AgentInput, TEMPLATES } from "./agents.ts";
 import { isArchiveName, listArchive } from "./archive.ts";
 import { registerChatBridge } from "./chatbridge.ts";
-import { OFFICE_CONTAINER, OFFICE_PREFIX, officeDocType } from "./office.ts";
+import { convertLegacyOffice, findOffice, legacyOffice } from "./convert.ts";
+import { editOffice, officeKind, readOffice } from "./office.ts";
 import { MAX_ARTIFACT_TEXT, type ArtifactVersionRow } from "./artifacts.ts";
 import type { Hub } from "./app.ts";
 import { EffortSchema } from "./catalog.ts";
@@ -37,13 +37,7 @@ declare module "fastify" {
   }
 }
 
-const OFFICE_MIME: Record<string, string> = {
-  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-  xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-  pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-};
-
-const PUBLIC = [/^\/api\/office\/(file|callback)\//, /^\/api\/health$/, /^\/api\/auth\/(status|setup|login|passkey\/login\/(options|verify))$/, /^\/api\/runner/, /^\/api\/desktops\/[^/]+\/vnc$/, /^\/api\/llm\//];
+const PUBLIC = [/^\/api\/health$/, /^\/api\/auth\/(status|setup|login|passkey\/login\/(options|verify))$/, /^\/api\/runner/, /^\/api\/desktops\/[^/]+\/vnc$/, /^\/api\/llm\//];
 
 const DESKTOP_STATUS: Record<string, number> = { not_found: 404, busy: 409, limit: 409, unavailable: 409, confirm: 409 };
 
@@ -56,7 +50,7 @@ class HttpError extends Error {
 }
 
 export function registerRoutes(hub: Hub): void {
-  const { office, app, auth, agents, runs, artifacts, recovery, events, desktops, knowledge, learning, reflect, scheduler, notifier, models, catalog, settings, containers, db } = hub;
+  const { app, auth, agents, runs, artifacts, recovery, events, desktops, knowledge, learning, reflect, scheduler, notifier, models, catalog, settings, containers, db } = hub;
 
   app.setErrorHandler((err: any, _req, reply) => {
     const status =
@@ -82,7 +76,7 @@ export function registerRoutes(hub: Hub): void {
   app.addHook("onRequest", async (req, reply) => {
     const url = req.url.split("?")[0]!;
     if (!url.startsWith("/api/")) return;
-    if (!["GET", "HEAD", "OPTIONS"].includes(req.method) && !url.startsWith("/api/runner") && !url.startsWith("/api/office/callback/") && !url.startsWith("/api/llm/")) {
+    if (!["GET", "HEAD", "OPTIONS"].includes(req.method) && !url.startsWith("/api/runner") && !url.startsWith("/api/llm/")) {
       if (req.headers["x-constella"] !== "1") return reply.code(403).send({ error: "missing X-Constella header" });
       const origin = req.headers.origin;
       // The first account is created from whatever address the owner opens the app at; that origin is
@@ -103,7 +97,7 @@ export function registerRoutes(hub: Hub): void {
   const actor = (req: FastifyRequest) => req.userId ?? "anonymous";
   const authLimit = { config: { rateLimit: { max: 10, timeWindow: "1 minute" } } };
 
-  const onboardingDefaults = { browser: true, desktop: true, android: false, office: true };
+  const onboardingDefaults = { browser: true, desktop: true, android: false };
   const onboardingSelection = () => {
     try {
       const value = kvGet(db, "onboarding.selection");
@@ -113,7 +107,6 @@ export function registerRoutes(hub: Hub): void {
         browser: parsed.browser ?? onboardingDefaults.browser,
         desktop: parsed.desktop ?? onboardingDefaults.desktop,
         android: parsed.android ?? onboardingDefaults.android,
-        office: parsed.office ?? onboardingDefaults.office,
       };
     } catch {
       return onboardingDefaults;
@@ -121,24 +114,15 @@ export function registerRoutes(hub: Hub): void {
   };
   const imagePresent = (image: string) => containers.docker.getImage(image).inspect().then(() => true, () => false);
   const onboardingView = async () => {
-    const officeStatus = await office.status();
-    // Office downloads are intentionally resumable. A refresh after the pull finishes completes the wizard.
-    if (kvGet(db, "onboarding.pendingOffice") === "true" && officeStatus.imagePresent) {
-      kvSet(db, "onboarding.pendingOffice", "false");
-      kvSet(db, "onboarding.completed", "true");
-    }
     const completed = kvGet(db, "onboarding.completed") === "true";
     return {
       needed: !completed,
       selection: onboardingSelection(),
-      pendingOffice: kvGet(db, "onboarding.pendingOffice") === "true",
       images: {
         agent: await imagePresent(config.docker.agentImage),
         desktop: await imagePresent(config.docker.desktopImage),
-        office: officeStatus.imagePresent,
       },
       capabilities: hub.hostcaps.snapshot(),
-      office: officeStatus,
     };
   };
 
@@ -187,13 +171,12 @@ export function registerRoutes(hub: Hub): void {
     browser: z.boolean(),
     desktop: z.boolean(),
     android: z.boolean(),
-    office: z.boolean(),
   });
   app.post("/api/onboarding", async (req) => {
     const b = OnboardingPatch.parse(req.body);
     if (kvGet(db, "onboarding.completed") === "true") return onboardingView();
 
-    // Creation is deliberately idempotent: if the user retries after an Office pull failure, existing instances stay.
+    // Creation is deliberately idempotent: retrying after a partial failure keeps existing instances.
     const existing = desktops.rows();
     const ensureInstance = async (kind: "browser" | "desktop" | "android", name: string) => {
       if (!existing.some((d) => d.kind === kind)) await desktops.create({ name, kind });
@@ -203,20 +186,7 @@ export function registerRoutes(hub: Hub): void {
     if (b.android) await ensureInstance("android", "安卓设备");
 
     kvSet(db, "onboarding.selection", JSON.stringify(b));
-    if (b.office) {
-      office.configure({ enabled: true });
-      kvSet(db, "onboarding.pendingOffice", "true");
-      office.install();
-      // A pre-pulled image (the one-click installer does this) needs no waiting page.
-      if ((await office.status()).imagePresent) {
-        kvSet(db, "onboarding.pendingOffice", "false");
-        kvSet(db, "onboarding.completed", "true");
-      }
-    } else {
-      office.configure({ enabled: false });
-      kvSet(db, "onboarding.pendingOffice", "false");
-      kvSet(db, "onboarding.completed", "true");
-    }
+    kvSet(db, "onboarding.completed", "true");
     audit(db, actor(req), "onboarding.complete", { selection: b });
     return onboardingView();
   });
@@ -570,129 +540,76 @@ export function registerRoutes(hub: Hub): void {
     reply.header("Cache-Control", q.v ? "private, max-age=31536000, immutable" : "private, no-cache");
     return listing;
   });
-  // Online Office editor (optional OnlyOffice container): the config the editor page needs for one version.
+  // Word / Excel / PowerPoint: read the text, and save text changes back as a new version.
+  const officeOf = (artifactId: string, version?: number) => {
+    const a = artifactOr404(artifactId);
+    const v = artifacts.version(a.id, version);
+    const kind = v.kind === "file" ? officeKind(v.filename) : null;
+    if (!kind) throw new HttpError(400, "这不是 Word / Excel / PowerPoint 文件");
+    return { a, v, kind, bytes: fs.readFileSync(artifacts.filePath(a.id, v.version)) };
+  };
   app.get("/api/artifacts/:id/office", async (req) => {
     const q = VersionQuery.parse(req.query);
+    const { kind, bytes } = officeOf(id(req), q.v);
+    try {
+      return readOffice(kind, bytes);
+    } catch (err) {
+      throw new HttpError(422, err instanceof Error ? err.message : String(err));
+    }
+  });
+  app.post("/api/artifacts/:id/office", { bodyLimit: 3 * 1024 * 1024 }, async (req) => {
+    const b = z
+      .object({
+        base: z.number().int().min(1),
+        note: z.string().trim().max(300).optional(),
+        edits: z
+          .array(
+            z.union([
+              z.object({ type: z.literal("text"), group: z.number().int().min(0), index: z.number().int().min(0), text: z.string().max(20000) }),
+              z.object({ type: z.literal("cell"), sheet: z.number().int().min(0), row: z.number().int().min(1), col: z.number().int().min(1), value: z.string().max(20000) }),
+            ]),
+          )
+          .min(1)
+          .max(5000),
+      })
+      .parse(req.body);
+    const { a, kind, bytes } = officeOf(id(req));
+    if (b.base !== a.version) throw new HttpError(409, "这个文件已经有了新版本，刷新后再改");
+    let out: Uint8Array;
+    try {
+      out = editOffice(kind, bytes, b.edits);
+    } catch (err) {
+      throw new HttpError(422, err instanceof Error ? err.message : String(err));
+    }
+    const saved = artifacts.saveFile({ artifactId: a.id, bytes: Buffer.from(out), note: b.note ?? `修改了 ${b.edits.length} 处`, author: "user" });
+    audit(db, actor(req), "artifact.edit", { id: saved.id, version: saved.version });
+    return saved;
+  });
+  // Old .doc / .xls / .ppt: whether they can be converted here, and the conversion (saved as a new version).
+  app.get("/api/artifacts/:id/convert", async (req) => {
     const a = artifactOr404(id(req));
-    const v = artifacts.version(a.id, q.v);
-    const docType = v.kind === "file" ? officeDocType(v.filename) : null;
-    if (!docType) throw new HttpError(400, "这不是 Word / Excel / PowerPoint 文件");
-    if (!office.enabled()) return { enabled: false };
-    try {
-      await office.ensureRunning();
-    } catch (err) {
-      throw new HttpError(503, err instanceof Error ? err.message : String(err));
-    }
-    const latest = v.version === a.version;
-    const token = office.sign({ a: a.id, v: v.version });
-    const ext = v.filename.split(".").pop()!.toLowerCase();
-    const cfg = {
-      documentType: docType,
-      document: {
-        fileType: ext,
-        key: `${a.id}-${v.version}`.slice(0, 120),
-        title: v.filename,
-        url: `${config.hubInternalUrl}/api/office/file/${token}`,
-        permissions: { edit: latest, download: true, print: true },
-      },
-      editorConfig: {
-        mode: latest ? "edit" : "view",
-        lang: "zh-CN",
-        callbackUrl: `${config.hubInternalUrl}/api/office/callback/${token}`,
-        user: { id: req.userId ?? "owner", name: "我" },
-        customization: { forcesave: true, autosave: false, compactHeader: true, toolbarNoTabs: false, hideRightMenu: true },
-      },
-      height: "100%",
-      width: "100%",
-    };
-    return { enabled: true, editable: latest, apiUrl: `${OFFICE_PREFIX}/web-apps/apps/api/documents/api.js`, config: { ...cfg, token: office.jwtSign(cfg) } };
+    const t = a.kind === "file" ? legacyOffice(a.filename) : null;
+    return { to: t?.to ?? null, available: !!t && (await findOffice()) !== null };
   });
-  // The Document Server fetches the file and posts saves with a signed link (no session cookie).
-  app.get("/api/office/file/:token", async (req, reply) => {
-    const t = office.verify(String((req.params as { token: string }).token));
-    if (!t) throw new HttpError(403, "链接无效或已过期");
-    const v = artifacts.version(t.a, t.v);
-    const file = artifacts.filePath(t.a, v.version);
-    office.touch();
-    return reply.header("Content-Type", "application/octet-stream").header("Content-Length", fs.statSync(file).size).send(fs.createReadStream(file));
-  });
-  app.post("/api/office/callback/:token", async (req) => {
-    const t = office.verify(String((req.params as { token: string }).token));
-    if (!t) throw new HttpError(403, "链接无效或已过期");
-    let body = (req.body ?? {}) as Record<string, any>;
-    // With JWT on, the real payload is signed: in the body's token, or in the Authorization header.
-    const raw = typeof body.token === "string" ? body.token : String(req.headers.authorization ?? "").replace(/^Bearer\s+/i, "");
-    const signed = raw ? office.jwtVerify(raw) : null;
-    if (!signed) throw new HttpError(403, "签名无效");
-    body = (signed.payload as Record<string, any>) ?? signed;
-    office.touch();
-    // 2: closed after edits, 6: saved on request. Anything else needs no action.
-    if ((body.status === 2 || body.status === 6) && typeof body.url === "string") {
-      try {
-        // The URL names the Document Server as the browser sees it; fetch it from inside the network.
-        const u = new URL(body.url);
-        const res = await fetch(`http://${OFFICE_CONTAINER}${u.pathname.replace(OFFICE_PREFIX, "")}${u.search}`, { signal: AbortSignal.timeout(60_000) });
-        if (!res.ok) throw new Error(`下载保存结果失败（${res.status}）`);
-        const bytes = Buffer.from(await res.arrayBuffer());
-        const cur = artifacts.get(t.a);
-        if (cur && bytes.length > 0) {
-          const newExt = (/\.([a-z0-9]+)$/i.exec(u.pathname)?.[1] ?? "").toLowerCase();
-          const oldExt = (/\.([a-z0-9]+)$/i.exec(cur.filename)?.[1] ?? "").toLowerCase();
-          const same = createHash("sha256").update(bytes).digest("hex") === artifacts.version(cur.id).sha256;
-          // Old binary formats come back in their modern format; the artifact then continues under that name.
-          const modern = ["docx", "xlsx", "pptx"].includes(newExt) && newExt !== oldExt && ["doc", "xls", "ppt"].includes(oldExt);
-          if (!same) {
-            const saved = artifacts.saveFile({
-              artifactId: cur.id,
-              bytes,
-              note: body.status === 6 ? "在线编辑器保存" : "在线编辑",
-              author: "user",
-              ...(modern ? { filename: cur.filename.replace(/\.[^.]+$/, `.${newExt}`), mime: OFFICE_MIME[newExt] } : {}),
-            });
-            audit(db, "owner", "artifact.edit", { id: saved.id, version: saved.version });
-          }
-        }
-      } catch (err) {
-        console.error("office callback", err);
-        return { error: 1 };
-      }
-    }
-    return { error: 0 };
-  });
-
-  // Managing the optional editor service (Settings → System).
-  app.get("/api/office/status", async () => office.status());
-  const OfficePatch = z.object({ memoryMb: z.number().int().optional(), idleMinutes: z.number().int().optional(), image: z.string().max(200).optional() });
-  app.patch("/api/office", async (req) => {
-    const b = OfficePatch.parse(req.body);
-    const before = { memoryMb: office.memoryMb(), idleMinutes: office.idleMinutes(), image: office.image() };
-    try {
-      office.configure(b);
-    } catch (err) {
-      throw new HttpError(400, err instanceof Error ? err.message : String(err));
-    }
-    // New limits apply at the next start.
-    if (b.memoryMb !== undefined && b.memoryMb !== before.memoryMb) await office.stop().catch(() => {});
-    audit(db, actor(req), "settings.update", { fields: Object.keys(b), changes: changesOf(before, { memoryMb: office.memoryMb(), idleMinutes: office.idleMinutes(), image: office.image() }, Object.keys(b)) });
-    return office.status();
-  });
-  app.post("/api/office/enable", async (req) => {
-    office.configure({ enabled: true });
-    office.install();
-    audit(db, actor(req), "settings.update", { fields: ["office"], changes: { office: { from: false, to: true } } });
-    return office.status();
-  });
-  app.post("/api/office/disable", async (req) => {
-    office.configure({ enabled: false });
-    await office.stop().catch(() => {});
-    audit(db, actor(req), "settings.update", { fields: ["office"], changes: { office: { from: true, to: false } } });
-    return office.status();
-  });
-  app.post("/api/office/uninstall", async (req) => {
-    office.configure({ enabled: false });
-    await office.uninstall();
-    audit(db, actor(req), "settings.update", { fields: ["office"], changes: { office: { from: true, to: "uninstalled" } } });
-    return office.status();
+  app.post("/api/artifacts/:id/convert", async (req) => {
+    const a = artifactOr404(id(req));
+    const v = artifacts.version(a.id);
+    const t = v.kind === "file" ? legacyOffice(v.filename) : null;
+    if (!t) throw new HttpError(400, "这个文件不需要转换");
+    const bytes = await convertLegacyOffice(artifacts.filePath(a.id, v.version), t.to).catch((err) => {
+      throw new HttpError(422, err instanceof Error ? err.message : String(err));
+    });
+    const mime = "application/vnd.openxmlformats-officedocument." + { docx: "wordprocessingml.document", xlsx: "spreadsheetml.sheet", pptx: "presentationml.presentation" }[t.to];
+    const saved = artifacts.saveFile({
+      artifactId: a.id,
+      bytes,
+      filename: v.filename.replace(/\.[^.]+$/, `.${t.to}`),
+      mime,
+      note: `由 .${t.from} 转换为 .${t.to}`,
+      author: "user",
+    });
+    audit(db, actor(req), "artifact.edit", { id: saved.id, version: saved.version });
+    return saved;
   });
   // The file itself. Only types the browser can't run as a page are served inline; text (HTML included) is
   // served as plain text and everything else as a download, all sandboxed, so a delivered file can never act
@@ -1167,7 +1084,7 @@ export function registerRoutes(hub: Hub): void {
   /** Containers folded into what the owner knows: each instance, each agent, and the hub's own services. */
   const perfGroups = (range: PerfRange | null): PerfGroup[] => {
     const all = hub.perf.containers(range);
-    const SYSTEM: Record<string, string> = { hub: "Constella 服务", office: "在线 Office" };
+    const SYSTEM: Record<string, string> = { hub: "Constella 服务" };
     return [
       ...desktops.rows().map((d) => groupOf({ type: "instance", id: d.id, name: d.name, kind: d.kind }, all.filter((c) => c.desktopId === d.id))),
       ...agents.list().map((a) => groupOf({ type: "agent", id: a.id, name: a.name, emoji: a.emoji }, all.filter((c) => c.role === "agent" && c.agentId === a.id))),

@@ -69,14 +69,13 @@ cd constella
 bash scripts/install.sh install
 ```
 
-脚本会自动生成加密主密钥，构建 hub、agent、浏览器/桌面、安卓桥接镜像；启动后在浏览器打开 `http://localhost:8780`，创建账号后跟着首次部署向导走两步：先连接模型（选服务商、填 Key、挑一个模型，当场测试），再选需要的实例和 Office。勾选 Office 后才会下载它的大镜像。之后首页的「开始使用」清单会提示还差什么（建第一个 agent、开推送、加通行密钥）。初始化码默认关闭，第一次打开网页直接创建账号；想多一道门槛就在 `deploy/.env` 设 `CONSTELLA_SETUP_CODE`。远程访问或手机推送仍需配置 HTTPS 入口，见下面的「部署」。
+脚本会自动生成加密主密钥，构建 hub、agent、浏览器/桌面、安卓桥接镜像；启动后在浏览器打开 `http://localhost:8780`，创建账号后跟着首次部署向导走两步：先连接模型（选服务商、填 Key、挑一个模型，当场测试），再选需要的实例。Word / Excel / PowerPoint 成果可以在页面里直接查看和编辑，不需要额外下载组件。之后首页的「开始使用」清单会提示还差什么（建第一个 agent、开推送、加通行密钥）。初始化码默认关闭，第一次打开网页直接创建账号；想多一道门槛就在 `deploy/.env` 设 `CONSTELLA_SETUP_CODE`。远程访问或手机推送仍需配置 HTTPS 入口，见下面的「部署」。
 
 日常管理统一使用同一个脚本：
 
 ```bash
 bash scripts/install.sh status
 bash scripts/install.sh logs
-bash scripts/install.sh office            # 可选：提前下载 Office 镜像
 bash scripts/install.sh restart
 bash scripts/install.sh update            # git pull，重新构建并重启
 bash scripts/install.sh backup

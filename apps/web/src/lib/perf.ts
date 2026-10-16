@@ -112,7 +112,6 @@ export const ROLE_LABEL: Record<string, string> = {
   android: "安卓系统",
   agent: "agent 容器",
   hub: "hub",
-  office: "Office 文档服务",
 };
 
 export const RANGES: { value: PerfRange; label: string }[] = [

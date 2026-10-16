@@ -48,9 +48,6 @@ export const config = {
     hubWsUrl: env("CONSTELLA_HUB_WS", "ws://constella-hub:8780/api/runner"),
     hubMcpUrl: env("CONSTELLA_HUB_MCP", "http://constella-hub:8780/mcp"),
   },
-  officeImage: env("CONSTELLA_OFFICE_IMAGE", "onlyoffice/documentserver:latest"),
-  /** How the Office Document Server reaches the hub (file download and save callbacks). */
-  hubInternalUrl: env("CONSTELLA_HUB_INTERNAL_URL", "http://constella-hub:8780").replace(/\/$/, ""),
   agentIdleMinutes: Number(env("CONSTELLA_AGENT_IDLE_MINUTES", "30")),
   desktopIdleMinutes: Number(env("CONSTELLA_DESKTOP_IDLE_MINUTES", "30")),
   /** Memory limit per instance container, by kind (MB). */

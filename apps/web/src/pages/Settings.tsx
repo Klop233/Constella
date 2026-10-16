@@ -1344,128 +1344,6 @@ function InstancesSection({ s, save }: { s: SettingsView; save: Save }) {
   );
 }
 
-interface OfficeStatus {
-  enabled: boolean;
-  image: string;
-  imagePresent: boolean;
-  imageSizeMb: number | null;
-  state: "off" | "stopped" | "starting" | "running" | "error";
-  pulling: { active: boolean; percent: number; error: string | null };
-  memoryMb: number;
-  usedMb: number | null;
-  idleMinutes: number;
-  memoryChoices: number[];
-  idleChoices: number[];
-}
-
-/** The optional online Office editor: install, turn off, resource limits, uninstall. */
-function OfficeGroup() {
-  const q = useQuery({
-    queryKey: ["office-status"],
-    queryFn: () => api.get<OfficeStatus>("/api/office/status"),
-    // Follow the download and start-up while they happen.
-    refetchInterval: (query) => (query.state.data?.pulling.active || query.state.data?.state === "starting" ? 2000 : 15_000),
-  });
-  const qc = useQueryClient();
-  const [busy, setBusy] = useState(false);
-  const o = q.data;
-  if (!o) return null;
-  const act = async (fn: () => Promise<unknown>, done?: string) => {
-    setBusy(true);
-    try {
-      await fn();
-      if (done) toast(done);
-      await qc.invalidateQueries({ queryKey: ["office-status"] });
-    } catch (err) {
-      toast(err instanceof Error ? err.message : String(err), "danger");
-    } finally {
-      setBusy(false);
-    }
-  };
-  const gb = (mb: number) => `${mb / 1024} GB`;
-  const stateText = o.pulling.active
-    ? `正在下载镜像 ${o.pulling.percent}%`
-    : o.pulling.error
-      ? `下载失败：${o.pulling.error}`
-      : !o.enabled
-        ? o.imagePresent
-          ? "已关闭（镜像保留，再次开启不用重新下载）"
-          : "未启用"
-        : { off: "已就绪，打开文档时自动启动", stopped: "已就绪，闲置时已停止，打开文档时自动启动", starting: "正在启动…", running: o.usedMb !== null ? `运行中，占用 ${o.usedMb} MB` : "运行中", error: "出错了" }[o.state];
-  return (
-    <SettingGroup title="在线 Office 编辑器">
-      <SettingRow
-        title="在线编辑 Word / Excel / PowerPoint"
-        desc={
-          <>
-            用 OnlyOffice 在成果里直接打开和编辑 doc / docx、xls / xlsx、ppt / pptx 等文件，保存后生成新版本。可选功能：开启会下载约 {o.imageSizeMb ? `${(o.imageSizeMb / 1024).toFixed(1)}` : "3"} GB 的镜像，运行时需要约 2 GB 以上内存。
-            <span className="block mt-1">{stateText}</span>
-          </>
-        }
-      >
-        <Toggle
-          checked={o.enabled}
-          onChange={(v) => void act(() => api.post(v ? "/api/office/enable" : "/api/office/disable"), v ? "已开启，正在准备编辑器" : "已关闭")}
-          label="在线 Office 编辑器"
-        />
-      </SettingRow>
-      {o.enabled && (
-        <>
-          <SettingRow title="内存上限" desc="编辑器容器最多用多少内存；改动在下次启动时生效。文档大、页数多时调高。">
-            <Choice label="内存上限" value={o.memoryMb} options={o.memoryChoices.map((m) => ({ value: m, label: gb(m) }))} onChange={(v) => void act(() => api.patch("/api/office", { memoryMb: v }))} />
-          </SettingRow>
-          <SettingRow title="闲置后停止" desc="没人使用这么久就停掉释放内存，下次打开文档时自动启动（多等一会儿）。">
-            <Choice
-              label="闲置后停止"
-              value={o.idleMinutes}
-              options={o.idleChoices.map((m) => ({ value: m, label: m === 0 ? "一直开着" : fmtMinutes(m) }))}
-              onChange={(v) => void act(() => api.patch("/api/office", { idleMinutes: v }))}
-            />
-          </SettingRow>
-        </>
-      )}
-      <SettingRow title="镜像地址" desc="从哪里下载编辑器镜像。Docker Hub 很慢时，可以换成能访问的镜像源地址；改动后需要重新下载。">
-        <ImageInput value={o.image} disabled={busy || o.pulling.active} onSave={(v) => void act(() => api.patch("/api/office", { image: v }), "已保存镜像地址")} />
-      </SettingRow>
-      {(o.imagePresent || o.pulling.error) && (
-        <SettingRow title="卸载" desc={`删除编辑器容器和镜像${o.imageSizeMb ? `，释放约 ${(o.imageSizeMb / 1024).toFixed(1)} GB 磁盘` : ""}。文档本身不受影响。`}>
-          <Button
-            size="sm"
-            variant="secondary"
-            loading={busy}
-            disabled={o.pulling.active}
-            onClick={async () => {
-              if (await confirmDialog({ title: "卸载在线 Office 编辑器？", body: "镜像会一并删除，之后再开启需要重新下载。", ok: "卸载", danger: true })) void act(() => api.post("/api/office/uninstall"), "已卸载");
-            }}
-          >
-            卸载
-          </Button>
-        </SettingRow>
-      )}
-      {o.enabled && !o.imagePresent && !o.pulling.active && (
-        <SettingRow title="镜像还没有下载" desc={`${o.image}`}>
-          <Button size="sm" variant="primary" loading={busy} onClick={() => void act(() => api.post("/api/office/enable"))}>
-            重新下载
-          </Button>
-        </SettingRow>
-      )}
-    </SettingGroup>
-  );
-}
-
-function ImageInput({ value, disabled, onSave }: { value: string; disabled: boolean; onSave: (v: string) => void }) {
-  const [v, setV] = useState(value);
-  useEffect(() => setV(value), [value]);
-  return (
-    <div className="flex items-center gap-2">
-      <input value={v} onChange={(e) => setV(e.target.value)} aria-label="镜像地址" spellCheck={false} className={cx(inputClass, "h-8 w-56 sm:w-72 font-mono text-[12.5px]")} />
-      <Button size="sm" variant="secondary" disabled={disabled || !v.trim() || v.trim() === value} onClick={() => onSave(v.trim())}>
-        保存
-      </Button>
-    </div>
-  );
-}
-
 function SystemSection({ s, save }: { s: SettingsView; save: Save }) {
   const sys = useQuery({
     queryKey: ["system"],
@@ -1538,7 +1416,6 @@ function SystemSection({ s, save }: { s: SettingsView; save: Save }) {
           </Link>
         </SettingRow>
       </SettingGroup>
-      <OfficeGroup />
       <SettingGroup title="环境">
         <SettingRow title="时区" desc="定时任务、用量统计、免打扰都按它算；在 deploy/.env 的 TZ 里改。">
           <span className="text-[13px] text-muted">{s.timezone}</span>

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # One-click installer and day-to-day manager for Constella.
-# Run from any directory: bash scripts/install.sh [install|office|start|stop|restart|status|logs|update|backup|restore|reset-password|android ...]
+# Run from any directory: bash scripts/install.sh [install|start|stop|restart|status|logs|update|backup|restore|reset-password|android ...]
 set -Eeuo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
@@ -53,11 +53,6 @@ prepare_env() {
 build_images() {
   note "构建 hub、agent、浏览器/桌面和 Android 桥接镜像"
   "${COMPOSE[@]}" --profile images build hub agent-image desktop-image android-bridge-image
-}
-
-pull_office() {
-  note "预拉在线 Office 镜像（OnlyOffice，约 3 GB）"
-  "${COMPOSE[@]}" --profile images pull office-image
 }
 
 start_hub() {
@@ -196,7 +191,7 @@ EOF
   fi
   cat <<EOF
 远程访问前，请在 $ENV_FILE 中设置 CONSTELLA_ORIGINS，然后配置 HTTPS 入口。
-首次登录后的浏览器向导会询问实例和 Office 组件；勾选 Office 后才会下载约 3 GB 的镜像。
+Word / Excel / PowerPoint 成果已经内置可直接查看和编辑，不需要额外下载组件。
 EOF
 }
 
@@ -209,12 +204,11 @@ manager() {
   need_env
   case "$1" in
     start) start_hub ;;
-    office) pull_office ;;
     stop) note "停止 Constella hub"; "${COMPOSE[@]}" stop hub ;;
     restart) note "重启 Constella hub"; "${COMPOSE[@]}" restart hub ;;
     status)
       "${COMPOSE[@]}" ps
-      docker image ls --format '{{.Repository}}:{{.Tag}}' | grep -E '^(constella-(hub|agent|desktop|android-bridge)|onlyoffice/documentserver):' || true
+      docker image ls --format '{{.Repository}}:{{.Tag}}' | grep -E '^constella-(hub|agent|desktop|android-bridge):' || true
       echo "数据目录：$(data_dir)"
       if curl -fs http://127.0.0.1:8780/api/health >/dev/null 2>&1; then echo "健康检查：正常"; else echo "健康检查：没有响应"; fi
       ;;
@@ -243,7 +237,6 @@ case "$command" in
 Constella 一键安装 / 管理
 
   install                 首次安装：生成配置、构建基础镜像、启动 hub
-  office                  手动预拉在线 Office 镜像（向导会按需自动拉取）
   start|stop|restart      启停 hub
   status                  查看服务、镜像、数据目录和健康状态
   logs [行数]             查看 hub 日志

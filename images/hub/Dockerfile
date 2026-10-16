@@ -17,6 +17,7 @@ RUN pnpm --filter @constella/web build && pnpm prune --prod 2>/dev/null || true
 
 FROM node:22-bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends git tar ca-certificates curl p7zip-full xz-utils bzip2 zstd \
+    libreoffice-writer-nogui libreoffice-calc-nogui libreoffice-impress-nogui fonts-noto-cjk \
  && rm -rf /var/lib/apt/lists/*
 ARG BITWARDEN_CLI_VERSION=2026.9.1
 RUN npm install --global "@bitwarden/cli@${BITWARDEN_CLI_VERSION}" --registry=https://registry.npmjs.org && npm cache clean --force

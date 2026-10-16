@@ -39,10 +39,6 @@ services:
     profiles: ["images"]
 
   # Only pulled during the one-click installation; the hub manages the actual container on demand.
-  office-image:
-    image: ${CONSTELLA_OFFICE_IMAGE:-onlyoffice/documentserver:latest}
-    profiles: ["images"]
-
   desktop-image:
     image: constella-desktop:latest
     build:

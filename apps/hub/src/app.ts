@@ -33,9 +33,7 @@ import { intelligentUiNote } from "./widgets.ts";
 import { UiStreams } from "./streamui.ts";
 import { Reflect } from "./reflect.ts";
 import { PERMISSION_KINDS, SMART_KINDS, type ApprovalMode, type PermissionKind } from "./safety.ts";
-import { OfficeService } from "./office.ts";
 import { PerfMonitor } from "./perf.ts";
-import { registerOfficeProxy } from "./office-proxy.ts";
 import { SecretBox, SecretStore } from "./secrets.ts";
 
 export interface Hub {
@@ -59,8 +57,6 @@ export interface Hub {
   /** What this host can run (instance kinds, Android backends), probed with throwaway containers. */
   hostcaps: HostCapabilities;
   containers: Containers;
-  /** Optional online Office editor (installed and managed from Settings). */
-  office: OfficeService;
   /** Host and container performance samples (CPU, memory, network), a day of history in memory. */
   perf: PerfMonitor;
   scheduler: Scheduler;
@@ -581,12 +577,9 @@ export async function createHub(opts: { dbPath?: string; webDist?: string; logge
   await app.register(rateLimit, { global: false });
 
   const auth = new Auth(db);
-  const office = new OfficeService({ db, secrets, docker: containers.docker });
-  office.startIdleStop();
   const perf = new PerfMonitor({ docker: containers.docker });
   const hub: Hub = {
     app,
-    office,
     perf,
     db,
     auth,
@@ -691,7 +684,6 @@ export async function createHub(opts: { dbPath?: string; webDist?: string; logge
     instanceApproval: () => settings.instanceApproval(),
   });
   registerRoutes(hub);
-  registerOfficeProxy(hub);
 
   const webDist = opts.webDist ?? process.env.CONSTELLA_WEB_DIST ?? path.resolve(import.meta.dirname, "../../web/dist");
   if (fs.existsSync(webDist)) {
@@ -704,7 +696,7 @@ export async function createHub(opts: { dbPath?: string; webDist?: string; logge
       },
     });
     app.setNotFoundHandler((req, reply) => {
-      if (req.method === "GET" && !req.url.startsWith("/api/") && !req.url.startsWith("/mcp") && !req.url.startsWith("/office-ds/")) {
+      if (req.method === "GET" && !req.url.startsWith("/api/") && !req.url.startsWith("/mcp")) {
         return reply.header("Cache-Control", "no-cache").sendFile("index.html");
       }
       // A share that reached the server (the service worker wasn't running yet): open the page, which explains.

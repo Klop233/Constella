@@ -1,310 +1,290 @@
-import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
-import type Docker from "dockerode";
-import { config } from "./config.ts";
-import type { Db } from "./db.ts";
-import { kvGet, kvSet } from "./db.ts";
-import type { SecretStore } from "./secrets.ts";
+import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
 
 /**
- * Optional online Office editor: an OnlyOffice Document Server container that the hub installs, starts, stops
- * and removes on request (Settings → System). The hub serves it on its own origin under /office-ds/, and
- * artifacts of Office types open in it; saves come back through a signed callback as new versions.
+ * Simple in-place editing of Word / Excel / PowerPoint files: read the text, change text, write it back into the
+ * package XML. Everything else in the file (styles, formulas, images, layout) is left byte-for-byte as it was.
  */
 
-export const OFFICE_CONTAINER = "constella-office";
-export const OFFICE_PREFIX = "/office-ds";
-const ROLE = "dev.constella.role";
-const MEMORY_CHOICES = [2048, 3072, 4096, 6144, 8192];
-const IDLE_CHOICES = [0, 5, 15, 30, 60, 120];
+export type OfficeKind = "docx" | "xlsx" | "pptx";
+export const MAX_OFFICE_ROWS = 500;
+export const MAX_OFFICE_COLS = 60;
 
-/** File types the editor opens (legacy binary formats included; no separate conversion step is needed). */
-export const OFFICE_EXT = /\.(docx?|dotx?|odt|rtf|xlsx?|xltx?|ods|csv|pptx?|potx?|odp)$/i;
-export function officeDocType(filename: string): "word" | "cell" | "slide" | null {
-  const ext = /\.([a-z0-9]+)$/i.exec(filename)?.[1]?.toLowerCase();
-  if (!ext || ext === "csv") return null;
-  if (["doc", "docx", "dot", "dotx", "odt", "rtf"].includes(ext)) return "word";
-  if (["xls", "xlsx", "xlt", "xltx", "ods"].includes(ext)) return "cell";
-  if (["ppt", "pptx", "pot", "potx", "odp"].includes(ext)) return "slide";
-  return null;
+export interface OfficeSheet {
+  name: string;
+  /** Rows of display values; null marks a cell that holds a formula (read-only). */
+  rows: ({ v: string; f?: boolean } | null)[][];
+  /** Row / column numbers (1-based) of rows[0][0]; always 1,1. Kept so edits can address cells by position. */
+  truncated: boolean;
+}
+export interface OfficeDoc {
+  kind: OfficeKind;
+  /** docx: one group of paragraphs. pptx: one group per slide. */
+  groups: { title: string; paragraphs: string[] }[];
+  sheets: OfficeSheet[];
+}
+export type OfficeEdit =
+  | { type: "text"; group: number; index: number; text: string }
+  | { type: "cell"; sheet: number; row: number; col: number; value: string };
+
+export function officeKind(filename: string): OfficeKind | null {
+  const m = /\.(docx|xlsx|pptx)$/i.exec(filename);
+  return m ? (m[1]!.toLowerCase() as OfficeKind) : null;
 }
 
-export interface OfficeStatus {
-  enabled: boolean;
-  image: string;
-  imagePresent: boolean;
-  imageSizeMb: number | null;
-  state: "off" | "stopped" | "starting" | "running" | "error";
-  pulling: { active: boolean; percent: number; error: string | null };
-  memoryMb: number;
-  usedMb: number | null;
-  idleMinutes: number;
-  memoryChoices: number[];
-  idleChoices: number[];
+const MAX_XML = 30 * 1024 * 1024;
+
+function open(buf: Uint8Array): Record<string, Uint8Array> {
+  try {
+    return unzipSync(buf, { filter: (f) => f.name.endsWith(".xml") || f.name.endsWith(".rels") ? f.originalSize <= MAX_XML : true });
+  } catch {
+    throw new Error("这个文件已损坏，或不是有效的 Office 文件");
+  }
 }
 
-const b64 = (b: Buffer | string) => Buffer.from(b).toString("base64url");
+const unescapeXml = (s: string) =>
+  s
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(Number(n)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, n) => String.fromCodePoint(parseInt(n, 16)))
+    .replace(/&amp;/g, "&");
+const escapeXml = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
-export class OfficeService {
-  #db: Db;
-  #secrets: SecretStore;
-  #docker: Docker;
-  #lastUsed = 0;
-  #starting: Promise<void> | null = null;
-  #pull: { active: boolean; percent: number; error: string | null } = { active: false, percent: 0, error: null };
-  #timer: NodeJS.Timeout | undefined;
+/** Matches of paragraphs: <w:p ...>…</w:p> / <a:p>…</a:p> (not <w:pPr>, <w:pict> …). */
+function paragraphRe(ns: "w" | "a"): RegExp {
+  return new RegExp(`<${ns}:p(?:\\s[^>]*?)?(?:/>|>[\\s\\S]*?</${ns}:p>)`, "g");
+}
+function textRe(ns: "w" | "a"): RegExp {
+  return new RegExp(`(<${ns}:t(?:\\s[^>]*)?>)([\\s\\S]*?)(</${ns}:t>)`, "g");
+}
 
-  constructor(opts: { db: Db; secrets: SecretStore; docker: Docker }) {
-    this.#db = opts.db;
-    this.#secrets = opts.secrets;
-    this.#docker = opts.docker;
-  }
+function paragraphText(p: string, ns: "w" | "a"): string {
+  let out = "";
+  // Text runs and tabs / breaks in document order.
+  const re = new RegExp(`<${ns}:t(?:\\s[^>]*)?>([\\s\\S]*?)</${ns}:t>|<${ns}:tab\\s*/>|<${ns}:br\\s*/>`, "g");
+  for (const m of p.matchAll(re)) out += m[1] !== undefined ? unescapeXml(m[1]) : m[0].includes(":tab") ? "\t" : "\n";
+  return out;
+}
 
-  // ── settings ─────────────────────────────────────────────
-  enabled(): boolean {
-    return kvGet(this.#db, "settings.office.enabled") === "true";
+/** Put `text` into the first text run of the paragraph and empty the rest; keeps the paragraph's formatting. */
+function setParagraphText(p: string, ns: "w" | "a", text: string): string {
+  const esc = escapeXml(text.replace(/\r?\n/g, " "));
+  let first = true;
+  const res = p.replace(textRe(ns), (_, open: string, _body: string, close: string) => {
+    if (!first) return `${open}${close}`;
+    first = false;
+    const o = ns === "w" && !/xml:space/.test(open) ? open.replace(/>$/, ' xml:space="preserve">') : open;
+    return `${o}${esc}${close}`;
+  });
+  if (!first) return res;
+  // No text run yet (an empty paragraph): add one before the end of the paragraph.
+  const run = ns === "w" ? `<w:r><w:t xml:space="preserve">${esc}</w:t></w:r>` : `<a:r><a:t>${esc}</a:t></a:r>`;
+  if (/\/>$/.test(p)) return p.replace(/\s*\/>$/, `>${run}</${ns}:p>`);
+  if (ns === "a") {
+    // DrawingML needs runs before a:endParaRPr.
+    if (/<a:endParaRPr/.test(p)) return p.replace(/<a:endParaRPr/, `${run}<a:endParaRPr`);
   }
-  /** The image reference to install from: a Settings override, else the env default (a registry mirror works too). */
-  image(): string {
-    return kvGet(this.#db, "settings.office.image") || config.officeImage;
+  return p.replace(new RegExp(`</${ns}:p>$`), `${run}</${ns}:p>`);
+}
+
+function slideNames(files: Record<string, Uint8Array>): string[] {
+  return Object.keys(files)
+    .filter((n) => /^ppt\/slides\/slide\d+\.xml$/.test(n))
+    .sort((a, b) => Number(/(\d+)\.xml$/.exec(a)![1]) - Number(/(\d+)\.xml$/.exec(b)![1]));
+}
+
+function colName(n: number): string {
+  let s = "";
+  for (let c = n; c > 0; c = Math.floor((c - 1) / 26)) s = String.fromCharCode(65 + ((c - 1) % 26)) + s;
+  return s;
+}
+function colNumber(letters: string): number {
+  let n = 0;
+  for (const ch of letters) n = n * 26 + ch.charCodeAt(0) - 64;
+  return n;
+}
+
+function sharedStrings(files: Record<string, Uint8Array>): string[] {
+  const f = files["xl/sharedStrings.xml"];
+  if (!f) return [];
+  return [...strFromU8(f).matchAll(/<si>([\s\S]*?)<\/si>/g)].map((m) => [...m[1]!.matchAll(/<t(?:\s[^>]*)?>([\s\S]*?)<\/t>/g)].map((t) => unescapeXml(t[1]!)).join(""));
+}
+
+/** Sheet names with the package path of each sheet's XML, in workbook order. */
+function sheetFiles(files: Record<string, Uint8Array>): { name: string; path: string }[] {
+  const wb = files["xl/workbook.xml"];
+  const rels = files["xl/_rels/workbook.xml.rels"];
+  if (!wb || !rels) return [];
+  const target = new Map<string, string>();
+  for (const m of strFromU8(rels).matchAll(/<Relationship\s[^>]*>/g)) {
+    const id = /\sId="([^"]+)"/.exec(m[0])?.[1];
+    const t = /\sTarget="([^"]+)"/.exec(m[0])?.[1];
+    if (id && t) target.set(id, t.startsWith("/") ? t.slice(1) : `xl/${t}`);
   }
-  memoryMb(): number {
-    const v = Number(kvGet(this.#db, "settings.office.memoryMb"));
-    return MEMORY_CHOICES.includes(v) ? v : 3072;
+  const out: { name: string; path: string }[] = [];
+  for (const m of strFromU8(wb).matchAll(/<sheet\s[^>]*>/g)) {
+    const name = /\sname="([^"]*)"/.exec(m[0])?.[1];
+    const rid = /\sr:id="([^"]+)"/.exec(m[0])?.[1];
+    const path = rid ? target.get(rid) : undefined;
+    if (name !== undefined && path && files[path]) out.push({ name: unescapeXml(name), path });
   }
-  idleMinutes(): number {
-    const raw = kvGet(this.#db, "settings.office.idleMinutes");
-    const v = Number(raw);
-    return raw !== undefined && IDLE_CHOICES.includes(v) ? v : 30;
+  return out;
+}
+
+export function readOffice(kind: OfficeKind, buf: Uint8Array): OfficeDoc {
+  const files = open(buf);
+  if (kind === "docx") {
+    const xml = files["word/document.xml"];
+    if (!xml) throw new Error("找不到文档正文");
+    const paragraphs = [...strFromU8(xml).matchAll(paragraphRe("w"))].map((m) => paragraphText(m[0], "w"));
+    return { kind, groups: [{ title: "正文", paragraphs }], sheets: [] };
   }
-  configure(p: { enabled?: boolean; memoryMb?: number; idleMinutes?: number; image?: string }): void {
-    if (p.image !== undefined) {
-      const img = p.image.trim();
-      if (img && !/^[a-zA-Z0-9][a-zA-Z0-9._\-/:@]{0,200}$/.test(img)) throw new Error("镜像地址格式不对");
-      kvSet(this.#db, "settings.office.image", img);
+  if (kind === "pptx") {
+    const groups = slideNames(files).map((n, i) => ({
+      title: `第 ${i + 1} 页`,
+      paragraphs: [...strFromU8(files[n]!).matchAll(paragraphRe("a"))].map((m) => paragraphText(m[0], "a")),
+    }));
+    return { kind, groups, sheets: [] };
+  }
+  const strings = sharedStrings(files);
+  const sheets: OfficeSheet[] = sheetFiles(files).map(({ name, path }) => {
+    const xml = strFromU8(files[path]!);
+    const rows: OfficeSheet["rows"] = [];
+    let truncated = false;
+    for (const rm of xml.matchAll(/<row\s[^>]*?(?:\/>|>[\s\S]*?<\/row>)/g)) {
+      const rowNo = Number(/\sr="(\d+)"/.exec(rm[0])?.[1] ?? rows.length + 1);
+      if (rowNo > MAX_OFFICE_ROWS) {
+        truncated = true;
+        break;
+      }
+      const row = (rows[rowNo - 1] ??= []);
+      for (const cm of rm[0].matchAll(/<c\s([^>]*?)(?:\/>|>([\s\S]*?)<\/c>)/g)) {
+        const attrs = cm[1]!;
+        const ref = /\sr="([A-Z]+)\d+"|^r="([A-Z]+)\d+"/.exec(attrs);
+        const col = colNumber((ref?.[1] ?? ref?.[2]) || "");
+        if (!col) continue;
+        if (col > MAX_OFFICE_COLS) {
+          truncated = true;
+          continue;
+        }
+        const body = cm[2] ?? "";
+        const t = /(?:^|\s)t="([^"]+)"/.exec(attrs)?.[1];
+        const v = /<v>([\s\S]*?)<\/v>/.exec(body)?.[1];
+        let text = "";
+        if (t === "s") text = strings[Number(v)] ?? "";
+        else if (t === "inlineStr") text = [...body.matchAll(/<t(?:\s[^>]*)?>([\s\S]*?)<\/t>/g)].map((x) => unescapeXml(x[1]!)).join("");
+        else if (v !== undefined) text = unescapeXml(v);
+        if (t === "b") text = v === "1" ? "TRUE" : "FALSE";
+        row[col - 1] = { v: text, ...(/<f[\s>/]/.test(body) ? { f: true } : {}) };
+      }
     }
-    if (p.memoryMb !== undefined) {
-      if (!MEMORY_CHOICES.includes(p.memoryMb)) throw new Error("内存上限只能是 2 / 3 / 4 / 6 / 8 GB");
-      kvSet(this.#db, "settings.office.memoryMb", String(p.memoryMb));
-    }
-    if (p.idleMinutes !== undefined) {
-      if (!IDLE_CHOICES.includes(p.idleMinutes)) throw new Error("闲置时间不在可选范围内");
-      kvSet(this.#db, "settings.office.idleMinutes", String(p.idleMinutes));
-    }
-    if (p.enabled !== undefined) kvSet(this.#db, "settings.office.enabled", String(p.enabled));
-  }
+    // Dense rows for JSON: holes become null.
+    const dense = Array.from({ length: rows.length }, (_, i) => {
+      const r = rows[i] ?? [];
+      return Array.from({ length: r.length }, (_, j) => r[j] ?? null);
+    });
+    return { name, rows: dense, truncated };
+  });
+  return { kind, groups: [], sheets };
+}
 
-  // ── secrets and signed links ─────────────────────────────
-  secret(): string {
-    let s = this.#secrets.get("office", "jwt");
-    if (!s) {
-      s = randomBytes(32).toString("base64url");
-      this.#secrets.set("office", "jwt", s);
+function editCell(xml: string, row: number, col: number, value: string): string {
+  const ref = `${colName(col)}${row}`;
+  const trimmed = value.trim();
+  const numeric = trimmed !== "" && /^-?\d+(\.\d+)?([eE][+-]?\d+)?$/.test(trimmed);
+  const build = (attrs: string) => {
+    // Keep style (s="…") of the cell; drop t / r which are rebuilt.
+    const style = /(?:^|\s)s="([^"]+)"/.exec(attrs)?.[1];
+    const s = style ? ` s="${style}"` : "";
+    if (value === "") return `<c r="${ref}"${s}/>`;
+    if (numeric) return `<c r="${ref}"${s}><v>${trimmed}</v></c>`;
+    return `<c r="${ref}"${s} t="inlineStr"><is><t xml:space="preserve">${escapeXml(value)}</t></is></c>`;
+  };
+  const cellRe = new RegExp(`<c\\s((?:[^>]*?\\s)?r="${ref}"[^>]*?)(?:/>|>[\\s\\S]*?</c>)`);
+  const hit = cellRe.exec(xml);
+  if (hit) {
+    if (/<f[\s>/]/.test(hit[0])) throw new Error(`${ref} 是公式单元格，不能直接改`);
+    return xml.slice(0, hit.index) + build(hit[1]!) + xml.slice(hit.index + hit[0].length);
+  }
+  const rowRe = new RegExp(`<row\\s((?:[^>]*?\\s)?r="${row}"[^>]*?)(/>|>([\\s\\S]*?)</row>)`);
+  const rm = rowRe.exec(xml);
+  if (rm) {
+    const attrs = rm[1]!.replace(/\sspans="[^"]*"/, "");
+    const cells = rm[3] ?? "";
+    // Insert in column order.
+    let at = cells.length;
+    for (const cm of cells.matchAll(/<c\s[^>]*?r="([A-Z]+)\d+"/g)) {
+      if (colNumber(cm[1]!) > col) {
+        at = cm.index;
+        break;
+      }
+    }
+    return xml.slice(0, rm.index) + `<row ${attrs}>${cells.slice(0, at)}${build("")}${cells.slice(at)}</row>` + xml.slice(rm.index + rm[0].length);
+  }
+  // A new row, placed in row order inside <sheetData>.
+  const newRow = `<row r="${row}">${build("")}</row>`;
+  if (/<sheetData\s*\/>/.test(xml)) return xml.replace(/<sheetData\s*\/>/, `<sheetData>${newRow}</sheetData>`);
+  for (const m of xml.matchAll(/<row\s[^>]*?r="(\d+)"/g)) {
+    if (Number(m[1]) > row) return xml.slice(0, m.index) + newRow + xml.slice(m.index);
+  }
+  return xml.replace(/<\/sheetData>/, `${newRow}</sheetData>`);
+}
+
+/** Applies edits and returns the new file's bytes. Throws a user-readable Error. */
+export function editOffice(kind: OfficeKind, buf: Uint8Array, edits: OfficeEdit[]): Uint8Array {
+  const files = open(buf);
+  const xmlOf = new Map<string, string>();
+  const get = (p: string) => {
+    let s = xmlOf.get(p);
+    if (s === undefined) {
+      const f = files[p];
+      if (!f) throw new Error("文件结构不完整");
+      s = strFromU8(f);
+      xmlOf.set(p, s);
     }
     return s;
-  }
-  /** A link token the Document Server uses to fetch a file / post a save; expires after a day. */
-  sign(data: { a: string; v: number }, ttlMs = 24 * 3600_000): string {
-    const body = b64(JSON.stringify({ ...data, exp: Date.now() + ttlMs }));
-    return `${body}.${createHmac("sha256", this.secret()).update(body).digest("base64url")}`;
-  }
-  verify(token: string): { a: string; v: number } | null {
-    const [body, mac] = token.split(".");
-    if (!body || !mac) return null;
-    const want = createHmac("sha256", this.secret()).update(body).digest();
-    const got = Buffer.from(mac, "base64url");
-    if (got.length !== want.length || !timingSafeEqual(got, want)) return null;
-    try {
-      const d = JSON.parse(Buffer.from(body, "base64url").toString("utf8"));
-      return d.exp > Date.now() && typeof d.a === "string" && typeof d.v === "number" ? { a: d.a, v: d.v } : null;
-    } catch {
-      return null;
+  };
+  // Paragraph edits go in descending index order per part so earlier matches stay valid.
+  const textEdits = new Map<string, { index: number; text: string }[]>();
+  const sheets = kind === "xlsx" ? sheetFiles(files) : [];
+  for (const e of edits) {
+    if (e.type === "text") {
+      if (kind === "xlsx") throw new Error("表格要按单元格修改");
+      const part = kind === "docx" ? "word/document.xml" : slideNames(files)[e.group];
+      if (!part) throw new Error("找不到要修改的页");
+      (textEdits.get(part) ?? textEdits.set(part, []).get(part)!).push({ index: e.index, text: e.text });
+    } else {
+      if (kind !== "xlsx") throw new Error("只有表格可以按单元格修改");
+      const sheet = sheets[e.sheet];
+      if (!sheet) throw new Error("找不到要修改的工作表");
+      if (e.row < 1 || e.row > 100000 || e.col < 1 || e.col > 16384) throw new Error("单元格位置不对");
+      xmlOf.set(sheet.path, editCell(get(sheet.path), e.row, e.col, e.value));
     }
   }
-  /** HS256 JWT in the form the Document Server expects for its config and callbacks. */
-  jwtSign(payload: object): string {
-    const head = b64(JSON.stringify({ alg: "HS256", typ: "JWT" }));
-    const body = b64(JSON.stringify(payload));
-    return `${head}.${body}.${createHmac("sha256", this.secret()).update(`${head}.${body}`).digest("base64url")}`;
+  const ns = kind === "docx" ? "w" : "a";
+  for (const [part, list] of textEdits) {
+    let xml = get(part);
+    const ps = [...xml.matchAll(paragraphRe(ns))];
+    for (const { index, text } of list.sort((a, b) => b.index - a.index)) {
+      const m = ps[index];
+      if (!m) throw new Error("找不到要修改的段落，文件可能已经变了，刷新后再试");
+      if (paragraphText(m[0], ns) === text) continue;
+      xml = xml.slice(0, m.index) + setParagraphText(m[0], ns, text) + xml.slice(m.index + m[0].length);
+    }
+    xmlOf.set(part, xml);
   }
-  jwtVerify(token: string): Record<string, any> | null {
-    const [h, p, s] = token.split(".");
-    if (!h || !p || !s) return null;
-    const want = createHmac("sha256", this.secret()).update(`${h}.${p}`).digest();
-    const got = Buffer.from(s, "base64url");
-    if (got.length !== want.length || !timingSafeEqual(got, want)) return null;
-    try {
-      return JSON.parse(Buffer.from(p, "base64url").toString("utf8"));
-    } catch {
-      return null;
+  if (kind === "xlsx" && xmlOf.size) {
+    // Cached formula results are stale after a value change; ask Excel to recalculate on open.
+    const wb = files["xl/workbook.xml"] ? strFromU8(files["xl/workbook.xml"]) : null;
+    if (wb) {
+      xmlOf.set(
+        "xl/workbook.xml",
+        /<calcPr[^>]*\/>/.test(wb) ? wb.replace(/<calcPr([^>]*?)\/>/, (m, a: string) => (/fullCalcOnLoad/.test(a) ? m : `<calcPr${a} fullCalcOnLoad="1"/>`)) : wb.replace(/<\/workbook>/, '<calcPr fullCalcOnLoad="1"/></workbook>'),
+      );
     }
   }
-
-  // ── status ───────────────────────────────────────────────
-  async #image(): Promise<{ present: boolean; sizeMb: number | null }> {
-    try {
-      const info = await this.#docker.getImage(this.image()).inspect();
-      return { present: true, sizeMb: Math.round(info.Size / 1024 / 1024) };
-    } catch {
-      return { present: false, sizeMb: null };
-    }
-  }
-
-  async status(): Promise<OfficeStatus> {
-    const img = await this.#image();
-    let state: OfficeStatus["state"] = "off";
-    let usedMb: number | null = null;
-    try {
-      const info = await this.#docker.getContainer(OFFICE_CONTAINER).inspect();
-      if (info.State.Running) {
-        state = info.State.Health?.Status === "starting" ? "starting" : "running";
-        const s: any = await this.#docker.getContainer(OFFICE_CONTAINER).stats({ stream: false }).catch(() => null);
-        if (s?.memory_stats?.usage) usedMb = Math.round((s.memory_stats.usage - (s.memory_stats.stats?.inactive_file ?? s.memory_stats.stats?.cache ?? 0)) / 1024 / 1024);
-      } else state = info.State.Status === "dead" ? "error" : "stopped";
-    } catch {
-      state = "off";
-    }
-    if (this.#starting && state !== "running") state = "starting";
-    return {
-      enabled: this.enabled(),
-      image: this.image(),
-      imagePresent: img.present,
-      imageSizeMb: img.sizeMb,
-      state: state === "off" && img.present && this.enabled() ? "stopped" : state,
-      pulling: { ...this.#pull },
-      memoryMb: this.memoryMb(),
-      usedMb,
-      idleMinutes: this.idleMinutes(),
-      memoryChoices: MEMORY_CHOICES,
-      idleChoices: IDLE_CHOICES,
-    };
-  }
-
-  // ── lifecycle ────────────────────────────────────────────
-  /** Download the image in the background; progress is in status().pulling. */
-  install(): void {
-    if (this.#pull.active) return;
-    this.#pull = { active: true, percent: 0, error: null };
-    void (async () => {
-      try {
-        const stream = await this.#docker.pull(this.image());
-        const layers = new Map<string, { cur: number; total: number }>();
-        await new Promise<void>((resolve, reject) => {
-          this.#docker.modem.followProgress(
-            stream,
-            (err: Error | null) => (err ? reject(err) : resolve()),
-            (ev: any) => {
-              if (ev.id && ev.progressDetail?.total) {
-                layers.set(ev.id, { cur: ev.progressDetail.current ?? 0, total: ev.progressDetail.total });
-                let cur = 0;
-                let total = 0;
-                for (const l of layers.values()) {
-                  cur += l.cur;
-                  total += l.total;
-                }
-                this.#pull.percent = total ? Math.min(99, Math.round((cur / total) * 100)) : 0;
-              }
-            },
-          );
-        });
-        this.#pull = { active: false, percent: 100, error: null };
-      } catch (err) {
-        this.#pull = { active: false, percent: 0, error: err instanceof Error ? err.message : String(err) };
-      }
-    })();
-  }
-
-  /** The container is created (with the current limits) and running, and the service answers. */
-  ensureRunning(): Promise<void> {
-    this.touch();
-    this.#starting ??= this.#start().finally(() => {
-      this.#starting = null;
-    });
-    return this.#starting;
-  }
-
-  async #start(): Promise<void> {
-    if (!this.enabled()) throw new Error("在线 Office 编辑器没有启用");
-    if (!(await this.#image()).present) throw new Error("编辑器镜像还没有下载，请先在设置里启用并等下载完成");
-    const memory = this.memoryMb() * 1024 * 1024;
-    let info: Docker.ContainerInspectInfo | null = null;
-    try {
-      info = await this.#docker.getContainer(OFFICE_CONTAINER).inspect();
-    } catch {
-      info = null;
-    }
-    // Limits or secret changed: recreate (nothing in the container needs keeping).
-    if (info && (info.Config.Image !== this.image() || info.HostConfig.Memory !== memory || !info.Config.Env?.includes(`JWT_SECRET=${this.secret()}`))) {
-      await this.#docker.getContainer(OFFICE_CONTAINER).remove({ force: true });
-      info = null;
-    }
-    if (!info) {
-      await this.#docker.createContainer({
-        name: OFFICE_CONTAINER,
-        Image: this.image(),
-        Env: [
-          "JWT_ENABLED=true",
-          `JWT_SECRET=${this.secret()}`,
-          "JWT_HEADER=Authorization",
-          // The hub is on a private network; the Document Server must be allowed to call it.
-          "ALLOW_PRIVATE_IP_ADDRESS=true",
-          "ALLOW_META_IP_ADDRESS=true",
-          `TZ=${config.timezone}`,
-        ],
-        Labels: { [ROLE]: "office" },
-        HostConfig: { NetworkMode: config.docker.network, Memory: memory, MemorySwap: memory, RestartPolicy: { Name: "no" }, PidsLimit: 2048 },
-      });
-    }
-    const c = this.#docker.getContainer(OFFICE_CONTAINER);
-    try {
-      await c.start();
-    } catch (err: any) {
-      if (err?.statusCode !== 304) throw err;
-    }
-    const deadline = Date.now() + 180_000;
-    while (Date.now() < deadline) {
-      if (await this.#healthy()) return;
-      await new Promise((r) => setTimeout(r, 2000));
-    }
-    throw new Error("编辑器启动超时，稍后再试，或在设置里查看状态");
-  }
-
-  async #healthy(): Promise<boolean> {
-    try {
-      const r = await fetch(`http://${OFFICE_CONTAINER}/healthcheck`, { signal: AbortSignal.timeout(3000) });
-      return r.ok && (await r.text()).trim() === "true";
-    } catch {
-      return false;
-    }
-  }
-
-  touch(): void {
-    this.#lastUsed = Date.now();
-  }
-
-  async stop(): Promise<void> {
-    try {
-      await this.#docker.getContainer(OFFICE_CONTAINER).stop({ t: 10 });
-    } catch (err: any) {
-      if (err?.statusCode !== 404 && err?.statusCode !== 304) throw err;
-    }
-  }
-
-  /** Remove the container and the image, freeing the disk. */
-  async uninstall(): Promise<void> {
-    await this.#docker.getContainer(OFFICE_CONTAINER).remove({ force: true }).catch(() => {});
-    await this.#docker.getImage(this.image()).remove({ force: true }).catch(() => {});
-    this.#pull = { active: false, percent: 0, error: null };
-  }
-
-  /** Stops the service after it has been idle for the configured time (it restarts on the next use). */
-  startIdleStop(): void {
-    this.#timer ??= setInterval(async () => {
-      const idle = this.idleMinutes();
-      if (idle <= 0 || !this.enabled() || this.#starting) return;
-      if (Date.now() - this.#lastUsed < idle * 60_000) return;
-      const running = await this.#docker.getContainer(OFFICE_CONTAINER).inspect().then((i) => i.State.Running, () => false);
-      if (running) await this.stop().catch(() => {});
-    }, 60_000);
-    this.#timer.unref();
-  }
+  for (const [p, s] of xmlOf) files[p] = strToU8(s);
+  return zipSync(files, { level: 6 });
 }
