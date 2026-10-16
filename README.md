@@ -271,7 +271,7 @@ docker compose up -d hub
 
 ## 常见问题
 
-- **操作报 `origin not allowed` / 「不允许的来源」**：浏览器地址栏里的地址（协议 + 域名 + 端口）要写进 `CONSTELLA_ORIGINS`，改完重启 hub。
+- **操作报 `origin not allowed` / 「不允许的来源」**：浏览器地址栏里的地址（协议 + 域名 + 端口）要写进 `CONSTELLA_ORIGINS`，改完重启 hub。创建账号那次用的地址会自动记住，之后换新地址访问才需要手动加。
 - **收不到推送**：必须通过 HTTPS 地址打开；Android 用 Chrome 且手机有谷歌服务；iPhone 要先「添加到主屏幕」，再从主屏幕图标打开后开启推送。
 - **agent 一直不回复或报模型错误**：在「设置 → 模型」里点该模型的「测试」；多半是 new-api 那边的通道不支持 `/v1/responses`，或者令牌没有这个模型的权限。容器里的日志：`docker logs constella-agent-<id>`。
 - **某种实例建不了**：「设置 → 实例」里会写明缺什么，补上后点「检测」。

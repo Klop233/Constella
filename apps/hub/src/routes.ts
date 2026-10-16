@@ -15,6 +15,7 @@ import { config, nowIso } from "./config.ts";
 import { auditRefs, changesOf } from "./audit.ts";
 import { describeDevice } from "./auth.ts";
 import { audit, kvGet, kvSet } from "./db.ts";
+import { allowedOrigins, rememberOrigin } from "./origins.ts";
 import { DesktopError, type DesktopAction, type InstanceOp } from "./desktops.ts";
 import { requestSource } from "./request-source.ts";
 import { isTrusted } from "./trusted.ts";
@@ -81,7 +82,10 @@ export function registerRoutes(hub: Hub): void {
     if (!["GET", "HEAD", "OPTIONS"].includes(req.method) && !url.startsWith("/api/runner") && !url.startsWith("/api/office/callback/")) {
       if (req.headers["x-constella"] !== "1") return reply.code(403).send({ error: "missing X-Constella header" });
       const origin = req.headers.origin;
-      if (origin && !config.origins.includes(origin) && !isTrusted(req)) return reply.code(403).send({ error: "origin not allowed" });
+      // The first account is created from whatever address the owner opens the app at; that origin is
+      // remembered in the handler instead of being refused here.
+      const firstRunSetup = auth.needsSetup() && url === "/api/auth/setup";
+      if (origin && !firstRunSetup && !allowedOrigins(db).includes(origin) && !isTrusted(req)) return reply.code(403).send({ error: "origin not allowed" });
     }
     if (PUBLIC.some((r) => r.test(url))) return;
     const s = auth.check(req);
@@ -147,6 +151,7 @@ export function registerRoutes(hub: Hub): void {
   app.post("/api/auth/setup", authLimit, async (req, reply) => {
     const b = z.object({ code: z.string().optional(), name: z.string().min(1).max(40), password: z.string() }).parse(req.body);
     const user = auth.setup(b.code ?? "", b.name, b.password);
+    rememberOrigin(db, req.headers.origin);
     auth.createSession(user.id, req, reply);
     return { ok: true };
   });

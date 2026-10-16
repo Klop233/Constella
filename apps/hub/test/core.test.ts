@@ -28,6 +28,7 @@ const { Auth, hashPassword, verifyPassword } = await import("../src/auth.ts");
 const { transcriptFor, Learning } = await import("../src/learning.ts");
 const { parseJsonLoose } = await import("../src/newapi.ts");
 const { ModelRegistry } = await import("../src/models.ts");
+const { allowedOrigins, rememberOrigin } = await import("../src/origins.ts");
 const { SecretStore } = await import("../src/secrets.ts");
 const { kvSet } = await import("../src/db.ts");
 const { Settings } = await import("../src/app.ts");
@@ -521,6 +522,16 @@ describe("helpers", () => {
     const h = hashPassword("correct horse");
     expect(verifyPassword("correct horse", h)).toBe(true);
     expect(verifyPassword("wrong", h)).toBe(false);
+  });
+
+  it("remembers the first-run origin on top of the env list", () => {
+    const db = openDb(":memory:");
+    expect(allowedOrigins(db)).toEqual(config.origins);
+    rememberOrigin(db, "https://host.example/");
+    rememberOrigin(db, "https://host.example");
+    rememberOrigin(db, "javascript:alert(1)");
+    rememberOrigin(db, undefined);
+    expect(allowedOrigins(db)).toEqual([...config.origins, "https://host.example"]);
   });
 
   it("creates the owner account without a setup code unless one is configured", () => {

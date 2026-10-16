@@ -1,8 +1,8 @@
 import http from "node:http";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import WebSocket from "ws";
-import { config } from "./config.ts";
 import type { Hub } from "./app.ts";
+import { allowedOrigins } from "./origins.ts";
 import { OFFICE_CONTAINER, OFFICE_PREFIX } from "./office.ts";
 
 const HOP = new Set(["connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailers", "transfer-encoding", "upgrade", "host", "content-length", "cookie"]);
@@ -27,7 +27,7 @@ export function registerOfficeProxy(hub: Hub): void {
     scope.addHook("onRequest", async (req, reply) => {
       if (!auth.check(req)) return reply.code(401).send({ error: "unauthorized" });
       const origin = req.headers.origin;
-      if (origin && !config.origins.includes(origin) && !origin.endsWith(String(req.headers.host)) && !(await import("./trusted.ts")).isTrusted(req)) {
+      if (origin && !allowedOrigins(hub.db).includes(origin) && !origin.endsWith(String(req.headers.host)) && !(await import("./trusted.ts")).isTrusted(req)) {
         return reply.code(403).send({ error: "origin not allowed" });
       }
     });

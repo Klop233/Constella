@@ -14,6 +14,7 @@ import { Artifacts } from "./artifacts.ts";
 import { Auth } from "./auth.ts";
 import { EffortCatalog, EffortSchema, type Effort } from "./catalog.ts";
 import { config, nowIso } from "./config.ts";
+import { allowedOrigins } from "./origins.ts";
 import { Containers } from "./containers.ts";
 import { audit, kvGet, openDb, type Db } from "./db.ts";
 import { Desktops } from "./desktops.ts";
@@ -398,7 +399,7 @@ export class Settings {
       telegramConfigured: !!this.telegram(),
       telegramChatId: kvGet(this.#db, "settings.telegramChatId") || config.telegram.chatId,
       timezone: config.timezone,
-      origins: config.origins,
+      origins: allowedOrigins(this.#db),
       dataDir: config.dataDir,
     };
   }

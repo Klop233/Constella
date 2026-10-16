@@ -8,6 +8,7 @@ import {
 import type { FastifyReply, FastifyRequest } from "fastify";
 import * as OTPAuth from "otpauth";
 import { config, newId, nowIso } from "./config.ts";
+import { allowedOrigins } from "./origins.ts";
 import { isTrusted } from "./trusted.ts";
 import { audit, type Db } from "./db.ts";
 
@@ -113,7 +114,7 @@ export class Auth {
   // ── Passkeys ────────────────────────────────────────────
   rpFor(origin: string | undefined): { rpID: string; origin: string } {
     const o = (origin ?? "").replace(/\/$/, "");
-    if (!config.origins.includes(o)) throw new Error(`不允许的来源：${o || "未知"}`);
+    if (!allowedOrigins(this.#db).includes(o)) throw new Error(`不允许的来源：${o || "未知"}`);
     return { rpID: new URL(o).hostname, origin: o };
   }
 
