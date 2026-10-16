@@ -14,6 +14,12 @@ import type { ModelRegistry } from "./models.ts";
 
 type Json = Record<string, any>;
 type ToolKind = "function" | "custom" | "local_shell";
+/** A tool as the model sees it (flat name) and as Codex knows it (name inside an optional namespace). */
+export interface ToolRef {
+  kind: ToolKind;
+  name: string;
+  namespace?: string;
+}
 
 export interface ChatRequest {
   model: string;
@@ -59,14 +65,21 @@ function reasoningText(item: Json): string {
   return Array.isArray(item.summary) ? (item.summary as Json[]).map((s) => s?.text ?? "").join("\n") : "";
 }
 
+/** Chat Completions has no namespaces: a tool inside one is offered as `namespace__name`. */
+export function flatName(name: string, namespace?: string): string {
+  if (!namespace) return name;
+  return `${namespace}${namespace.endsWith("_") ? "" : "__"}${name}`;
+}
+
 /** Responses tools as Chat Completions functions; freeform (custom) tools take their text in one `input` string. */
-function chatTools(tools: unknown): { tools: Json[]; kinds: Map<string, ToolKind> } {
-  const out: Json[] = [];
-  const kinds = new Map<string, ToolKind>();
+function chatTools(tools: unknown, namespace?: string, out: Json[] = [], kinds = new Map<string, ToolRef>()): { tools: Json[]; kinds: Map<string, ToolRef> } {
   for (const t of Array.isArray(tools) ? (tools as Json[]) : []) {
-    if (t?.type === "function" && t.name) {
-      out.push({ type: "function", function: { name: t.name, description: t.description ?? "", parameters: t.parameters ?? { type: "object", properties: {} } } });
-      kinds.set(t.name, "function");
+    if (t?.type === "namespace" && t.name) {
+      chatTools(t.tools, t.name, out, kinds);
+    } else if (t?.type === "function" && t.name) {
+      const flat = flatName(t.name, namespace);
+      out.push({ type: "function", function: { name: flat, description: t.description ?? "", parameters: t.parameters ?? { type: "object", properties: {} } } });
+      kinds.set(flat, { kind: "function", name: t.name, ...(namespace ? { namespace } : {}) });
     } else if (t?.type === "custom" && t.name) {
       const format = t.format?.definition ? `\n\nThe input must follow this ${t.format.syntax ?? ""} grammar:\n${t.format.definition}` : "";
       out.push({
@@ -77,7 +90,7 @@ function chatTools(tools: unknown): { tools: Json[]; kinds: Map<string, ToolKind
           parameters: { type: "object", properties: { input: { type: "string", description: "Raw input text" } }, required: ["input"], additionalProperties: false },
         },
       });
-      kinds.set(t.name, "custom");
+      kinds.set(t.name, { kind: "custom", name: t.name });
     } else if (t?.type === "local_shell") {
       out.push({
         type: "function",
@@ -91,7 +104,7 @@ function chatTools(tools: unknown): { tools: Json[]; kinds: Map<string, ToolKind
           },
         },
       });
-      kinds.set("local_shell", "local_shell");
+      kinds.set("local_shell", { kind: "local_shell", name: "local_shell" });
     }
     // Hosted tools (web search, image generation…) have no Chat Completions equivalent and are left out.
   }
@@ -118,7 +131,7 @@ function pairToolCalls(messages: Json[]): Json[] {
 }
 
 /** Turns a Responses API request (as Codex sends it) into a streaming Chat Completions request. */
-export function toChatRequest(body: Json): { request: ChatRequest; kinds: Map<string, ToolKind> } {
+export function toChatRequest(body: Json): { request: ChatRequest; kinds: Map<string, ToolRef> } {
   const system: string[] = [];
   if (typeof body.instructions === "string" && body.instructions.trim()) system.push(body.instructions);
   const input: Json[] = typeof body.input === "string" ? [{ type: "message", role: "user", content: body.input }] : Array.isArray(body.input) ? body.input : [];
@@ -141,7 +154,8 @@ export function toChatRequest(body: Json): { request: ChatRequest; kinds: Map<st
         // Many chat templates only allow system text at the start; these stay valid for the whole conversation.
         if (text.trim()) system.push(text);
       } else if (item.role === "assistant") {
-        messages.push({ role: "assistant", content: text });
+        // Codex keeps reasoning → text → tool calls; the reasoning belongs to this message and its calls.
+        messages.push({ role: "assistant", content: text, ...(reasoning && i > lastUser ? { reasoning_content: reasoning } : {}) });
       } else {
         messages.push({ role: "user", content: userContent(text, images) });
       }
@@ -150,7 +164,7 @@ export function toChatRequest(body: Json): { request: ChatRequest; kinds: Map<st
       reasoning = reasoningText(item) || null;
     } else if (type === "function_call" || type === "custom_tool_call" || type === "local_shell_call") {
       const args = type === "function_call" ? item.arguments || "{}" : type === "custom_tool_call" ? JSON.stringify({ input: item.input ?? "" }) : JSON.stringify(item.action ?? {});
-      const name = type === "local_shell_call" ? "local_shell" : item.name;
+      const name = type === "local_shell_call" ? "local_shell" : flatName(item.name, item.namespace);
       const call = { id: item.call_id ?? item.id ?? id("call"), type: "function", function: { name, arguments: args } };
       const last = messages.at(-1);
       const target = last?.role === "assistant" ? last : (messages.push({ role: "assistant", content: null }), messages.at(-1)!);
@@ -165,7 +179,12 @@ export function toChatRequest(body: Json): { request: ChatRequest; kinds: Map<st
     }
   });
   flushImages();
-  for (const m of messages) if (m.role === "assistant" && m.tool_calls && m.content === "") m.content = null;
+  for (const m of messages) {
+    if (m.role !== "assistant") continue;
+    if (m.tool_calls && m.content === "") m.content = null;
+    // Only tool-calling turns need their reasoning back; elsewhere some services reject the field.
+    if (!m.tool_calls) delete m.reasoning_content;
+  }
 
   const { tools, kinds } = chatTools(body.tools);
   const request: ChatRequest = {
@@ -194,7 +213,7 @@ export function toChatRequest(body: Json): { request: ChatRequest; kinds: Map<st
  */
 export class ResponsesStream {
   readonly id = id("resp");
-  #kinds: Map<string, ToolKind>;
+  #kinds: Map<string, ToolRef>;
   #model: string;
   #index = 0;
   #reasoning: { id: string; index: number; text: string } | null = null;
@@ -207,7 +226,7 @@ export class ResponsesStream {
   #finished = false;
   #closed = false;
 
-  constructor(model: string, kinds: Map<string, ToolKind>) {
+  constructor(model: string, kinds: Map<string, ToolRef>) {
     this.#model = model;
     this.#kinds = kinds;
   }
@@ -372,7 +391,8 @@ export class ResponsesStream {
 
   #toolItem(c: { id: string; name: string; args: string }): Json {
     const callId = c.id || id("call");
-    const kind = this.#kinds.get(c.name) ?? "function";
+    const tool = this.#kinds.get(c.name) ?? { kind: "function" as const, name: c.name };
+    const kind = tool.kind;
     const args = c.args.trim() || "{}";
     if (kind === "custom") {
       let input = args;
@@ -397,7 +417,7 @@ export class ResponsesStream {
         action: { type: "exec", command: Array.isArray(action.command) ? action.command : [], working_directory: action.workdir, timeout_ms: action.timeout_ms },
       };
     }
-    return { type: "function_call", id: id("fc"), call_id: callId, name: c.name, arguments: args };
+    return { type: "function_call", id: id("fc"), call_id: callId, name: tool.name, ...(tool.namespace ? { namespace: tool.namespace } : {}), arguments: args };
   }
 
   failed(message: string, code = "upstream_error"): Json {
@@ -471,8 +491,11 @@ export function registerChatBridge(app: FastifyInstance, deps: { models: ModelRe
       const p = providerOf(pid);
       if (!p) return reply.code(404).send({ error: { message: `服务商 ${pid} 不存在或不是 Chat Completions 接口` } });
       const { request, kinds } = toChatRequest((req.body ?? {}) as Json);
+      // The request's own "close" fires as soon as its body is read; the response's means the caller went away.
       const abort = new AbortController();
-      req.raw.on("close", () => abort.abort());
+      reply.raw.on("close", () => {
+        if (!reply.raw.writableEnded) abort.abort();
+      });
       let upstream: Response;
       try {
         const key = deps.models.apiKey(pid);

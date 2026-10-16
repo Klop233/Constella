@@ -89,10 +89,28 @@ describe("Responses → Chat Completions request", () => {
     expect(request.tools?.map((t) => t.function.name)).toEqual(["shell", "apply_patch"]);
     expect(request.tools?.[1]?.function.parameters.required).toEqual(["input"]);
     expect(request.tools?.[1]?.function.description).toContain("start: x");
-    expect(kinds.get("apply_patch")).toBe("custom");
+    expect(kinds.get("apply_patch")?.kind).toBe("custom");
     expect(request.messages[1]?.tool_calls[0].function.arguments).toBe('{"input":"*** Begin Patch"}');
     expect(request.reasoning_effort).toBe("high");
     expect(request.tool_choice).toBe("auto");
+  });
+
+  it("offers namespaced tools as namespace__name and maps calls back", () => {
+    const { request, kinds } = toChatRequest({
+      model: "m",
+      input: [
+        { role: "user", content: "记住" },
+        { type: "function_call", call_id: "c", name: "memory_save", namespace: "mcp__constella", arguments: "{}" },
+        { type: "function_call_output", call_id: "c", output: "ok" },
+      ],
+      tools: [{ type: "namespace", name: "mcp__constella", description: "Constella", tools: [{ type: "function", name: "memory_save", description: "save", parameters: { type: "object", properties: {} } }] }],
+    });
+    expect(request.tools?.map((t) => t.function.name)).toEqual(["mcp__constella__memory_save"]);
+    expect(request.messages[1]?.tool_calls[0].function.name).toBe("mcp__constella__memory_save");
+    const s = new ResponsesStream("m", kinds);
+    s.chunk({ choices: [{ delta: { tool_calls: [{ index: 0, id: "x", function: { name: "mcp__constella__memory_save", arguments: "{}" } }] }, finish_reason: "tool_calls" }] });
+    const item = s.end(true)!.find((e) => e.type === "response.output_item.done")!.item;
+    expect(item).toMatchObject({ type: "function_call", name: "memory_save", namespace: "mcp__constella", call_id: "x" });
   });
 
   it("hands reasoning back on tool calls of the current turn only", () => {
@@ -113,13 +131,30 @@ describe("Responses → Chat Completions request", () => {
     expect(assistants[0]?.reasoning_content).toBeUndefined();
     expect(assistants[1]?.reasoning_content).toBe("新的想法");
   });
+
+  it("keeps the reasoning when Codex put text between it and the tool call", () => {
+    const { request } = toChatRequest({
+      model: "m",
+      input: [
+        { role: "user", content: "跑一下" },
+        { type: "reasoning", id: "r", summary: [{ type: "summary_text", text: "先跑命令" }], content: [{ type: "reasoning_text", text: "先跑命令" }] },
+        { type: "message", role: "assistant", content: [{ type: "output_text", text: "我来运行一下。" }] },
+        { type: "function_call", call_id: "c", name: "exec_command", arguments: "{}" },
+        { type: "function_call_output", call_id: "c", output: "ok" },
+        { type: "reasoning", id: "r2", summary: [{ type: "summary_text", text: "可以回答了" }] },
+        { type: "message", role: "assistant", content: [{ type: "output_text", text: "好了" }] },
+      ],
+    });
+    expect(request.messages[1]).toMatchObject({ role: "assistant", content: "我来运行一下。", reasoning_content: "先跑命令" });
+    expect(request.messages[3]).toEqual({ role: "assistant", content: "好了" });
+  });
 });
 
 describe("Chat Completions stream → Responses events", () => {
   const chunk = (delta: object, extra: object = {}) => ({ choices: [{ index: 0, delta, ...extra }] });
 
   it("streams reasoning, then text, then tool calls, and completes with usage", () => {
-    const s = new ResponsesStream("m", new Map([["apply_patch", "custom" as const]]));
+    const s = new ResponsesStream("m", new Map([["apply_patch", { kind: "custom" as const, name: "apply_patch" }]]));
     const events = [
       ...s.start(),
       ...s.chunk(chunk({ reasoning_content: "想" })),
