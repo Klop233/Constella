@@ -66,15 +66,22 @@ Constella 的思路是：**干活的部分不自己写**，直接用 OpenAI 开�
 
 ```bash
 git clone https://github.com/Klop233/Constella.git constella
-cd constella/deploy
-cp .env.example .env && chmod 600 .env
-# 编辑 .env：至少填 CONSTELLA_MASTER_KEY、CONSTELLA_SETUP_CODE、CONSTELLA_ORIGINS、NEWAPI_BASE_URL、NEWAPI_API_KEY
-docker compose --profile images build
-docker compose up -d hub
-curl http://127.0.0.1:8780/api/health
+cd constella
+bash scripts/install.sh install
 ```
 
-然后在服务器本机打开 `http://localhost:8780`（远程的话先 `ssh -L 8780:127.0.0.1:8780 你的服务器`；`CONSTELLA_ORIGINS` 里要保留 `http://localhost:8780`），输入初始化码建账号、新建 agent，就能开始派活。要在手机上用、收推送，还得配一个 HTTPS 入口，见下面的「部署」。
+脚本会自动生成加密主密钥，构建 hub、agent、浏览器/桌面、安卓桥接镜像；启动后在浏览器打开 `http://localhost:8780`，按页面上的首次部署向导选择需要的组件。勾选 Office 后才会下载它的大镜像。初始化码默认关闭，第一次打开网页直接创建账号；想多一道门槛就在 `deploy/.env` 设 `CONSTELLA_SETUP_CODE`。远程访问或手机推送仍需配置 HTTPS 入口，见下面的「部署」。
+
+日常管理统一使用同一个脚本：
+
+```bash
+bash scripts/install.sh status
+bash scripts/install.sh logs
+bash scripts/install.sh office       # 可选：提前下载 Office 镜像
+bash scripts/install.sh restart
+bash scripts/install.sh update
+bash scripts/install.sh backup
+```
 
 ## 大致结构
 
@@ -119,12 +126,14 @@ cp .env.example .env
 chmod 600 .env
 ```
 
+也可以直接在项目根目录执行 `bash scripts/install.sh install`，它会完成下面的配置、镜像构建和启动步骤。
+
 编辑 `.env`，至少填这几项：
 
 | 变量 | 说明 |
 |---|---|
 | `CONSTELLA_MASTER_KEY` | 加密数据库里各种密钥用的主密钥，用 `openssl rand -base64 32` 生成 |
-| `CONSTELLA_SETUP_CODE` | 第一次打开网页创建账号时要输入的初始化码，随便设一串 |
+| `CONSTELLA_SETUP_CODE` | 可选：设置后第一次创建账号要输入它；留空（默认）则直接创建。远程部署建议设置 |
 | `CONSTELLA_ORIGINS` | 你会用哪些地址访问，逗号分隔，例如 `https://constella.example.com` |
 | `NEWAPI_BASE_URL` | new-api 地址。new-api 在同一台机器上的话写 `http://host.docker.internal:端口` |
 | `NEWAPI_API_KEY` | 在 new-api 后台给 Constella 建的令牌 |
@@ -135,10 +144,12 @@ chmod 600 .env
 **2. 构建并启动**
 
 ```bash
-docker compose --profile images build   # 构建 hub、agent、桌面和安卓桥接镜像，第一次比较慢
-docker compose up -d hub
+cd ..
+bash scripts/install.sh install          # 一键构建基础镜像并启动
 curl http://127.0.0.1:8780/api/health   # 返回 ok 就是起来了
 ```
+
+如果手动运行 Compose，必须先构建 `agent-image`；只执行 `docker compose up -d hub` 不会构建按需镜像，agent 会报 `no such image - constella-agent:latest`。
 
 hub 只监听本机 `127.0.0.1:8780`，外面要访问得再配一个入口（见下一步）。
 
@@ -177,7 +188,7 @@ scripts/build-android-images.sh emulator --accept-android-sdk-license --playstor
 
 **4. 第一次使用**
 
-1. 打开你配好的地址，输入 `.env` 里的初始化码，设置名字和密码
+1. 打开你配好的地址，设置名字和密码（启用了初始化码的话先输入初始化码）
 2. 进「设置」，添加通行密钥（以后用指纹登录），打开推送，点「发送测试」看能不能收到
 3. 手机上用 Chrome 打开，菜单里选「添加到主屏幕」
 4. 回首页点「新建」，选个模板建第一个 agent

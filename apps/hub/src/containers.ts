@@ -370,7 +370,14 @@ export class Containers {
       if (err?.statusCode !== 404) throw err;
     }
     // Recreate when the spec (image, env, mounts) changed; the volumes keep all state.
-    const imageId = (await this.docker.getImage(opts.Image!).inspect()).Id;
+    const imageId = await this.docker
+      .getImage(opts.Image!)
+      .inspect()
+      .then((image) => image.Id)
+      .catch((err: any) => {
+        if (err?.statusCode === 404) throw new Error(`缺少 ${opts.Image} 镜像，请在项目根目录执行 scripts/install.sh 完成部署`);
+        throw err;
+      });
     if (info && (info.Config.Labels?.[HASH] !== hash || info.Image !== imageId)) {
       await this.remove(name);
       info = null;

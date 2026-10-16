@@ -14,7 +14,7 @@ import { EffortSchema } from "./catalog.ts";
 import { config, nowIso } from "./config.ts";
 import { auditRefs, changesOf } from "./audit.ts";
 import { describeDevice } from "./auth.ts";
-import { audit, kvSet } from "./db.ts";
+import { audit, kvGet, kvSet } from "./db.ts";
 import { DesktopError, type DesktopAction, type InstanceOp } from "./desktops.ts";
 import { requestSource } from "./request-source.ts";
 import { isTrusted } from "./trusted.ts";
@@ -94,18 +94,59 @@ export function registerRoutes(hub: Hub): void {
   const actor = (req: FastifyRequest) => req.userId ?? "anonymous";
   const authLimit = { config: { rateLimit: { max: 10, timeWindow: "1 minute" } } };
 
+  const onboardingDefaults = { browser: true, desktop: true, android: false, office: true };
+  const onboardingSelection = () => {
+    try {
+      const value = kvGet(db, "onboarding.selection");
+      if (!value) return onboardingDefaults;
+      const parsed = JSON.parse(value) as Partial<typeof onboardingDefaults>;
+      return {
+        browser: parsed.browser ?? onboardingDefaults.browser,
+        desktop: parsed.desktop ?? onboardingDefaults.desktop,
+        android: parsed.android ?? onboardingDefaults.android,
+        office: parsed.office ?? onboardingDefaults.office,
+      };
+    } catch {
+      return onboardingDefaults;
+    }
+  };
+  const imagePresent = (image: string) => containers.docker.getImage(image).inspect().then(() => true, () => false);
+  const onboardingView = async () => {
+    const officeStatus = await office.status();
+    // Office downloads are intentionally resumable. A refresh after the pull finishes completes the wizard.
+    if (kvGet(db, "onboarding.pendingOffice") === "true" && officeStatus.imagePresent) {
+      kvSet(db, "onboarding.pendingOffice", "false");
+      kvSet(db, "onboarding.completed", "true");
+    }
+    const completed = kvGet(db, "onboarding.completed") === "true";
+    return {
+      needed: !completed,
+      selection: onboardingSelection(),
+      pendingOffice: kvGet(db, "onboarding.pendingOffice") === "true",
+      images: {
+        agent: await imagePresent(config.docker.agentImage),
+        desktop: await imagePresent(config.docker.desktopImage),
+        office: officeStatus.imagePresent,
+      },
+      capabilities: hub.hostcaps.snapshot(),
+      office: officeStatus,
+    };
+  };
+
   // ── health & auth ────────────────────────────────────────
   app.get("/api/health", async () => ({ ok: true, time: nowIso() }));
 
   app.get("/api/auth/status", async (req) => ({
     setupNeeded: auth.needsSetup(),
     loggedIn: !!auth.check(req),
+    onboardingNeeded: !auth.needsSetup() && kvGet(db, "onboarding.completed") !== "true",
+    setupCodeRequired: !!config.setupCode,
     totp: !!auth.user()?.totp_secret,
     passkeyRpIds: [...new Set((auth.passkeys() as { rp_id: string }[]).map((p) => p.rp_id))],
   }));
   app.post("/api/auth/setup", authLimit, async (req, reply) => {
-    const b = z.object({ code: z.string(), name: z.string().min(1).max(40), password: z.string() }).parse(req.body);
-    const user = auth.setup(b.code, b.name, b.password);
+    const b = z.object({ code: z.string().optional(), name: z.string().min(1).max(40), password: z.string() }).parse(req.body);
+    const user = auth.setup(b.code ?? "", b.name, b.password);
     auth.createSession(user.id, req, reply);
     return { ok: true };
   });
@@ -127,6 +168,46 @@ export function registerRoutes(hub: Hub): void {
     });
     auth.createSession(user.id, req, reply);
     return { ok: true };
+  });
+
+  // ── first-run deployment wizard ───────────────────────────
+  app.get("/api/onboarding", async () => onboardingView());
+  const OnboardingPatch = z.object({
+    browser: z.boolean(),
+    desktop: z.boolean(),
+    android: z.boolean(),
+    office: z.boolean(),
+  });
+  app.post("/api/onboarding", async (req) => {
+    const b = OnboardingPatch.parse(req.body);
+    if (kvGet(db, "onboarding.completed") === "true") return onboardingView();
+
+    // Creation is deliberately idempotent: if the user retries after an Office pull failure, existing instances stay.
+    const existing = desktops.rows();
+    const ensureInstance = async (kind: "browser" | "desktop" | "android", name: string) => {
+      if (!existing.some((d) => d.kind === kind)) await desktops.create({ name, kind });
+    };
+    if (b.browser) await ensureInstance("browser", "工作浏览器");
+    if (b.desktop) await ensureInstance("desktop", "Linux 桌面");
+    if (b.android) await ensureInstance("android", "安卓设备");
+
+    kvSet(db, "onboarding.selection", JSON.stringify(b));
+    if (b.office) {
+      office.configure({ enabled: true });
+      kvSet(db, "onboarding.pendingOffice", "true");
+      office.install();
+      // A pre-pulled image (the one-click installer does this) needs no waiting page.
+      if ((await office.status()).imagePresent) {
+        kvSet(db, "onboarding.pendingOffice", "false");
+        kvSet(db, "onboarding.completed", "true");
+      }
+    } else {
+      office.configure({ enabled: false });
+      kvSet(db, "onboarding.pendingOffice", "false");
+      kvSet(db, "onboarding.completed", "true");
+    }
+    audit(db, actor(req), "onboarding.complete", { selection: b });
+    return onboardingView();
   });
   app.post("/api/auth/logout", async (req, reply) => {
     auth.logout(req.sessionId!, reply);

@@ -14,6 +14,7 @@ import { ApprovalCard } from "./components/ApprovalCard";
 import { InstanceWindow } from "./components/InstanceWindow";
 import Home from "./pages/Home";
 import Login from "./pages/Login";
+import Onboarding from "./pages/Onboarding";
 
 const AgentDetail = lazy(() => import("./pages/AgentDetail"));
 const AgentEdit = lazy(() => import("./pages/AgentEdit"));
@@ -47,6 +48,8 @@ registerSW({ immediate: true });
 interface AuthStatus {
   setupNeeded: boolean;
   loggedIn: boolean;
+  onboardingNeeded: boolean;
+  setupCodeRequired: boolean;
 }
 
 function Gate({ children }: { children: ReactNode }) {
@@ -59,7 +62,8 @@ function Gate({ children }: { children: ReactNode }) {
   const loggedIn = status.data?.loggedIn;
   useEffect(() => (loggedIn ? startLive(qc) : undefined), [loggedIn]);
   if (status.isLoading) return <Loading />;
-  if (!status.data?.loggedIn) return <Login setupNeeded={!!status.data?.setupNeeded} onDone={() => qc.invalidateQueries()} />;
+  if (!status.data?.loggedIn) return <Login setupNeeded={!!status.data?.setupNeeded} setupCodeRequired={!!status.data?.setupCodeRequired} onDone={() => qc.invalidateQueries()} />;
+  if (status.data.onboardingNeeded) return <Onboarding onDone={() => qc.invalidateQueries({ queryKey: ["auth"] })} />;
   return <>{children}</>;
 }
 

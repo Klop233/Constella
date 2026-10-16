@@ -24,7 +24,7 @@ const { Knowledge } = await import("../src/knowledge.ts");
 const { RunManager, isTransientError } = await import("../src/runs.ts");
 const { Desktops, RfbClientFilter } = await import("../src/desktops.ts");
 const { SecretBox, redact } = await import("../src/secrets.ts");
-const { hashPassword, verifyPassword } = await import("../src/auth.ts");
+const { Auth, hashPassword, verifyPassword } = await import("../src/auth.ts");
 const { transcriptFor, Learning } = await import("../src/learning.ts");
 const { parseJsonLoose } = await import("../src/newapi.ts");
 const { ModelRegistry } = await import("../src/models.ts");
@@ -521,6 +521,25 @@ describe("helpers", () => {
     const h = hashPassword("correct horse");
     expect(verifyPassword("correct horse", h)).toBe(true);
     expect(verifyPassword("wrong", h)).toBe(false);
+  });
+
+  it("creates the owner account without a setup code unless one is configured", () => {
+    expect(config.setupCode).toBe("");
+    const open = new Auth(openDb(":memory:"));
+    open.setup("", "主人", "a-long-password-1");
+    expect(open.needsSetup()).toBe(false);
+    expect(() => open.setup("", "别人", "a-long-password-1")).toThrow("已经初始化");
+
+    const gated = new Auth(openDb(":memory:"));
+    config.setupCode = "setup-code";
+    try {
+      expect(() => gated.setup("", "主人", "a-long-password-1")).toThrow("初始化码错误");
+      expect(() => gated.setup("wrong", "主人", "a-long-password-1")).toThrow("初始化码错误");
+      gated.setup("setup-code", "主人", "a-long-password-1");
+    } finally {
+      config.setupCode = "";
+    }
+    expect(gated.needsSetup()).toBe(false);
   });
 
   it("parses fenced JSON and summarizes transcripts", () => {

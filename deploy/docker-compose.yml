@@ -10,14 +10,14 @@ services:
     restart: unless-stopped
     env_file: .env
     environment:
-      CONSTELLA_DATA_DIR: /srv/constella
+      CONSTELLA_DATA_DIR: ${CONSTELLA_DATA_DIR:-/srv/constella}
       CONSTELLA_PORT: "8780"
     ports:
       - "127.0.0.1:8780:8780"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       # Same path inside and outside: the hub passes these paths to agent/desktop containers.
-      - /srv/constella:/srv/constella
+      - ${CONSTELLA_DATA_DIR:-/srv/constella}:${CONSTELLA_DATA_DIR:-/srv/constella}
       # Read-only host view for the performance page (CPU, memory, network of the machine, not just the hub container).
       - /proc:/host/proc:ro
       - /sys/fs/cgroup:/host/sys/fs/cgroup:ro
@@ -32,6 +32,11 @@ services:
     build:
       context: ..
       dockerfile: images/agent/Dockerfile
+    profiles: ["images"]
+
+  # Only pulled during the one-click installation; the hub manages the actual container on demand.
+  office-image:
+    image: ${CONSTELLA_OFFICE_IMAGE:-onlyoffice/documentserver:latest}
     profiles: ["images"]
 
   desktop-image:

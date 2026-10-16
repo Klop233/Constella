@@ -56,7 +56,8 @@ export class Auth {
 
   setup(code: string, name: string, password: string): UserRow {
     if (!this.needsSetup()) throw new Error("已经初始化");
-    if (!config.setupCode || !safeEqual(code, config.setupCode)) throw new Error("初始化码错误");
+    // The setup code is optional (off by default): when configured it gates who may create the owner account.
+    if (config.setupCode && !safeEqual(code, config.setupCode)) throw new Error("初始化码错误");
     if (password.length < 10) throw new Error("密码至少 10 位");
     const id = newId("us");
     this.#db.prepare("INSERT INTO users (id, name, password_hash, created_at) VALUES (?, ?, ?, ?)").run(id, name, hashPassword(password), nowIso());

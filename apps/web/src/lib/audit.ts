@@ -3,6 +3,7 @@ import type { AuditEntry } from "./types";
 /** Readable names for audit actions; unknown ones show as-is. */
 export const AUDIT_ACTION: Record<string, string> = {
   "auth.setup": "创建账号",
+  "onboarding.complete": "完成首次部署",
   "auth.login": "登录",
   "auth.password.change": "修改密码",
   "auth.totp.enable": "开启两步验证",

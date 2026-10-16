@@ -4,7 +4,7 @@ import { useState, type FormEvent } from "react";
 import { Button, Field, inputClass } from "../components/ui";
 import { api, ApiError } from "../lib/api";
 
-export default function Login({ setupNeeded, onDone }: { setupNeeded: boolean; onDone: () => void }) {
+export default function Login({ setupNeeded, setupCodeRequired, onDone }: { setupNeeded: boolean; setupCodeRequired: boolean; onDone: () => void }) {
   const [password, setPassword] = useState("");
   const [totp, setTotp] = useState("");
   const [needTotp, setNeedTotp] = useState(false);
@@ -53,9 +53,11 @@ export default function Login({ setupNeeded, onDone }: { setupNeeded: boolean; o
         <form onSubmit={submit} className="space-y-4">
           {setupNeeded && (
             <>
-              <Field label="初始化码" hint="在服务器的 deploy/.env 里（CONSTELLA_SETUP_CODE）">
-                <input className={inputClass} value={code} onChange={(e) => setCode(e.target.value)} autoComplete="off" required />
-              </Field>
+              {setupCodeRequired && (
+                <Field label="初始化码" hint="在服务器的 deploy/.env 里（CONSTELLA_SETUP_CODE）">
+                  <input className={inputClass} value={code} onChange={(e) => setCode(e.target.value)} autoComplete="off" required />
+                </Field>
+              )}
               <Field label="你的名字">
                 <input className={inputClass} value={name} onChange={(e) => setName(e.target.value)} required maxLength={40} />
               </Field>
