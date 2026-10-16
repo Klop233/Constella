@@ -69,7 +69,7 @@ describe("intelligent UI setting", () => {
   const settings = () => {
     const db = openDb(":memory:");
     const secrets = new SecretStore(db, new SecretBox(Buffer.alloc(32, 7)));
-    return { db, s: new Settings(db, secrets, new ModelRegistry({ db, secrets, newapiBaseUrl: "http://n", newapiKey: () => "" })) };
+    return { db, s: new Settings(db, secrets, new ModelRegistry({ db, secrets })) };
   };
 
   it("defaults to balanced and ignores unknown values", () => {

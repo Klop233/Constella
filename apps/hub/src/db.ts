@@ -106,9 +106,9 @@ const MIGRATIONS: string[] = [
 ];
 
 /**
- * Model providers besides the built-in new-api and the models picked from them; artifacts (files and documents
- * agents delivered) and their versions. Created idempotently instead of as numbered migrations, so they can't
- * take the same slot as a migration added on another branch.
+ * Model providers and the models picked from them; artifacts (files and documents agents delivered) and their
+ * versions. Created idempotently instead of as numbered migrations, so they can't take the same slot as a
+ * migration added on another branch.
  */
 const ENSURE = `
   CREATE TABLE IF NOT EXISTS credential_connections (id TEXT PRIMARY KEY, name TEXT NOT NULL, provider TEXT NOT NULL, server TEXT NOT NULL, created_at TEXT NOT NULL);
@@ -182,6 +182,11 @@ export function openDb(file: string): Db {
   // Which API a provider speaks: "responses" (Codex talks to it directly) or "chat" (bridged by the hub).
   const providerCols = db.prepare("PRAGMA table_info(providers)").all() as { name: string }[];
   if (!providerCols.some((c) => c.name === "api")) db.exec("ALTER TABLE providers ADD COLUMN api TEXT NOT NULL DEFAULT 'responses'");
+  // The per-agent new-api token and daily budget are gone; drop the columns they left behind.
+  const agentCols = db.prepare("PRAGMA table_info(agents)").all() as { name: string }[];
+  for (const dead of ["newapi_token_id", "budget_daily_usd"]) {
+    if (agentCols.some((c) => c.name === dead)) db.exec(`ALTER TABLE agents DROP COLUMN ${dead}`);
+  }
   ensureInstanceKinds(db);
   return db;
 }

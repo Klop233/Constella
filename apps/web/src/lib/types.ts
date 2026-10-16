@@ -17,8 +17,6 @@ export interface Agent {
   approval_policy: "auto" | "ask";
   desktop_policy: DesktopPolicy;
   host_access: boolean;
-  newapi_token_id: number | null;
-  budget_daily_usd: number | null;
   container: "running" | "stopped" | "missing" | "starting" | "error";
   connected: boolean;
   activeRuns: { id: string; status: RunStatus; conversation_id: string }[];

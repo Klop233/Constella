@@ -464,7 +464,7 @@ export function registerChatBridge(app: FastifyInstance, deps: { models: ModelRe
   };
   const providerOf = (pid: string) => {
     const p = deps.models.provider(pid);
-    return p && p.api === "chat" && !p.builtin ? p : null;
+    return p && p.api === "chat" ? p : null;
   };
 
   app.register(async (scope) => {

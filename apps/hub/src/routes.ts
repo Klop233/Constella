@@ -56,7 +56,7 @@ class HttpError extends Error {
 }
 
 export function registerRoutes(hub: Hub): void {
-  const { office, app, auth, agents, runs, artifacts, recovery, events, desktops, knowledge, learning, reflect, scheduler, notifier, newapi, models, catalog, settings, containers, db } = hub;
+  const { office, app, auth, agents, runs, artifacts, recovery, events, desktops, knowledge, learning, reflect, scheduler, notifier, models, catalog, settings, containers, db } = hub;
 
   app.setErrorHandler((err: any, _req, reply) => {
     const status =
@@ -362,17 +362,6 @@ export function registerRoutes(hub: Hub): void {
     agents.deleteSecret(p.id, p.name, actor(req));
     return { ok: true };
   });
-  app.post("/api/agents/:id/newapi-token", async (req) => {
-    const agentId = id(req);
-    const a = agents.get(agentId);
-    const quota = z.object({ quotaUsd: z.number().positive().nullable().default(null) }).parse(req.body ?? {}).quotaUsd;
-    if (a.newapi_token_id) await newapi.deleteToken(a.newapi_token_id).catch(() => {});
-    const t = await newapi.createToken(`constella-${agentId}`, quota);
-    agents.setNewApiToken(agentId, t.id, t.key);
-    audit(db, actor(req), "agent.newapi_token", { id: agentId, tokenId: t.id });
-    await containers.remove(containers.agentName(agentId)).catch(() => {});
-    return { ok: true, tokenId: t.id };
-  });
   // Uploads go to the agent's workspace (an existing agent only, so the id can't point elsewhere).
   const uploadsDir = (agentId: string) => path.join(config.agentsDir, agents.get(agentId).id, "workspace", "uploads");
   app.post("/api/agents/:id/uploads", { bodyLimit: 16 * 1024 * 1024 }, async (req) => {
@@ -427,22 +416,15 @@ export function registerRoutes(hub: Hub): void {
   const SendBody = z.object({ text: z.string().min(1).max(20000), images: z.array(z.string()).max(8).optional(), ...ModelPatch });
   app.post("/api/agents/:id/messages", async (req) => {
     const b = SendBody.parse(req.body);
-    await checkBudget(hub, id(req));
     return runs.send({ agentId: id(req), text: b.text, images: b.images, model: b.model, effort: b.effort, runTimeoutMinutes: b.runTimeoutMinutes });
   });
   app.get("/api/agents/:id/today", async (req) => {
     const a = agents.get(id(req));
     const start = new Date();
     start.setHours(0, 0, 0, 0);
-    const totals = db
+    return db
       .prepare("SELECT COUNT(*) AS runs, COALESCE(SUM(input_tokens), 0) AS input, COALESCE(SUM(output_tokens), 0) AS output FROM runs WHERE agent_id = ? AND created_at >= ?")
-      .get(a.id, start.toISOString()) as { runs: number; input: number; output: number };
-    let spentUsd: number | null = null;
-    if (a.newapi_token_id && newapi.adminEnabled()) {
-      const spend = await newapi.spendByToken(Math.floor(start.getTime() / 1000)).catch(() => null);
-      spentUsd = spend ? (spend[`constella-${a.id}`] ?? 0) : null;
-    }
-    return { ...totals, spentUsd, budgetUsd: a.budget_daily_usd };
+      .get(a.id, start.toISOString());
   });
   app.get("/api/conversations/:id", async (req) => {
     const conv = runs.conversation(id(req));
@@ -528,7 +510,6 @@ export function registerRoutes(hub: Hub): void {
     const conv = runs.conversation(id(req));
     if (!conv) throw new HttpError(404, "conversation not found");
     const b = SendBody.parse(req.body);
-    await checkBudget(hub, conv.agent_id);
     return runs.send({ agentId: conv.agent_id, conversationId: conv.id, text: b.text, images: b.images, model: b.model, effort: b.effort, runTimeoutMinutes: b.runTimeoutMinutes });
   });
   app.post("/api/runs/:id/interrupt", async (req) => {
@@ -1110,7 +1091,6 @@ export function registerRoutes(hub: Hub): void {
 
   // ── models & providers ───────────────────────────────────
   app.get("/api/models", async () => {
-    await models.seed();
     // Each entry also carries the reasoning levels its model supports (keyed by model name, as Codex reports it).
     return models.list().map((m) => ({ ...m, ...catalog.get(m.model) }));
   });
@@ -1165,6 +1145,12 @@ export function registerRoutes(hub: Hub): void {
     audit(db, actor(req), "provider.delete", { id: id(req) });
     return { ok: true };
   });
+  /** Bare model refs (and anything not naming a provider) resolve to this one. */
+  app.post("/api/providers/:id/default", async (req) => {
+    models.setDefaultProvider(id(req));
+    audit(db, actor(req), "provider.default", { id: id(req) });
+    return { ok: true };
+  });
   app.get("/api/providers/:id/models", async (req) => models.remoteModels(id(req)));
   app.post("/api/providers/:id/test", async (req) => {
     const started = Date.now();
@@ -1213,14 +1199,7 @@ export function registerRoutes(hub: Hub): void {
            SUM(output_tokens) AS output_tokens FROM runs WHERE created_at >= ? GROUP BY agent_id, day, model ORDER BY day`,
       )
       .all(since);
-    let spend: Record<string, number> | null = null;
-    if (newapi.adminEnabled()) {
-      spend = await newapi.spendByToken(Math.floor(Date.parse(since) / 1000)).catch(() => null);
-    }
-    const perAgent = spend
-      ? Object.fromEntries(agents.list(true).map((a) => [a.id, spend![`constella-${a.id}`] ?? 0]))
-      : null;
-    return { rows, spendUsd: perAgent, adminEnabled: newapi.adminEnabled() };
+    return { rows };
   });
   app.get("/api/usage/stats", async (req) => {
     const q = z
@@ -1230,8 +1209,6 @@ export function registerRoutes(hub: Hub): void {
     const { events: all, runs: runInfo } = loadUsage(db, since, { agentId: q.agent }, (ref) => models.normalize(ref));
     const events = all.filter((e) => (!q.model || e.model === q.model) && (!q.provider || models.parse(e.model).provider === q.provider));
     const stats = usageStats(events, runInfo, q.range);
-    let spend: Record<string, number> | null = null;
-    if (newapi.adminEnabled()) spend = await newapi.spendByToken(Math.floor(Date.parse(since) / 1000)).catch(() => null);
     const list = agents.list(true);
     const providers = models.providers();
     const providerName = (id: string) => providers.find((p) => p.id === id)?.name ?? `${id}（已删除）`;
@@ -1252,8 +1229,6 @@ export function registerRoutes(hub: Hub): void {
       const pid = models.parse(x.model).provider;
       return { ...x, label: label(x.model), provider: pid, providerName: providerName(pid) };
     };
-    // Spend comes from per-agent new-api tokens, so it only adds up when not narrowed to a model or another provider.
-    const spendTotal = spend && !q.model && (!q.provider || q.provider === "newapi");
     return {
       ...stats,
       models: stats.models.map(withLabel),
@@ -1261,9 +1236,8 @@ export function registerRoutes(hub: Hub): void {
       providers: [...byProvider.values()].sort((a, b) => b.requests - a.requests),
       agents: stats.agents.map((a) => {
         const ag = list.find((x) => x.id === a.agentId);
-        return { ...a, name: ag?.name ?? "已删除", emoji: ag?.emoji ?? "·", spendUsd: spend ? (spend[`constella-${a.agentId}`] ?? 0) : null };
+        return { ...a, name: ag?.name ?? "已删除", emoji: ag?.emoji ?? "·" };
       }),
-      spendUsd: spendTotal ? list.filter((a) => !q.agent || a.id === q.agent).reduce((n, a) => n + (spend![`constella-${a.id}`] ?? 0), 0) : null,
       filters: {
         models: [...new Set(all.map((e) => e.model))].map((ref) => ({ ref, label: label(ref) })).sort((a, b) => a.label.localeCompare(b.label)),
         providers: [...new Set(all.map((e) => models.parse(e.model).provider))].map((id) => ({ id, name: providerName(id) })),
@@ -1278,8 +1252,6 @@ export function registerRoutes(hub: Hub): void {
     defaultModel: z.string().min(1).optional(),
     reflectModel: z.string().min(1).optional(),
     defaultEffort: EffortSchema.nullable().optional(),
-    newapiAdminToken: z.string().optional(),
-    newapiAdminUserId: z.string().optional(),
     telegramBotToken: z.string().optional(),
     telegramChatId: z.string().optional(),
     autoResume: z.boolean().optional(),
@@ -1328,13 +1300,11 @@ export function registerRoutes(hub: Hub): void {
     for (const [k, v] of Object.entries(b.notifyOn ?? {})) set(`notify.${k}`, v);
     for (const [k, v] of Object.entries(b.quietHours ?? {})) set(`quiet.${k}`, v);
     for (const [k, v] of Object.entries(b.permissions ?? {})) set(`permission.${k}`, v);
-    if (b.newapiAdminToken !== undefined) b.newapiAdminToken ? hub.secrets.set("settings", "newapiAdminToken", b.newapiAdminToken) : hub.secrets.delete("settings", "newapiAdminToken");
-    if (b.newapiAdminUserId) kvSet(db, "settings.newapiAdminUserId", b.newapiAdminUserId);
     if (b.telegramBotToken !== undefined) b.telegramBotToken ? hub.secrets.set("settings", "telegramBotToken", b.telegramBotToken) : hub.secrets.delete("settings", "telegramBotToken");
     if (b.telegramChatId !== undefined) kvSet(db, "settings.telegramChatId", b.telegramChatId);
     const after = settings.view();
     // Secrets are never written to the log; only whether this save set a value or cleared it.
-    const secrets = ["newapiAdminToken", "telegramBotToken"] as const;
+    const secrets = ["telegramBotToken"] as const;
     const changes: Record<string, unknown> = changesOf(before, after, Object.keys(b).filter((k) => !(secrets as readonly string[]).includes(k)));
     for (const k of secrets) if (b[k] !== undefined) changes[k] = { secret: true, to: !!b[k] };
     audit(db, actor(req), "settings.update", { fields: Object.keys(b), changes });
@@ -1381,12 +1351,14 @@ export function registerRoutes(hub: Hub): void {
       dbSizeMb: +(fs.statSync(config.dbPath).size / 1e6).toFixed(1),
       containers: containerList.map((c) => ({ name: c.Names[0]?.slice(1), state: c.State, status: c.Status, role: c.Labels["dev.constella.role"] })),
       backups,
-      newapi: models.builtinEnabled()
-        ? await models
-            .remoteModels("newapi")
-            .then((m) => ({ ok: true, models: m.length }))
-            .catch((e) => ({ ok: false, error: e.message }))
-        : null,
+      provider: await (async () => {
+        const p = models.provider(models.defaultProviderId());
+        if (!p) return { configured: false };
+        return await models
+          .remoteModels(p.id)
+          .then((m) => ({ configured: true, name: p.name, ok: true, models: m.length }))
+          .catch((e) => ({ configured: true, name: p.name, ok: false, error: e instanceof Error ? e.message : String(e) }));
+      })(),
       version: "0.1.0",
     };
   });
@@ -1459,17 +1431,6 @@ async function agentView(hub: Hub, agentId: string) {
     activeRuns: active,
     secrets: hub.agents.userSecretNames(a.id),
   };
-}
-
-/** Refuse new work once an agent's dedicated new-api token has spent its daily budget. */
-async function checkBudget(hub: Hub, agentId: string): Promise<void> {
-  const a = hub.agents.get(agentId);
-  if (!a.budget_daily_usd || !a.newapi_token_id || !hub.newapi.adminEnabled()) return;
-  const start = new Date();
-  start.setHours(0, 0, 0, 0);
-  const spend = await hub.newapi.spendByToken(Math.floor(start.getTime() / 1000)).catch(() => null);
-  const used = spend?.[`constella-${agentId}`] ?? 0;
-  if (used >= a.budget_daily_usd) throw new HttpError(402, `今日预算已用完（$${used.toFixed(2)} / $${a.budget_daily_usd}）`);
 }
 
 export type { FastifyReply, DesktopAction };

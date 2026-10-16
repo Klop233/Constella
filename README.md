@@ -47,8 +47,7 @@ Constella 的思路是：**干活的部分不自己写**，直接用 OpenAI 开�
 - 定时任务：定时推送提醒，或者定时让 agent 去做某件事。也可以直接对 agent 说「每天早上 8 点提醒我……」
 - 推送走浏览器原生的 Web Push，可以再配 Telegram 当备用
 - 每个 agent 跑在独立容器里，搞坏了重建就行；需要操作宿主机的（比如运维用的 agent）要单独开权限，非只读命令按「设置 → 权限」里的策略审批（默认自动批准，建议改成「危险时问我」）
-- 「设置 → 模型」：添加多个服务商（常见服务带预设），接口格式选 Chat Completions 或 Responses；只支持 Chat Completions 的服务由 hub 转换给 Codex，API Key 只留在服务器上、不进 agent 容器；每个模型一键测试连通；用量按模型、服务商、agent 拆开看
-- 用 [new-api](https://github.com/QuantumNous/new-api) 的话，可以给每个 agent 单独开令牌，分开统计花费、设每日预算
+- 「设置 → 模型」：添加多个服务商（常见服务带预设），接口格式选 Chat Completions 或 Responses；只支持 Chat Completions 的服务由 hub 转换给 Codex，API Key 只留在服务器上、不进 agent 容器；可以指定一个默认服务商，没写服务商的模型名归它；每个模型一键测试连通；用量按模型、服务商、agent 拆开看
 - 「性能」页看这台服务器：CPU、内存、交换、负载、运行时间、磁盘和实时网速，带最近 1 小时 / 24 小时的曲线；下面按实例、agent 和 hub 服务列出各自占用的 CPU、内存、网络和进程数，点开是每个容器的明细；打开某个实例时也能看到它自己的性能曲线
 - 「凭据与隐私」：连接 Bitwarden（美国 / 欧洲 / 第三方与自托管，如 Vaultwarden，支持自签名证书）之后，agent 需要密码、用户名或验证码时向你在设置里指定的审批 agent 申请，批准后 10 分钟内只能读取一次；主密码只在解锁时用，审批记录和访问历史里只有条目名和字段名。见 [docs/credentials.md](docs/credentials.md)
 - 每天自动备份，默认保留最近 7 份；自动继续、单轮时长、卡住处理、闲置休眠、推送事项、免打扰等都能在设置里调
@@ -138,7 +137,7 @@ chmod 600 .env
 | `CONSTELLA_SETUP_CODE` | 可选：设置后第一次创建账号要输入它；留空（默认）则直接创建。远程部署建议设置 |
 | `CONSTELLA_ORIGINS` | 你会用哪些地址访问，逗号分隔，例如 `https://constella.example.com` |
 
-模型不用在这里配，装好后在 App 里添加。其他项都可以留空，比如推送密钥第一次启动会自动生成。已经有 [new-api](https://github.com/QuantumNous/new-api) 的话，也可以填 `NEWAPI_BASE_URL` / `NEWAPI_API_KEY`，它会作为内置服务商出现，并能按 agent 开令牌、统计花费。
+模型不用在这里配：第一次打开网页的向导会让你选服务商、填 Key，之后也能在「设置 → 模型」里增删。其他项都可以留空，比如推送密钥第一次启动会自动生成。
 
 **2. 构建并启动**
 
@@ -273,7 +272,6 @@ bash scripts/install.sh restore constella-<时间>.tar.gz
 ## 已知问题和没做的
 
 - 只支持一个账号，自己用
-- 按 agent 统计费用、每日预算这块需要 new-api 的管理员令牌（在「设置 → 模型 → new-api → 管理令牌」里填），这部分还没在真实环境里验证过
 - hub 重启、agent 容器崩溃这类故障场景，恢复逻辑已经写了，但还没专门做过演练
 - 用鼠标键盘直接操作桌面的工具，控制接口单独测过；但实测中模型一般都优先用网页工具，这条路径实际跑得少
 

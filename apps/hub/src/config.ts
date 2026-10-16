@@ -26,14 +26,10 @@ export const config = {
     .filter(Boolean),
   masterKey: env("CONSTELLA_MASTER_KEY"),
   setupCode: env("CONSTELLA_SETUP_CODE"),
-  newapi: {
-    // Optional built-in provider; new-api listens on 3000 unless configured otherwise.
-    baseUrl: env("NEWAPI_BASE_URL", "http://host.docker.internal:3000").replace(/\/$/, ""),
-    apiKey: env("NEWAPI_API_KEY"),
-    adminToken: env("NEWAPI_ADMIN_TOKEN"),
-    adminUserId: env("NEWAPI_ADMIN_USER_ID", "1"),
-  },
-  /** Optional: models are normally chosen in the app; empty falls back to the first model that works. */
+  /**
+   * Optional starting model refs ("model" or "model@provider"). Models are normally chosen in the app; with none
+   * chosen, the first model whose test passed is used.
+   */
   defaultModel: env("CONSTELLA_DEFAULT_MODEL"),
   reflectModel: env("CONSTELLA_REFLECT_MODEL"),
   vapid: { publicKey: env("VAPID_PUBLIC_KEY"), privateKey: env("VAPID_PRIVATE_KEY"), subject: env("VAPID_SUBJECT", "mailto:admin@constella.local") },

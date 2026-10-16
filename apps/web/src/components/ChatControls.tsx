@@ -285,7 +285,7 @@ function ContextPanel({ stats, runs, agentId, conversationId }: { stats: LatestS
   });
   const today = useQuery({
     queryKey: ["agent-today", agentId],
-    queryFn: () => api.get<{ runs: number; input: number; output: number; spentUsd: number | null; budgetUsd: number | null }>(`/api/agents/${agentId}/today`),
+    queryFn: () => api.get<{ runs: number; input: number; output: number }>(`/api/agents/${agentId}/today`),
     staleTime: 30_000,
   });
   const { context } = stats;
@@ -333,17 +333,7 @@ function ContextPanel({ stats, runs, agentId, conversationId }: { stats: LatestS
         {!t ? (
           <div className="text-xs text-muted">加载中…</div>
         ) : (
-          <>
-            <Legend label={`${t.runs} 次任务 · 输入 / 输出`} value={`${tokens(t.input)} / ${tokens(t.output)}`} />
-            {t.budgetUsd ? (
-              <>
-                <Legend label="每日预算" value={t.spentUsd != null ? `$${t.spentUsd.toFixed(2)} / $${t.budgetUsd}` : `$${t.budgetUsd}（花费未知）`} />
-                {t.spentUsd != null && <Bar total={t.budgetUsd} parts={[{ value: t.spentUsd, color: t.spentUsd / t.budgetUsd > 0.85 ? "var(--danger)" : "var(--color-accent)" }]} />}
-              </>
-            ) : (
-              t.spentUsd != null && <Legend label="花费" value={`$${t.spentUsd.toFixed(2)}`} />
-            )}
-          </>
+          <Legend label={`${t.runs} 次任务 · 输入 / 输出`} value={`${tokens(t.input)} / ${tokens(t.output)}`} />
         )}
       </div>
     </div>

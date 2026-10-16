@@ -29,7 +29,7 @@ export type HubToRunner =
       text: string;
       images?: string[];
       model: string;
-      /** Where the model is served; absent means the "newapi" provider from config.toml. */
+      /** Where the model is served; absent means the provider from the agent's config.toml. */
       provider?: EngineProvider;
       /** Codex reasoning level ("low", "medium", "high", "xhigh", "max", …), one the model supports. */
       effort?: string;

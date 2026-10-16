@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Phase 0 spike: run the same multi-step tool task through Codex + new-api for each model.
-# Usage: scripts/spikes/model-compat.sh model1 model2 ...   (reads NEWAPI_API_KEY from deploy/.env)
+# Phase 0 spike: run the same multi-step tool task through Codex + a Responses-compatible upstream, per model.
+# Usage: MODEL_BASE_URL=… MODEL_API_KEY=… scripts/spikes/model-compat.sh model1 model2 ...
+# (MODEL_BASE_URL / MODEL_API_KEY can also come from deploy/.env.)
 set -uo pipefail
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 set -a; . "$ROOT/deploy/.env"; set +a
@@ -14,18 +15,18 @@ run_one() {
   local dir="$OUT/$slug"; mkdir -p "$dir"
   cat > "$dir/config.toml" <<TOML
 model = "$model"
-model_provider = "newapi"
+model_provider = "upstream"
 approval_policy = "never"
 sandbox_mode = "danger-full-access"
-[model_providers.newapi]
-name = "new-api"
-base_url = "http://host.docker.internal:3333/v1"
-env_key = "NEWAPI_API_KEY"
+[model_providers.upstream]
+name = "upstream"
+base_url = "${MODEL_BASE_URL:-http://host.docker.internal:3333/v1}"
+env_key = "MODEL_API_KEY"
 wire_api = "responses"
 TOML
   local start=$(date +%s)
   timeout 360 docker run --rm --add-host=host.docker.internal:host-gateway \
-    -e NEWAPI_API_KEY -v "$dir/config.toml:/home/agent/.codex/config.toml:ro" -v "$dir/ws:/workspace" \
+    -e MODEL_API_KEY="${MODEL_API_KEY:-}" -v "$dir/config.toml:/home/agent/.codex/config.toml:ro" -v "$dir/ws:/workspace" \
     --user "$(id -u):$(id -g)" -e HOME=/home/agent \
     constella-agent:dev codex exec --skip-git-repo-check --json "$TASK" < /dev/null > "$dir/events.jsonl" 2> "$dir/stderr.log"
   local rc=$? secs=$(( $(date +%s) - start ))

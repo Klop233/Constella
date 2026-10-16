@@ -37,7 +37,7 @@ export function SetupChecklist({ agents }: { agents: number }) {
   const nav = useNavigate();
   const qc = useQueryClient();
   const models = useModels();
-  const settings = useQuery({ queryKey: ["settings"], queryFn: () => api.get<{ defaultModel: string; modelSeedError: string | null }>("/api/settings") });
+  const settings = useQuery({ queryKey: ["settings"], queryFn: () => api.get<{ defaultModel: string }>("/api/settings") });
   const me = useQuery({ queryKey: ["me"], queryFn: () => api.get<{ name: string; passkeys: unknown[] }>("/api/me"), staleTime: 300_000 });
   const push = useQuery({ queryKey: ["push-subscription"], queryFn: async () => !!(await currentSubscription()), enabled: pushSupported() });
   const [hidden, setHidden] = useState(dismissed);
@@ -81,7 +81,7 @@ export function SetupChecklist({ agents }: { agents: number }) {
           ? def.test
             ? `默认模型 ${def.label} 测试没有通过：${def.test.error ?? "未知原因"}`
             : `默认模型 ${def.label} 还没有测试`
-          : (settings.data.modelSeedError ?? "还没有可用的模型：添加一个服务商，填上 API Key"),
+          : "还没有可用的模型：添加一个服务商，填上 API Key",
       action: modelOk ? undefined : def && !def.test ? (
         <Button size="sm" variant="secondary" loading={busy === "test"} onClick={() => void testDefault()}>
           测试

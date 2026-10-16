@@ -50,9 +50,23 @@ await assert.rejects(post("/api/auth/login", { password: "wrong-password" }));
 await post("/api/auth/login", { password: "e2e-password-123" });
 await assert.rejects(fetch(BASE + "/api/agents", { method: "POST", headers: { cookie } }).then((r) => (r.ok ? r : Promise.reject(new Error(String(r.status))))), "CSRF header required");
 
+step("configure model provider");
+// Any OpenAI Responses-compatible upstream: set MODEL_BASE_URL / MODEL_API_KEY / MODEL_NAME (run.sh forwards them).
+const upstream = {
+  baseUrl: process.env.MODEL_BASE_URL,
+  apiKey: process.env.MODEL_API_KEY ?? "",
+  model: process.env.MODEL_NAME || "gpt-6-astra",
+};
+assert.ok(upstream.baseUrl, "MODEL_BASE_URL must point at a Responses-compatible upstream");
+const provider = await post("/api/providers", { name: "e2e", baseUrl: upstream.baseUrl, apiKey: upstream.apiKey });
+const modelRef = `${upstream.model}@${provider.id}`;
+await post("/api/models", { provider: provider.id, models: [upstream.model] });
+await call("PATCH", "/api/settings", { defaultModel: modelRef });
+assert.equal((await get("/api/providers")).find((p) => p.id === provider.id).default, true, "first provider is the default");
+
 step("create agent");
 const agent = await post("/api/agents", { name: "测试助理", template: "assistant", desktopPolicy: { desktopIds: [] } });
-assert.equal(agent.model, "gpt-6-astra");
+assert.equal(agent.model, modelRef);
 
 step("run with shell + memory tool (real model)");
 let r = await post(`/api/agents/${agent.id}/messages`, {
@@ -238,7 +252,7 @@ assert.ok(!(await get(`/api/agents/${agent.id}/knowledge`)).memory.user.includes
 
 step("system + usage");
 const sys = await get("/api/system");
-assert.equal(sys.newapi.ok, true);
+assert.equal(sys.provider.ok, true);
 const usage = await get("/api/usage?days=1");
 assert.ok(usage.rows.length > 0);
 

@@ -289,7 +289,6 @@ function Knowledge({ agentId }: { agentId: string }) {
 function Manage({ agent }: { agent: Agent }) {
   const qc = useQueryClient();
   const nav = useNavigate();
-  const settings = useQuery({ queryKey: ["settings"], queryFn: () => api.get<{ newapiAdminConfigured: boolean; newapiEnabled: boolean }>("/api/settings") });
   const [secretOpen, setSecretOpen] = useState(false);
   const [secretName, setSecretName] = useState("");
   const [secretValue, setSecretValue] = useState("");
@@ -322,24 +321,6 @@ function Manage({ agent }: { agent: Agent }) {
           </SettingRow>
         ))}
       </SettingGroup>
-      {settings.data?.newapiEnabled && (
-        <SettingGroup title="new-api">
-          <SettingRow
-            wide
-            title="专属令牌"
-            desc={
-              <>
-                {agent.newapi_token_id ? `正在使用专属令牌 #${agent.newapi_token_id}，可按 agent 统计费用和限额。` : "正在使用全局令牌。生成专属令牌后可单独统计费用、设置每日预算。"}
-                {!settings.data?.newapiAdminConfigured && " 需要先在「设置 → new-api」填写管理令牌。"}
-              </>
-            }
-          >
-            <Button size="sm" disabled={!settings.data?.newapiAdminConfigured} loading={busy === "token"} onClick={() => act("token", () => api.post(`/api/agents/${agent.id}/newapi-token`, {}), "已生成专属令牌")}>
-              {agent.newapi_token_id ? "重新生成" : "生成专属令牌"}
-            </Button>
-          </SettingRow>
-        </SettingGroup>
-      )}
       <SettingGroup title="运行">
         <SettingRow title="重启容器" desc={`当前状态：${agent.container}。重启后下次发消息时自动启动。`}>
           <Button size="sm" loading={busy === "restart"} onClick={() => act("restart", () => api.post(`/api/agents/${agent.id}/restart`), "已重启，下次发消息时自动启动")}>

@@ -1,17 +1,18 @@
 import type { EngineProvider } from "@constella/protocol";
 import { config, nowIso } from "./config.ts";
 import { kvGet, kvSet, type Db } from "./db.ts";
-import { chatJson } from "./newapi.ts";
+import { chatJson } from "./llm.ts";
 import type { SecretStore } from "./secrets.ts";
 
 /**
  * Model providers (OpenAI-compatible endpoints) and the models picked from them. A provider speaks either the
  * Responses API, which Codex calls directly, or Chat Completions, which the hub bridges (chatbridge.ts).
- * A model is referenced as "model@provider"; models of the built-in new-api (configured in deploy/.env, optional)
- * keep their bare name, as before providers existed, so stored agents and runs stay valid.
+ * A model is referenced as "model@provider"; a bare name resolves to the provider marked as default. There is no
+ * special-cased upstream.
  */
 
-export const BUILTIN = "newapi";
+/** Provider ids are opaque ("p-…"), which is what tells a "model@provider" ref from a model that just has an "@". */
+const PROVIDER_ID = /^p-[a-z0-9-]+$/;
 
 export const PROVIDER_APIS = ["responses", "chat"] as const;
 export type ProviderApi = (typeof PROVIDER_APIS)[number];
@@ -22,7 +23,8 @@ export interface Provider {
   /** OpenAI-compatible API base, ending in /v1 for most gateways. */
   baseUrl: string;
   api: ProviderApi;
-  builtin: boolean;
+  /** The provider bare model names resolve to; exactly one at a time. */
+  default: boolean;
 }
 
 /** Where agent containers reach the hub's Chat Completions bridge for a provider. */
@@ -56,45 +58,45 @@ interface ModelRow {
 export type NameFormat = "paren" | "dash";
 
 export function joinRef(model: string, provider: string): string {
-  return provider === BUILTIN ? model : `${model}@${provider}`;
+  return provider ? `${model}@${provider}` : model;
 }
 
 export class ModelRegistry {
   #db: Db;
   #secrets: SecretStore;
-  #builtin: { baseUrl: string; apiKey: () => string };
-  #seeding: Promise<void> | null = null;
-  #seedError: string | null = null;
 
-  constructor(deps: { db: Db; secrets: SecretStore; newapiBaseUrl: string; newapiKey: () => string }) {
+  constructor(deps: { db: Db; secrets: SecretStore }) {
     this.#db = deps.db;
     this.#secrets = deps.secrets;
-    this.#builtin = { baseUrl: `${deps.newapiBaseUrl.replace(/\/$/, "")}/v1`, apiKey: deps.newapiKey };
   }
 
   // ── providers ──────────────────────────────────────────
 
-  /**
-   * The built-in new-api exists only when deploy/.env gives it a key or models were already picked from it, and
-   * the owner hasn't removed it; like any other provider it is optional.
-   */
-  builtinEnabled(): boolean {
-    if (kvGet(this.#db, "settings.newapiRemoved") === "true") return false;
-    return !!this.#builtin.apiKey() || !!this.#db.prepare("SELECT 1 FROM models WHERE provider = ? LIMIT 1").get(BUILTIN);
+  /** The provider bare model names resolve to: the chosen one while it exists, else the oldest one. */
+  defaultProviderId(): string {
+    const rows = this.#db.prepare("SELECT id FROM providers ORDER BY created_at, rowid").all() as { id: string }[];
+    const chosen = kvGet(this.#db, "settings.defaultProvider");
+    if (chosen && rows.some((r) => r.id === chosen)) return chosen;
+    return rows[0]?.id ?? "";
   }
 
   providers(): Provider[] {
-    const rows = this.#db.prepare("SELECT id, name, base_url, api FROM providers ORDER BY created_at").all() as { id: string; name: string; base_url: string; api: string }[];
-    const builtin: Provider[] = this.builtinEnabled() ? [{ id: BUILTIN, name: "new-api", baseUrl: this.#builtin.baseUrl, api: "responses", builtin: true }] : [];
-    return [...builtin, ...rows.map((r) => ({ id: r.id, name: r.name, baseUrl: r.base_url, api: r.api === "chat" ? ("chat" as const) : ("responses" as const), builtin: false }))];
+    const rows = this.#db.prepare("SELECT id, name, base_url, api FROM providers ORDER BY created_at, rowid").all() as { id: string; name: string; base_url: string; api: string }[];
+    const def = this.defaultProviderId();
+    return rows.map((r) => ({ id: r.id, name: r.name, baseUrl: r.base_url, api: r.api === "chat" ? ("chat" as const) : ("responses" as const), default: r.id === def }));
   }
 
   provider(id: string): Provider | undefined {
     return this.providers().find((p) => p.id === id);
   }
 
+  setDefaultProvider(id: string): void {
+    if (!this.provider(id)) throw new Error("服务商不存在");
+    kvSet(this.#db, "settings.defaultProvider", id);
+  }
+
   apiKey(id: string): string {
-    return id === BUILTIN ? this.#builtin.apiKey() : (this.#secrets.get(`provider:${id}`, "apiKey") ?? "");
+    return this.#secrets.get(`provider:${id}`, "apiKey") ?? "";
   }
 
   /** Every provider key, for redaction. */
@@ -107,18 +109,19 @@ export class ModelRegistry {
     if (this.providers().some((p) => p.name.toLowerCase() === name.toLowerCase())) throw new Error(`已有名为「${name}」的服务商`);
     const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 24) || "provider";
     let id = `p-${slug}`;
-    for (let i = 2; this.#db.prepare("SELECT 1 FROM providers WHERE id = ?").get(id); i++) id = `p-${slug}-${i}`;
+    for (let i = 2; this.provider(id); i++) id = `p-${slug}-${i}`;
+    const first = this.providers().length === 0;
     this.#db
       .prepare("INSERT INTO providers (id, name, base_url, api, created_at) VALUES (?, ?, ?, ?, ?)")
       .run(id, name, normalizeUrl(input.baseUrl), input.api ?? "responses", nowIso());
     if (input.apiKey) this.#secrets.set(`provider:${id}`, "apiKey", input.apiKey);
+    if (first) kvSet(this.#db, "settings.defaultProvider", id);
     return this.provider(id)!;
   }
 
   updateProvider(id: string, patch: { name?: string; baseUrl?: string; apiKey?: string; api?: ProviderApi }): Provider {
     const cur = this.provider(id);
     if (!cur) throw new Error("服务商不存在");
-    if (cur.builtin) throw new Error("内置的 new-api 在 deploy/.env 里配置；也可以把它移除，另外添加一个服务商");
     if (patch.name !== undefined) {
       const name = patch.name.trim();
       if (this.providers().some((p) => p.id !== id && p.name.toLowerCase() === name.toLowerCase())) throw new Error(`已有名为「${name}」的服务商`);
@@ -142,54 +145,41 @@ export class ModelRegistry {
   }
 
   removeProvider(id: string): void {
+    if (!this.provider(id)) throw new Error("服务商不存在");
     this.#db.prepare("DELETE FROM models WHERE provider = ?").run(id);
-    if (id === BUILTIN) {
-      // Configured in deploy/.env, so it can't be deleted; it just stays out of the app until re-added.
-      kvSet(this.#db, "settings.newapiRemoved", "true");
-      return;
-    }
     this.#db.prepare("DELETE FROM providers WHERE id = ?").run(id);
     this.#secrets.delete(`provider:${id}`, "apiKey");
+    if (kvGet(this.#db, "settings.defaultProvider") === id) kvSet(this.#db, "settings.defaultProvider", "");
   }
 
   /** Model ids the provider serves (GET /models). */
   async remoteModels(id: string): Promise<string[]> {
     const p = this.provider(id);
     if (!p) throw new Error("服务商不存在");
-    const res = await fetch(`${p.baseUrl}/models`, { headers: authHeader(this.apiKey(id)), signal: AbortSignal.timeout(15_000) }).catch((err) => {
-      throw new Error(`连不上 ${p.baseUrl}：${err instanceof Error ? err.message : err}`);
-    });
-    if (!res.ok) {
-      const hint = res.status === 404 && !/\/v\d+$/.test(p.baseUrl) ? "（地址通常以 /v1 结尾）" : res.status === 401 || res.status === 403 ? "（检查 API Key）" : "";
-      throw new Error(`${p.name} /models 返回 ${res.status}${hint}`);
-    }
-    const body = (await res.json().catch(() => ({}))) as { data?: { id: string }[] };
-    return [...new Set((body.data ?? []).map((m) => m.id).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+    return listRemoteModels(p.baseUrl, this.apiKey(id), p.name);
   }
 
   /**
-   * What the runner needs to point Codex at a provider. The built-in one uses the agent's own new-api token from its
-   * environment; a Chat Completions provider goes through the hub's bridge, authenticated with the agent's token, so
-   * its key never enters the container.
+   * What the runner needs to point Codex at a provider. A Chat Completions provider goes through the hub's bridge,
+   * authenticated with the agent's own token, so its key never enters the container.
    */
   engineProvider(id: string): EngineProvider {
     const p = this.provider(id);
-    if (!p) throw new Error(`模型的服务商（${id}）已被删除，请换一个模型`);
-    if (p.builtin) return { id: p.id, name: p.name, baseUrl: p.baseUrl, envKey: "NEWAPI_API_KEY" };
+    if (!p) throw new Error(id ? `模型的服务商（${id}）不存在，请在「设置 → 模型」里重新选一个` : "还没有配置模型服务商，请先在「设置 → 模型」里添加");
     if (p.api === "chat") return { id: p.id, name: p.name, baseUrl: bridgeUrl(p.id), envKey: "CONSTELLA_AGENT_TOKEN" };
     return { id: p.id, name: p.name, baseUrl: p.baseUrl, apiKey: this.apiKey(p.id) };
   }
 
   // ── models ─────────────────────────────────────────────
 
-  /** Splits a ref at its last "@" when what follows names a provider; anything else is a bare new-api model. */
+  /** Splits a ref at its last "@" when what follows looks like a provider id; anything else is a bare model. */
   parse(ref: string): { model: string; provider: string } {
     const at = ref.lastIndexOf("@");
     if (at > 0) {
       const provider = ref.slice(at + 1);
-      if (provider === BUILTIN || /^p-[a-z0-9-]+$/.test(provider)) return { model: ref.slice(0, at), provider };
+      if (PROVIDER_ID.test(provider)) return { model: ref.slice(0, at), provider };
     }
-    return { model: ref, provider: BUILTIN };
+    return { model: ref, provider: this.defaultProviderId() };
   }
 
   normalize(ref: string): string {
@@ -259,35 +249,6 @@ export class ModelRegistry {
     this.#db.prepare("UPDATE models SET bare = ? WHERE model = ? AND provider = ?").run(bare ? 1 : 0, p.model, p.provider);
   }
 
-  /** Why the built-in new-api's models couldn't be read the last time (null when fine or not configured). */
-  seedError(): string | null {
-    return this.builtinEnabled() && !kvGet(this.#db, "models.seeded") ? this.#seedError : null;
-  }
-
-  /** First start with a configured new-api: take over every model it serves, so nothing disappears from the pickers. */
-  seed(): Promise<void> {
-    if (kvGet(this.#db, "models.seeded") || !this.builtinEnabled()) return Promise.resolve();
-    this.#seeding ??= (async () => {
-      try {
-        const ids = await this.remoteModels(BUILTIN);
-        const inUse = (this.#db.prepare("SELECT model FROM agents UNION SELECT value FROM kv WHERE key IN ('settings.defaultModel','settings.reflectModel')").all() as { model: string }[])
-          .map((r) => this.parse(r.model))
-          .filter((p) => p.provider === BUILTIN)
-          .map((p) => p.model);
-        this.add(BUILTIN, [...ids, ...inUse]);
-        kvSet(this.#db, "models.seeded", nowIso());
-        this.#seedError = null;
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        if (message !== this.#seedError) console.error("model seeding failed", message);
-        this.#seedError = message;
-      } finally {
-        this.#seeding = null;
-      }
-    })();
-    return this.#seeding;
-  }
-
   /**
    * Ask the model for a one-word reply with the same streaming call the agent will make (Responses API, or Chat
    * Completions for a bridged provider) and remember whether it worked.
@@ -344,9 +305,23 @@ export class ModelRegistry {
   chatJson(ref: string, system: string, user: string, timeoutMs?: number): Promise<unknown> {
     const { model, provider } = this.parse(ref);
     const p = this.provider(provider);
-    if (!p) return Promise.reject(new Error(`模型的 provider（${provider}）已被删除`));
+    if (!p) return Promise.reject(new Error(`模型的 provider（${provider}）不存在，请在「设置 → 模型」里重新选一个`));
     return chatJson({ baseUrl: p.baseUrl, apiKey: this.apiKey(provider) }, model, system, user, timeoutMs);
   }
+}
+
+/** Model ids an arbitrary OpenAI-compatible address serves; shared with the first-run wizard, which has no provider row yet. */
+export async function listRemoteModels(baseUrl: string, apiKey: string, name: string): Promise<string[]> {
+  const base = baseUrl.trim().replace(/\/+$/, "");
+  const res = await fetch(`${base}/models`, { headers: authHeader(apiKey), signal: AbortSignal.timeout(15_000) }).catch((err) => {
+    throw new Error(`连不上 ${base}：${err instanceof Error ? err.message : err}`);
+  });
+  if (!res.ok) {
+    const hint = res.status === 404 && !/\/v\d+$/.test(base) ? "（地址通常以 /v1 结尾）" : res.status === 401 || res.status === 403 ? "（检查 API Key）" : "";
+    throw new Error(`${name} /models 返回 ${res.status}${hint}`);
+  }
+  const body = (await res.json().catch(() => ({}))) as { data?: { id: string }[] };
+  return [...new Set((body.data ?? []).map((m) => m.id).filter(Boolean))].sort((a, b) => a.localeCompare(b));
 }
 
 function normalizeUrl(url: string): string {

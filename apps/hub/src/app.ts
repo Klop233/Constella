@@ -24,7 +24,6 @@ import { Knowledge } from "./knowledge.ts";
 import { Learning } from "./learning.ts";
 import { registerMcp } from "./mcp.ts";
 import { ModelRegistry } from "./models.ts";
-import { NewApi } from "./newapi.ts";
 import { Notifier } from "./notify.ts";
 import { registerRoutes } from "./routes.ts";
 import { Recovery } from "./recovery.ts";
@@ -66,7 +65,6 @@ export interface Hub {
   perf: PerfMonitor;
   scheduler: Scheduler;
   notifier: Notifier;
-  newapi: NewApi;
   models: ModelRegistry;
   /** Reasoning levels each model supports, as reported by the agents' Codex. */
   catalog: EffortCatalog;
@@ -193,8 +191,8 @@ export class Settings {
   }
 
   /**
-   * Model refs: "model@provider", or a bare name for the built-in new-api (like the env defaults). Nothing chosen
-   * falls back to the first model whose test passed, then the first model at all.
+   * Model refs: "model@provider", or a bare name for the provider marked as default (like the env defaults). Nothing
+   * chosen falls back to the first model whose test passed, then the first model at all.
    */
   defaultModel(): string {
     const chosen = kvGet(this.#db, "settings.defaultModel") || config.defaultModel;
@@ -363,12 +361,6 @@ export class Settings {
     return Math.max(1, this.#num("backupKeep", 7));
   }
 
-  newapiAdmin(): { token: string; userId: string } | null {
-    const token = this.#secrets.get("settings", "newapiAdminToken") || config.newapi.adminToken;
-    if (!token) return null;
-    return { token, userId: kvGet(this.#db, "settings.newapiAdminUserId") || config.newapi.adminUserId };
-  }
-
   telegram(): { botToken: string; chatId: string } | null {
     const botToken = this.#secrets.get("settings", "telegramBotToken") || config.telegram.botToken;
     const chatId = kvGet(this.#db, "settings.telegramChatId") || config.telegram.chatId;
@@ -376,7 +368,6 @@ export class Settings {
   }
 
   view(): Record<string, unknown> {
-    const admin = this.newapiAdmin();
     return {
       defaultModel: this.defaultModel(),
       reflectModel: this.reflectModel(),
@@ -401,11 +392,6 @@ export class Settings {
       quietHours: this.quietHours(),
       backupKeep: this.backupKeep(),
       modelNameFormat: this.#models.nameFormat(),
-      newapiBaseUrl: config.newapi.baseUrl,
-      newapiEnabled: this.#models.builtinEnabled(),
-      modelSeedError: this.#models.seedError(),
-      newapiAdminConfigured: !!admin,
-      newapiAdminUserId: admin?.userId ?? config.newapi.adminUserId,
       telegramConfigured: !!this.telegram(),
       telegramChatId: kvGet(this.#db, "settings.telegramChatId") || config.telegram.chatId,
       timezone: config.timezone,
@@ -419,14 +405,13 @@ export async function createHub(opts: { dbPath?: string; webDist?: string; logge
   if (!config.masterKey) throw new Error("CONSTELLA_MASTER_KEY is required");
   const db = openDb(opts.dbPath ?? config.dbPath);
   const secrets = new SecretStore(db, new SecretBox(config.masterKey));
-  const models = new ModelRegistry({ db, secrets, newapiBaseUrl: config.newapi.baseUrl, newapiKey: () => config.newapi.apiKey });
+  const models = new ModelRegistry({ db, secrets });
   const settings = new Settings(db, secrets, models);
   const events = new EventStore(db);
   /** Streaming UI blocks (```ui-json) inside replies: parsing, caps, and the stored documents. */
   const ui = new UiStreams(db, events);
   const containers = new Containers();
   const runners = new RunnerGateway();
-  const newapi = new NewApi({ baseUrl: config.newapi.baseUrl, admin: () => settings.newapiAdmin() });
   const catalog = new EffortCatalog(db);
   const notifier = new Notifier(db, events, config.vapid, () => settings.telegram(), () => settings.isQuiet());
   let agents!: Agents;
@@ -435,7 +420,7 @@ export async function createHub(opts: { dbPath?: string; webDist?: string; logge
   const allSecretValues = () => {
     const revision = secrets.revision() + (credentials?.revision() ?? 0);
     if (secretCache?.revision === revision) return secretCache.values;
-    const values = [config.newapi.apiKey, ...models.keys(), ...(credentials ? credentials.secretValues() : []), ...(agents ? agents.list(true).flatMap((a) => agents.secretValues(a.id)) : [])];
+    const values = [...models.keys(), ...(credentials ? credentials.secretValues() : []), ...(agents ? agents.list(true).flatMap((a) => agents.secretValues(a.id)) : [])];
     secretCache = { revision, values };
     return values;
   };
@@ -446,8 +431,8 @@ export async function createHub(opts: { dbPath?: string; webDist?: string; logge
 
   const ensureRunner = async (agentId: string) => {
     const agent = agents.get(agentId);
-    agents.writeEngineConfig(agent, newapi.baseUrl, models.parse(agent.model).model);
-    await containers.ensureAgent({ agentId, env: agents.containerEnv(agentId, config.newapi.apiKey), hostAccess: !!agent.host_access });
+    agents.writeEngineConfig(agent, models.parse(agent.model).model);
+    await containers.ensureAgent({ agentId, env: agents.containerEnv(agentId), hostAccess: !!agent.host_access });
     runners.lastSeen.set(agentId, Date.now());
     await runners.waitFor(agentId, 90_000);
   };
@@ -621,7 +606,6 @@ export async function createHub(opts: { dbPath?: string; webDist?: string; logge
     containers,
     scheduler,
     notifier,
-    newapi,
     models,
     catalog,
     runners,
@@ -760,7 +744,6 @@ export async function bootHub(hub: Hub): Promise<void> {
   hub.perf.start();
   void hub.hostcaps.refresh().catch((err) => console.error("host capability probe", err));
   hub.scheduler.start();
-  void hub.models.seed();
   // Runners that don't reconnect by themselves after a hub restart (container gone) get brought back.
   const pending = hub.db.prepare("SELECT DISTINCT agent_id FROM runs WHERE status IN ('running','waiting_approval','paused_by_user')").all() as { agent_id: string }[];
   for (const { agent_id } of pending) hub.reviveIfStranded(agent_id, 20_000);

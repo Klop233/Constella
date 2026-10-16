@@ -227,7 +227,7 @@ describe("bridge route", () => {
   let mode: "ok" | "limit" = "ok";
   const app = Fastify();
   const db = openDb(":memory:");
-  const models = new ModelRegistry({ db, secrets: new SecretStore(db, new SecretBox(Buffer.alloc(32, 7).toString("base64"))), newapiBaseUrl: "http://n", newapiKey: () => "" });
+  const models = new ModelRegistry({ db, secrets: new SecretStore(db, new SecretBox(Buffer.alloc(32, 7).toString("base64"))) });
 
   beforeAll(async () => {
     upstream = http.createServer((req, res) => {

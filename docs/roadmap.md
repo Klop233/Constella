@@ -13,13 +13,12 @@
 - **凭据与隐私**：Bitwarden 连接（官方区、第三方 / 自托管）、审批 agent、限时单次授权、登录时填入
 - **自我维护**：中断自动继续、监督员、实例巡检与修复、维修员、结束复核、待处理与一键方案
 - **智能界面**：回复里的 `ui-json` 流式界面、`ui` 组件程序、`ui-html` 退路
-- **运维**：定时任务、用量与按 agent 预算、性能页、审计、每日备份、Web Push 与 Telegram；`scripts/install.sh` 的安装、更新、备份、恢复、重置密码
+- **运维**：定时任务、用量统计、性能页、审计、每日备份、Web Push 与 Telegram；`scripts/install.sh` 的安装、更新、备份、恢复、重置密码
 - **公网入口**：Cloudflare Tunnel（`scripts/enable-public.sh`）、Tailscale Serve
 
 ## 已知缺口
 
 - 只支持一个账号
-- 按 agent 记账和每日预算依赖 new-api 管理令牌，真实环境验证还不够
 - hub 重启、agent 容器崩溃等故障的恢复逻辑已实现，缺专门的演练
 - 直接操作桌面（`desktop_*`）的路径实测较少，模型一般优先用 `browser_*`
 - 界面和给 agent 的提示词只有中文
