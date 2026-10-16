@@ -14,9 +14,8 @@ interface Stats {
   trend: { day: string | null; label: string; tokens: number; requests: number }[];
   models: { model: string; label: string; providerName: string; requests: number; runs: number; input: number; cached: number; output: number; successRate: number | null; tps: number | null; avgMs: number | null }[];
   providers: { provider: string; name: string; requests: number; input: number; cached: number; output: number; models: number }[];
-  agents: { agentId: string; name: string; emoji: string; requests: number; input: number; cached: number; output: number; spendUsd: number | null }[];
+  agents: { agentId: string; name: string; emoji: string; requests: number; input: number; cached: number; output: number }[];
   log: { ts: string; agentId: string; model: string; label: string; input: number; cached: number; output: number; durationMs: number | null; tps: number | null; conversationId: string | null; status: RunStatus | null }[];
-  spendUsd: number | null;
   filters: { models: { ref: string; label: string }[]; providers: { id: string; name: string }[]; agents: { id: string; name: string; emoji: string }[] };
 }
 
@@ -75,7 +74,7 @@ export default function Usage() {
         ) : (
           <>
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5">
-              <StatTile label={d.spendUsd != null ? "费用" : "任务"} value={d.spendUsd != null ? `$${d.spendUsd.toFixed(2)}` : d.totals.runs} />
+              <StatTile label="任务" value={d.totals.runs} />
               <StatTile label="请求" value={d.totals.requests.toLocaleString()} />
               <StatTile label="Tokens" value={tokens(d.totals.input + d.totals.output)} />
               <StatTile label="缓存命中率" value={pct(d.totals.hitRate)} />
@@ -202,7 +201,6 @@ export default function Usage() {
                           <Th right>输入</Th>
                           <Th right>输出</Th>
                           <Th right>缓存命中</Th>
-                          <Th right>费用</Th>
                         </tr>
                       </thead>
                       <tbody>
@@ -217,7 +215,6 @@ export default function Usage() {
                             <Td right>{tokens(a.input)}</Td>
                             <Td right>{tokens(a.output)}</Td>
                             <Td right>{pct(a.input ? a.cached / a.input : null)}</Td>
-                            <Td right>{a.spendUsd != null ? `$${a.spendUsd.toFixed(2)}` : <Dash />}</Td>
                           </tr>
                         ))}
                       </tbody>

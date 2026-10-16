@@ -60,7 +60,6 @@ export default function AgentEdit() {
   const [desktopPolicy, setDesktopPolicy] = useState<DesktopPolicy>({ desktopIds: [] });
   const [hostAccess, setHostAccess] = useState(false);
   const [effort, setEffort] = useState<string>("");
-  const [budget, setBudget] = useState("");
   const { efforts } = modelEfforts(models.data, model);
   const [advanced, setAdvanced] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -83,7 +82,6 @@ export default function AgentEdit() {
     setDesktopPolicy(a.desktop_policy);
     setHostAccess(a.host_access);
     setEffort(a.effort ?? "");
-    setBudget(a.budget_daily_usd ? String(a.budget_daily_usd) : "");
   }, [existing.data]);
 
   const pick = (t: Template) => {
@@ -112,7 +110,6 @@ export default function AgentEdit() {
         effort: effort || null,
         desktopPolicy,
         hostAccess,
-        budgetDailyUsd: budget ? Number(budget) : null,
       };
       const a = editing ? await api.patch<Agent>(`/api/agents/${id}`, body) : await api.post<Agent>("/api/agents", body);
       void qc.invalidateQueries();
@@ -214,9 +211,6 @@ export default function AgentEdit() {
                 />
               </Field>
             )}
-            <Field label="每日预算（美元）" hint="需要在设置里配置 new-api 管理令牌，并为该 agent 生成专属令牌后才生效">
-              <input className={inputClass} inputMode="decimal" value={budget} onChange={(e) => setBudget(e.target.value)} placeholder="不限" />
-            </Field>
           </div>
         )}
       </div>

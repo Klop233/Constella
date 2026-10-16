@@ -75,7 +75,7 @@ export class CodexEngine {
         await this.#request("skills/extraRoots/set", { extraRoots: cmd.skillRoots });
         this.#skillRoots = roots;
       }
-      const providerId = cmd.provider?.id ?? "newapi";
+      const providerId = cmd.provider?.id ?? "default";
       const threadParams = {
         model: cmd.model,
         cwd: "/workspace",

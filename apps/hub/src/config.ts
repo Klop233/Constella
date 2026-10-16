@@ -26,14 +26,12 @@ export const config = {
     .filter(Boolean),
   masterKey: env("CONSTELLA_MASTER_KEY"),
   setupCode: env("CONSTELLA_SETUP_CODE"),
-  newapi: {
-    baseUrl: env("NEWAPI_BASE_URL", "http://host.docker.internal:3333").replace(/\/$/, ""),
-    apiKey: env("NEWAPI_API_KEY"),
-    adminToken: env("NEWAPI_ADMIN_TOKEN"),
-    adminUserId: env("NEWAPI_ADMIN_USER_ID", "1"),
-  },
-  defaultModel: env("CONSTELLA_DEFAULT_MODEL", "gpt-6-astra"),
-  reflectModel: env("CONSTELLA_REFLECT_MODEL", "mimo-v2.5-pro"),
+  /**
+   * Optional starting model refs (name or "model@provider"). Providers themselves are configured in the app
+   * (设置 → 模型) or during the first-run wizard; the upstream can be any OpenAI Responses-compatible address.
+   */
+  defaultModel: env("CONSTELLA_DEFAULT_MODEL"),
+  reflectModel: env("CONSTELLA_REFLECT_MODEL"),
   vapid: { publicKey: env("VAPID_PUBLIC_KEY"), privateKey: env("VAPID_PRIVATE_KEY"), subject: env("VAPID_SUBJECT", "mailto:admin@constella.local") },
   telegram: { botToken: env("TELEGRAM_BOT_TOKEN"), chatId: env("TELEGRAM_CHAT_ID") },
   docker: {

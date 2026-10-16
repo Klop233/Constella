@@ -35,7 +35,7 @@ runner + Codex app-server      Xvnc + Xfce + Chromium(CDP) + 控制服务
 /home/agent：记忆、技能、配置   持久化 home（浏览器登录态保留）
 /workspace：工作目录
    │
-   └── 模型请求 → new-api 或其他 OpenAI Responses 兼容的 provider
+   └── 模型请求 → 任何 OpenAI Responses 兼容的 provider（在 App 里配置）
 ```
 
 三条通信链路：
@@ -90,9 +90,8 @@ runner + Codex app-server      Xvnc + Xfce + Chromium(CDP) + 控制服务
 
 ## 4. 模型提供方
 
-- **提供方**：new-api，或任何支持 OpenAI Responses API 的地址（Codex 只走这个接口）。内置 new-api 的模型直接用模型名，其他提供方的模型以 `model@provider` 引用。密钥加密存储，主密钥放在 `deploy/.env`。
+- **提供方**：任何支持 OpenAI Responses API 的地址（Codex 只走这个接口），在「设置 → 模型」里配置，不绑定某一家网关。模型以 `model@provider` 引用；不写 provider 时归默认 provider。密钥加密存储，主密钥放在 `deploy/.env`。
 - **模型列表**：从 `/v1/models` 拉取，实测过的兼容结果标在模型选择器上。
-- **按 agent 记账**（可选）：hub 通过 new-api 管理接口给每个 agent 建独立令牌并设额度，在 App 里显示每个 agent 每天的花费，接近预算时推送提醒。
 
 ## 5. 隔离与授权
 
@@ -137,7 +136,7 @@ $CONSTELLA_DATA_DIR（默认 /srv/constella）
   backups/                  每日备份
 ```
 
-hub 用 Docker Compose 部署（挂 `docker.sock`，只有 hub 能访问），内部网络叫 `constella-net`，通过 `extra_hosts: host-gateway` 访问宿主机上的 new-api。数据目录在 hub 容器内外是同一个路径，因为 hub 会把这些路径传给它启动的 agent 和实例容器。
+hub 用 Docker Compose 部署（挂 `docker.sock`，只有 hub 能访问），内部网络叫 `constella-net`，通过 `extra_hosts: host-gateway` 访问宿主机上的服务（例如自建的模型网关）。数据目录在 hub 容器内外是同一个路径，因为 hub 会把这些路径传给它启动的 agent 和实例容器。
 
 ## 验证
 

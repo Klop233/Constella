@@ -26,7 +26,7 @@ const { Desktops, RfbClientFilter } = await import("../src/desktops.ts");
 const { SecretBox, redact } = await import("../src/secrets.ts");
 const { Auth, hashPassword, verifyPassword } = await import("../src/auth.ts");
 const { transcriptFor, Learning } = await import("../src/learning.ts");
-const { parseJsonLoose } = await import("../src/newapi.ts");
+const { parseJsonLoose } = await import("../src/llm.ts");
 const { ModelRegistry } = await import("../src/models.ts");
 const { allowedOrigins, rememberOrigin } = await import("../src/origins.ts");
 const { SecretStore } = await import("../src/secrets.ts");
@@ -121,7 +121,7 @@ describe("RunManager", () => {
         sent.push(msg);
         return true;
       },
-      startPayload: () => ({ model: "m@newapi", instructions: "i", approvalPolicy: "auto", skillRoots: [] }),
+      startPayload: () => ({ model: "m", instructions: "i", approvalPolicy: "auto", skillRoots: [] }),
       notify: () => {},
       resolveModel: (ref) => {
         if (ref.endsWith("@gone")) throw new Error("provider 已被删除");
@@ -667,41 +667,54 @@ describe("model registry", () => {
   const box = new SecretBox(Buffer.alloc(32, 7).toString("base64"));
   const make = () => {
     const db = openDb(":memory:");
-    return { db, reg: new ModelRegistry({ db, secrets: new SecretStore(db, box), newapiBaseUrl: "http://newapi:3000", newapiKey: () => "sk-builtin" }) };
+    return { db, reg: new ModelRegistry({ db, secrets: new SecretStore(db, box) }) };
   };
 
-  it("parses refs: a known provider after the last @, otherwise a bare new-api model", () => {
+  it("parses refs: a provider id after the last @, otherwise a bare model resolved to the default provider", () => {
     const { reg } = make();
     expect(reg.parse("gpt-5@p-cli")).toEqual({ model: "gpt-5", provider: "p-cli" });
-    expect(reg.parse("openai/gpt-4o@newapi")).toEqual({ model: "openai/gpt-4o", provider: "newapi" });
-    expect(reg.parse("claude-3@20240620")).toEqual({ model: "claude-3@20240620", provider: "newapi" });
-    expect(reg.parse("mimo")).toEqual({ model: "mimo", provider: "newapi" });
-    expect(reg.normalize("mimo@newapi")).toBe("mimo");
+    expect(reg.parse("claude-3@20240620")).toEqual({ model: "claude-3@20240620", provider: "" });
+    expect(reg.parse("mimo")).toEqual({ model: "mimo", provider: "" });
+    const p = reg.addProvider({ name: "CLI", baseUrl: "http://cli/v1", apiKey: "k" });
+    expect(reg.defaultProviderId()).toBe(p.id);
+    expect(reg.parse("mimo")).toEqual({ model: "mimo", provider: p.id });
+    expect(reg.normalize("mimo")).toBe(`mimo@${p.id}`);
     expect(reg.normalize("mimo@p-cli")).toBe("mimo@p-cli");
   });
 
   it("names models 'model (provider)', lets one entry per name drop the provider, and honours the format", () => {
     const { db, reg } = make();
     const p = reg.addProvider({ name: "CLI Proxy", baseUrl: "http://cli:8317/v1/", apiKey: "sk-cli" });
-    expect(p).toMatchObject({ id: "p-cli-proxy", baseUrl: "http://cli:8317/v1" });
-    expect(reg.addProvider({ name: "中转", baseUrl: "https://a.example/v1", apiKey: "" }).id).toBe("p-provider");
+    expect(p).toMatchObject({ id: "p-cli-proxy", baseUrl: "http://cli:8317/v1", default: true });
+    const other = reg.addProvider({ name: "中转", baseUrl: "https://a.example/v1", apiKey: "" });
+    expect(other.id).toBe("p-provider");
+    expect(other.default).toBe(false);
     expect(() => reg.addProvider({ name: "cli proxy", baseUrl: "http://x", apiKey: "" })).toThrow("已有");
-    reg.add("newapi", ["gpt-5", "mimo"]);
-    reg.add(p.id, ["gpt-5"]);
+    reg.add(p.id, ["gpt-5", "mimo"]);
+    reg.add(other.id, ["gpt-5"]);
     const label = (ref: string) => reg.list().find((m) => m.ref === ref)!.label;
-    expect(reg.list().map((m) => m.ref)).toEqual(["gpt-5", "mimo", "gpt-5@p-cli-proxy"]);
-    expect(label("gpt-5")).toBe("gpt-5 (new-api)");
+    expect(reg.list().map((m) => m.ref)).toEqual(["gpt-5@p-cli-proxy", "mimo@p-cli-proxy", "gpt-5@p-provider"]);
     expect(label("gpt-5@p-cli-proxy")).toBe("gpt-5 (CLI Proxy)");
-    reg.setBare("gpt-5", true);
-    expect(label("gpt-5")).toBe("gpt-5");
+    expect(label("gpt-5@p-provider")).toBe("gpt-5 (中转)");
     reg.setBare("gpt-5@p-cli-proxy", true);
-    expect(label("gpt-5")).toBe("gpt-5 (new-api)");
     expect(label("gpt-5@p-cli-proxy")).toBe("gpt-5");
+    expect(label("gpt-5@p-provider")).toBe("gpt-5 (中转)");
     kvSet(db, "settings.modelNameFormat", "dash");
-    expect(label("mimo")).toBe("mimo - new-api");
+    expect(label("mimo@p-cli-proxy")).toBe("mimo - CLI Proxy");
     expect(reg.resolve("gpt-5@p-cli-proxy")).toEqual({ model: "gpt-5", provider: { id: "p-cli-proxy", name: "CLI Proxy", baseUrl: "http://cli:8317/v1", apiKey: "sk-cli" } });
-    expect(reg.resolve("mimo").provider).toMatchObject({ id: "newapi", envKey: "NEWAPI_API_KEY", baseUrl: "http://newapi:3000/v1" });
-    expect(reg.keys()).toEqual(["sk-builtin", "sk-cli"]);
+    expect(reg.resolve("mimo@p-cli-proxy").provider).toMatchObject({ id: "p-cli-proxy", baseUrl: "http://cli:8317/v1", apiKey: "sk-cli" });
+    expect(reg.keys()).toEqual(["sk-cli"]);
+  });
+
+  it("makes the first provider the default and lets another take over", () => {
+    const { reg } = make();
+    const a = reg.addProvider({ name: "A", baseUrl: "https://a/v1", apiKey: "" });
+    const b = reg.addProvider({ name: "B", baseUrl: "https://b/v1", apiKey: "" });
+    expect(reg.defaultProviderId()).toBe(a.id);
+    expect(reg.providers().find((p) => p.id === a.id)!.default).toBe(true);
+    reg.setDefaultProvider(b.id);
+    expect(reg.defaultProviderId()).toBe(b.id);
+    expect(reg.providers().find((p) => p.id === b.id)!.default).toBe(true);
   });
 
   it("knows who still uses a provider, and removing it drops its models", () => {
@@ -713,10 +726,10 @@ describe("model registry", () => {
        VALUES ('ag1', '助理', '✨', 'assistant', 'p', 'a@p-other', 'auto', '{"mode":"none"}', 'h', 'now', 'now')`,
     ).run();
     expect(reg.usersOf(p.id, ["b@p-other"])).toEqual(["agent「助理」", "默认模型设置"]);
-    expect(() => reg.removeProvider("newapi")).toThrow();
     reg.removeProvider(p.id);
     expect(reg.list()).toEqual([]);
-    expect(() => reg.resolve("a@p-other")).toThrow("已被删除");
+    expect(reg.defaultProviderId()).toBe("");
+    expect(() => reg.resolve("a@p-other")).toThrow("不存在");
   });
 });
 
@@ -725,7 +738,7 @@ describe("settings", () => {
   const make = () => {
     const db = openDb(":memory:");
     const secrets = new SecretStore(db, box);
-    return { db, settings: new Settings(db, secrets, new ModelRegistry({ db, secrets, newapiBaseUrl: "http://n", newapiKey: () => "" })) };
+    return { db, settings: new Settings(db, secrets, new ModelRegistry({ db, secrets })) };
   };
 
   it("falls back to env defaults and normalizes model refs", () => {

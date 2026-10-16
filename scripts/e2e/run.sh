@@ -31,13 +31,16 @@ docker run -d --name "$NAME" --network constella-net -p 127.0.0.1:$PORT:8780 \
   -v /var/run/docker.sock:/var/run/docker.sock -v "$DATA:$DATA" \
   -e CONSTELLA_DATA_DIR="$DATA" -e CONSTELLA_MASTER_KEY="$CONSTELLA_MASTER_KEY" -e CONSTELLA_SETUP_CODE="$CODE" \
   -e CONSTELLA_ORIGINS="http://localhost:$PORT" \
-  -e NEWAPI_BASE_URL="$NEWAPI_BASE_URL" -e NEWAPI_API_KEY="$NEWAPI_API_KEY" -e TZ=Asia/Shanghai \
+  -e TZ=Asia/Shanghai \
   -e CONSTELLA_HUB_WS="ws://$NAME:8780/api/runner" -e CONSTELLA_HUB_MCP="http://$NAME:8780/mcp" \
   "${IMAGE_ARGS[@]}" "$HUB_IMAGE" >/dev/null
 for i in $(seq 1 30); do curl -fs "localhost:$PORT/api/health" >/dev/null && break; sleep 1; done
 
 status=0
-HUB="http://localhost:$PORT" SETUP_CODE="$CODE" DATA_DIR="$DATA" node "$ROOT/scripts/e2e/api-e2e.mjs" || status=$?
+# The upstream is configured through the API (any Responses-compatible address); export it in deploy/.env or the shell.
+HUB="http://localhost:$PORT" SETUP_CODE="$CODE" DATA_DIR="$DATA" \
+  MODEL_BASE_URL="${MODEL_BASE_URL:-}" MODEL_API_KEY="${MODEL_API_KEY:-}" MODEL_NAME="${MODEL_NAME:-${CONSTELLA_DEFAULT_MODEL:-}}" \
+  node "$ROOT/scripts/e2e/api-e2e.mjs" || status=$?
 if [ $status -eq 0 ]; then
   # Drive the test desktop's Chromium; inside it, localhost:$PORT is forwarded to the test hub (a secure context).
   DESK=$(docker ps -q --filter label=dev.constella.role=desktop | while read -r c; do

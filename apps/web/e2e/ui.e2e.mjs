@@ -123,7 +123,7 @@ try {
 
   step("settings");
   await page.getByRole("link", { name: "设置" }).click();
-  await page.getByText("new-api 与用量").waitFor();
+  await page.getByText("模型", { exact: true }).first().waitFor();
   await page.waitForTimeout(1000);
   await shot("13-settings");
 

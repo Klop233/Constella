@@ -41,7 +41,7 @@
 | `credentials.ts` / `credential-provider.ts` / `credential-routes.ts` | 凭据与隐私：密码库连接与解锁会话、agent 的访问申请、指定审批 agent 的审核与限时单次授权、`/api/credentials`；provider 接口的 Bitwarden 实现在 `credential-provider.ts`，官方区和第三方 / 自托管（Vaultwarden 等，可带自签名证书）共用（见 [docs/credentials.md](docs/credentials.md)）；登录输入框是 `approvals` 里 `kind = 'secret'` 的一类（`runs.ts` 的 `requestSecret` / `provideSecret`，值只在内存里交给等待中的 `credentials_fill`，前端 `ApprovalCard.tsx` 的 `SecretForm`）；输入的登录可勾选存进密码库（`Credentials.save` → provider 的 `create`，只新增条目，经 CLI 标准输入传入） |
 | `artifacts.ts` | 成果：agent 交付到对话里的文件和文档，带版本，可预览、可原地编辑 |
 | `knowledge.ts` / `learning.ts` / `reflect.ts` | 记忆与技能（git，可撤销；含从别的助手导入记忆）/ 复盘与每周整理 / 回顾统计 |
-| `models.ts` / `newapi.ts` / `catalog.ts` | 模型提供方与 `model@provider` 引用 / new-api 管理接口 / 各模型支持的推理强度 |
+| `models.ts` / `llm.ts` / `catalog.ts` | 模型提供方与 `model@provider` 引用 / 给模型的一次性 JSON 调用 / 各模型支持的推理强度 |
 | `auth.ts` / `secrets.ts` / `safety.ts` / `trusted.ts` | 登录与 ticket / 加密存储与脱敏 / 审批策略 / 开发用免登录入口 |
 | `scheduler.ts` / `notify.ts` / `usage.ts` | 定时任务 / Web Push + Telegram / 用量统计 |
 | `perf.ts` | 性能采样：宿主机（`CONSTELLA_HOST_ROOT` 下的 /proc 与 cgroup）和每个容器的 CPU、内存、网络，内存里保留一天历史 |

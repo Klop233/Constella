@@ -1,7 +1,7 @@
 import { FileText, Globe2, Monitor, Server, Smartphone, TriangleAlert } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
-import { Button, Card, Checkbox, Loading, StatusText, cx } from "../components/ui";
+import { Button, Card, Checkbox, Field, Loading, Select, StatusText, cx, inputClass } from "../components/ui";
 import { api } from "../lib/api";
 import type { HostCaps } from "../lib/types";
 
@@ -20,6 +20,8 @@ interface OnboardingData {
   needed: boolean;
   selection: Selection;
   pendingOffice: boolean;
+  /** Whether a model upstream is already configured (env or an earlier run). */
+  modelConfigured: boolean;
   images: { agent: boolean; desktop: boolean; office: boolean };
   capabilities: HostCaps;
   office: OfficeStatus;
@@ -41,6 +43,14 @@ export default function Onboarding({ onDone }: { onDone: () => void }) {
   const [selection, setSelection] = useState<Selection>({ browser: true, desktop: true, android: false, office: true });
   const [started, setStarted] = useState(false);
   const [error, setError] = useState("");
+  // Model upstream: any OpenAI Responses-compatible address; optional, but without one agents can't run.
+  const [mName, setMName] = useState("默认服务商");
+  const [mBaseUrl, setMBaseUrl] = useState("");
+  const [mKey, setMKey] = useState("");
+  const [mModel, setMModel] = useState("");
+  const [models, setModels] = useState<string[] | null>(null);
+  const [probing, setProbing] = useState(false);
+  const [probeError, setProbeError] = useState("");
 
   useEffect(() => {
     if (q.data?.selection && !started) setSelection(q.data.selection);
@@ -56,11 +66,26 @@ export default function Onboarding({ onDone }: { onDone: () => void }) {
   const d = q.data;
   const androidUnavailable = d.capabilities.checkedAt !== null && !d.capabilities.kinds.android.ok;
   const set = (id: Choice) => setSelection((s) => ({ ...s, [id]: !s[id] }));
+  const fetchModels = async () => {
+    setProbing(true);
+    setProbeError("");
+    try {
+      const r = await api.post<{ models: string[] }>("/api/onboarding/models", { baseUrl: mBaseUrl.trim(), apiKey: mKey });
+      setModels(r.models);
+      if (r.models.length && !mModel.trim()) setMModel(r.models[0]!);
+    } catch (err) {
+      setProbeError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setProbing(false);
+    }
+  };
+  const modelIncomplete = !!mBaseUrl.trim() !== !!mModel.trim();
   const submit = async () => {
     setStarted(true);
     setError("");
     try {
-      await api.post("/api/onboarding", selection);
+      const model = mBaseUrl.trim() && mModel.trim() ? { name: mName.trim() || undefined, baseUrl: mBaseUrl.trim(), apiKey: mKey, model: mModel.trim() } : null;
+      await api.post("/api/onboarding", { ...selection, model });
       await q.refetch();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -122,6 +147,48 @@ export default function Onboarding({ onDone }: { onDone: () => void }) {
         </Card>
 
         <Card className="p-4 sm:p-5 space-y-3">
+          <div>
+            <h2 className="font-semibold">模型服务</h2>
+            <p className="text-[13px] text-muted mt-1">
+              任何兼容 OpenAI Responses API 的地址都可以：官方 API、自建网关、聚合服务。可以跳过，之后在「设置 → 模型」里配置；不配置 agent 跑不起来。
+            </p>
+          </div>
+          {d.modelConfigured ? (
+            <StatusText tone="ok">模型服务已配置</StatusText>
+          ) : (
+            <div className="space-y-3">
+              <Field label="名称" hint="只用于显示，比如 CLIProxy">
+                <input className={inputClass} value={mName} onChange={(e) => setMName(e.target.value)} maxLength={40} />
+              </Field>
+              <Field label="接口地址" hint="一般以 /v1 结尾；容器里的 localhost 不是宿主机，宿主机用 host.docker.internal">
+                <input className={cx(inputClass, "font-mono")} value={mBaseUrl} onChange={(e) => setMBaseUrl(e.target.value)} placeholder="http://host.docker.internal:3000/v1" autoComplete="off" />
+              </Field>
+              <Field label="API Key" hint="没有可以留空">
+                <input className={cx(inputClass, "font-mono")} type="password" value={mKey} onChange={(e) => setMKey(e.target.value)} autoComplete="off" />
+              </Field>
+              <div className="flex items-end gap-2">
+                <div className="flex-1">
+                  {models ? (
+                    <Field label="模型">
+                      <Select label="模型" value={mModel} onChange={setMModel} options={models.map((m) => ({ value: m, label: m }))} />
+                    </Field>
+                  ) : (
+                    <Field label="模型" hint={mBaseUrl.trim() ? "点「获取模型」读取，或直接填写" : "先填接口地址"}>
+                      <input className={cx(inputClass, "font-mono")} value={mModel} onChange={(e) => setMModel(e.target.value)} placeholder="gpt-4o" autoComplete="off" />
+                    </Field>
+                  )}
+                </div>
+                <Button size="sm" variant="secondary" loading={probing} disabled={!mBaseUrl.trim()} onClick={() => void fetchModels()}>
+                  获取模型
+                </Button>
+              </div>
+              {probeError && <div className="text-xs text-danger">{probeError}</div>}
+              {modelIncomplete && <div className="text-xs text-warn">接口地址和模型要么都填，要么都留空。</div>}
+            </div>
+          )}
+        </Card>
+
+        <Card className="p-4 sm:p-5 space-y-3">
           <h2 className="font-semibold">部署检查</h2>
           <StatusText tone={d.images.agent ? "ok" : "danger"}>
             {d.images.agent ? "agent 运行镜像已就绪" : "缺少 agent 运行镜像，请在服务器执行 scripts/install.sh"}
@@ -147,7 +214,7 @@ export default function Onboarding({ onDone }: { onDone: () => void }) {
         )}
 
         {error && <div className="text-sm text-danger text-center">{error}</div>}
-        <Button variant="primary" size="lg" className="w-full" loading={started} disabled={!imageReady || (selection.android && androidUnavailable)} onClick={() => void submit()}>
+        <Button variant="primary" size="lg" className="w-full" loading={started} disabled={!imageReady || modelIncomplete || (selection.android && androidUnavailable)} onClick={() => void submit()}>
           {started ? "部署中…" : "确认并开始部署"}
         </Button>
         <p className="text-center text-xs text-muted">部署完成后会进入首页。Office 会在需要时自动启动，不使用时可以自动释放内存。</p>

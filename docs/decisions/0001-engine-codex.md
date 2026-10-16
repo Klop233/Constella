@@ -8,7 +8,7 @@
 
 自研 agent 循环的稳定性和干活效果都要长期打磨，而这不是平台要解决的问题；平台要解决的是外面那层：多 agent 管理、实例、记忆、手机端。
 
-模型接入方面，常见的网关（new-api、OpenRouter 一类）对 OpenAI Responses API 的支持最普遍，Anthropic 原生接口不一定有。
+模型接入方面，常见的网关（聚合服务、自建网关一类）对 OpenAI Responses API 的支持最普遍，Anthropic 原生接口不一定有。
 
 ## 决策
 
@@ -21,7 +21,7 @@
 
 - 好处：
   - agent 循环的质量和稳定性由专门团队维护；
-  - 沿用 new-api 等网关的现成链路，不绑定某一家模型；
+  - 沿用网关的现成链路，不绑定某一家模型；
   - 引擎升级时平台只需要跟进适配器。
 - 代价：
   - 非 OpenAI 模型走 Responses API 时效果可能打折，所以用 `scripts/spikes/model-compat.sh` 实测，并在模型选择器里标注（实测记录见 [spikes/models.md](../spikes/models.md)）；

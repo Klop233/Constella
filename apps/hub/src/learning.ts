@@ -267,6 +267,9 @@ export function transcriptFor(run: Pick<RunRow, "prompt" | "status" | "error">, 
 }
 
 export function defaultReflectModel(db: Db): string {
-  const row = db.prepare("SELECT value FROM kv WHERE key = 'settings.reflectModel'").get() as { value: string } | undefined;
-  return row?.value || config.reflectModel;
+  // The cheap model for reflection: an explicit setting wins, else whatever the default model is.
+  const row = db.prepare("SELECT value FROM kv WHERE key IN ('settings.reflectModel', 'settings.defaultModel') ORDER BY key = 'settings.defaultModel'").get() as
+    | { value: string }
+    | undefined;
+  return row?.value || config.reflectModel || config.defaultModel;
 }

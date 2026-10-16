@@ -48,7 +48,10 @@ describe("uploads through the hub", () => {
     await hub.app.listen({ host: "127.0.0.1", port: 0 });
     base = `http://127.0.0.1:${(hub.app.server.address() as { port: number }).port}`;
     await http("POST", "/api/auth/setup", { code: "setup-code", name: "主人", password: "a-long-password-1" });
+    // A provider has to exist before an agent's model can resolve (nothing is built in).
+    const provider = hub.models.addProvider({ name: "测试", baseUrl: "http://127.0.0.1:1/v1", apiKey: "k" });
     agentId = hub.agents.create({ name: "看图", template: "assistant" }, "test").id;
+    hub.agents.update(agentId, { model: `test-model@${provider.id}` }, "test");
   });
 
   afterAll(async () => {

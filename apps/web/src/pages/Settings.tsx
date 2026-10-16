@@ -46,9 +46,6 @@ interface SettingsView {
   quietHours: { enabled: boolean; start: string; end: string };
   backupKeep: number;
   modelNameFormat: "paren" | "dash";
-  newapiBaseUrl: string;
-  newapiAdminConfigured: boolean;
-  newapiAdminUserId: string;
   telegramConfigured: boolean;
   telegramChatId: string;
   timezone: string;
@@ -76,8 +73,6 @@ const SECTIONS: { id: string; label: string; icon: LucideIcon }[] = [
   { id: "security", label: "安全", icon: Shield },
   { id: "system", label: "系统", icon: Server },
 ];
-/** Old links (?s=newapi) land on the section that replaced them. */
-const ALIASES: Record<string, string> = { newapi: "models" };
 
 /** Dropdown for a fixed set of values, one width for every row; a value set elsewhere (env) still shows up. */
 function Choice<T extends string | number>({ value, options, onChange, label }: { value: T; options: { value: T; label: string }[]; onChange: (v: T) => void; label: string }) {
@@ -106,7 +101,7 @@ export default function Settings() {
   const s = settings.data;
   const picked = params.get("s");
   // Desktop always shows a section (general by default); phones show the index until one is picked.
-  const current = SECTIONS.find((x) => x.id === (picked && (ALIASES[picked] ?? picked))) ?? SECTIONS[0]!;
+  const current = SECTIONS.find((x) => x.id === picked) ?? SECTIONS[0]!;
   const go = (id: string) => setParams({ s: id }, { replace: !!picked });
 
   const body = (
@@ -342,7 +337,6 @@ function ModelsSection({ s, save }: { s: SettingsView; save: Save }) {
   const providers = useProviders();
   const models = useModels();
   const [editing, setEditing] = useState<Provider | "new" | null>(null);
-  const [admin, setAdmin] = useState(false);
   const [adding, setAdding] = useState<string | null>(null);
   const [checks, setChecks] = useState<Record<string, { ok: boolean; text: string } | "busy">>({});
   const [testing, setTesting] = useState<Set<string>>(new Set());
@@ -446,13 +440,12 @@ function ModelsSection({ s, save }: { s: SettingsView; save: Save }) {
               title={
                 <span className="flex items-center gap-1.5">
                   {p.name}
-                  {p.builtin && <Badge>内置</Badge>}
+                  {p.default && <Badge>默认</Badge>}
                 </span>
               }
               desc={
                 <>
                   <span className="font-mono break-all">{p.baseUrl}</span> · {p.models} 个模型 · {p.keyHint ? `Key ${p.keyHint}` : "未设置 Key"}
-                  {p.builtin && ` · 管理令牌${s.newapiAdminConfigured ? "已配置" : "未配置"}`}
                   {c && c !== "busy" && <span className={cx("block", c.ok ? "text-ok" : "text-danger")}>{c.text}</span>}
                 </>
               }
@@ -460,24 +453,25 @@ function ModelsSection({ s, save }: { s: SettingsView; save: Save }) {
               <Button size="sm" variant="secondary" loading={c === "busy"} onClick={() => void checkProvider(p)}>
                 测试
               </Button>
-              {p.builtin ? (
-                <Button size="sm" variant="secondary" onClick={() => setAdmin(true)}>
-                  管理令牌
+              {!p.default && (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => void api.post(`/api/providers/${p.id}/default`).then(() => { toast("已设为默认"); refresh(); }).catch(fail)}
+                >
+                  设为默认
                 </Button>
-              ) : (
-                <>
-                  <Button size="sm" variant="secondary" onClick={() => setEditing(p)}>
-                    编辑
-                  </Button>
-                  <Button size="sm" variant="ghost" className="text-danger" onClick={() => void removeProvider(p)}>
-                    删除
-                  </Button>
-                </>
               )}
+              <Button size="sm" variant="secondary" onClick={() => setEditing(p)}>
+                编辑
+              </Button>
+              <Button size="sm" variant="ghost" className="text-danger" onClick={() => void removeProvider(p)}>
+                删除
+              </Button>
             </SettingRow>
           );
         })}
-        <SettingRow wide title="添加 provider" desc="任何支持 OpenAI Responses API 的地址：另一个 new-api、CLIProxyAPI、OpenRouter 等。Codex 只走 Responses 接口，只支持 Chat Completions 的服务用不了。">
+        <SettingRow wide title="添加 provider" desc="任何支持 OpenAI Responses API 的地址：官方 API、CLIProxyAPI、OpenRouter 等。Codex 只走 Responses 接口，只支持 Chat Completions 的服务用不了。">
           <Button size="sm" variant="secondary" onClick={() => setEditing("new")}>
             添加
           </Button>
@@ -496,7 +490,7 @@ function ModelsSection({ s, save }: { s: SettingsView; save: Save }) {
           <Button size="sm" variant="secondary" disabled={!list.length || testing.size > 0} onClick={() => void testModels(list.map((m) => m.ref))}>
             {testing.size > 1 ? `测试中 · 剩 ${testing.size}` : "全部测试"}
           </Button>
-          <Button size="sm" variant="secondary" onClick={() => setAdding(only || providers.data?.[0]?.id || "newapi")}>
+          <Button size="sm" variant="secondary" disabled={!providers.data?.length} onClick={() => setAdding(only || providers.data?.[0]?.id || "")}>
             添加模型
           </Button>
         </div>
@@ -552,7 +546,6 @@ function ModelsSection({ s, save }: { s: SettingsView; save: Save }) {
         if (created) setAdding(p.id);
       }} />
       <AddModelsSheet provider={adding} providers={providers.data ?? []} models={models.data ?? []} onClose={() => setAdding(null)} onAdded={refresh} />
-      <AdminTokenSheet open={admin} onClose={() => setAdmin(false)} s={s} save={save} />
     </>
   );
 }
@@ -685,42 +678,11 @@ function AddModelsSheet({ provider, providers, models, onClose, onAdded }: { pro
   );
 }
 
-function AdminTokenSheet({ open, onClose, s, save }: { open: boolean; onClose: () => void; s: SettingsView; save: Save }) {
-  const [token, setToken] = useState("");
-  const [userId, setUserId] = useState(s.newapiAdminUserId);
-  return (
-    <Sheet open={open} onClose={onClose} title="new-api 管理令牌">
-      <div className="space-y-3">
-        <div className="text-[13px] text-muted">用于为每个 agent 在内置 new-api 里生成专属令牌，分开统计费用、设每日预算。</div>
-        <Field label="系统访问令牌" hint="new-api 后台 → 个人设置 → 生成系统访问令牌。留空保存可清除">
-          <input className={cx(inputClass, "font-mono")} type="password" value={token} onChange={(e) => setToken(e.target.value)} autoComplete="off" />
-        </Field>
-        <Field label="用户 ID" hint="令牌所属账号的 ID（通常管理员是 1）">
-          <input className={inputClass} value={userId} onChange={(e) => setUserId(e.target.value)} inputMode="numeric" />
-        </Field>
-        <Button
-          variant="primary"
-          className="w-full"
-          onClick={() =>
-            void save({ newapiAdminToken: token, newapiAdminUserId: userId }).then(() => {
-              onClose();
-              setToken("");
-            })
-          }
-        >
-          保存
-        </Button>
-      </div>
-    </Sheet>
-  );
-}
-
 interface UsageStats {
   totals: { requests: number; runs: number; input: number; cached: number; output: number; hitRate: number | null };
   models: { model: string; label: string; providerName: string; requests: number; input: number; output: number; successRate: number | null; tps: number | null }[];
   providers: { provider: string; name: string; requests: number; input: number; cached: number; output: number; models: number }[];
-  agents: { agentId: string; name: string; emoji: string; requests: number; input: number; output: number; spendUsd: number | null }[];
-  spendUsd: number | null;
+  agents: { agentId: string; name: string; emoji: string; requests: number; input: number; output: number }[];
 }
 
 const pct = (v: number | null) => (v == null ? "—" : `${(v * 100).toFixed(1)}%`);
@@ -757,7 +719,7 @@ function UsagePanel() {
         ) : (
           <>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-              <StatTile size="sm" label={d.spendUsd != null ? "费用" : "任务"} value={d.spendUsd != null ? `$${d.spendUsd.toFixed(2)}` : d.totals.runs} />
+              <StatTile size="sm" label="任务" value={d.totals.runs} />
               <StatTile size="sm" label="请求" value={d.totals.requests.toLocaleString()} />
               <StatTile size="sm" label="Tokens" value={tokens(d.totals.input + d.totals.output)} />
               <StatTile size="sm" label="缓存命中率" value={pct(d.totals.hitRate)} />
@@ -831,7 +793,6 @@ function UsagePanel() {
                           <th className={cx(th, "text-left")}>agent</th>
                           <th className={cx(th, "text-right")}>请求</th>
                           <th className={cx(th, "text-right")}>Tokens</th>
-                          <th className={cx(th, "text-right")}>费用</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -842,7 +803,6 @@ function UsagePanel() {
                             </td>
                             <td className={cx(td, "text-right")}>{a.requests}</td>
                             <td className={cx(td, "text-right")}>{tokens(a.input + a.output)}</td>
-                            <td className={cx(td, "text-right")}>{a.spendUsd != null ? `$${a.spendUsd.toFixed(2)}` : <span className="text-muted">—</span>}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -1539,7 +1499,7 @@ function SystemSection({ s, save }: { s: SettingsView; save: Save }) {
         dbSizeMb: number;
         containers: { name: string; state: string; status: string; role: string }[];
         backups: { name: string; size: number }[];
-        newapi: { ok: boolean; models?: number; error?: string };
+        provider: { configured: boolean; name?: string; ok?: boolean; models?: number; error?: string };
         version: string;
       }>("/api/system"),
   });
@@ -1550,8 +1510,19 @@ function SystemSection({ s, save }: { s: SettingsView; save: Save }) {
   return (
     <>
       <SettingGroup title={`系统 · v${d.version}`}>
-        <SettingRow title="new-api" desc={d.newapi.ok ? `${d.newapi.models} 个模型可用` : d.newapi.error}>
-          <StatusText tone={d.newapi.ok ? "ok" : "danger"}>{d.newapi.ok ? "正常" : "异常"}</StatusText>
+        <SettingRow
+          title="模型服务"
+          desc={
+            !d.provider.configured
+              ? "还没有配置 provider，去「模型」里添加"
+              : d.provider.ok
+                ? `${d.provider.name} · ${d.provider.models} 个模型可用`
+                : `${d.provider.name}：${d.provider.error}`
+          }
+        >
+          <StatusText tone={!d.provider.configured ? "warn" : d.provider.ok ? "ok" : "danger"}>
+            {!d.provider.configured ? "未配置" : d.provider.ok ? "正常" : "异常"}
+          </StatusText>
         </SettingRow>
         <SettingRow title="磁盘与数据库" desc={`剩余 ${d.disk.freeGb} / ${d.disk.totalGb} GB · 数据库 ${d.dbSizeMb} MB`} />
       </SettingGroup>
