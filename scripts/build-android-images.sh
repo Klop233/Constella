@@ -35,7 +35,8 @@ while [ $# -gt 0 ]; do
   shift
 done
 
-build() { echo "==> $1"; docker build -t "$1" "${@:2}"; }
+# Host network for the same reason as the compose builds: the host's DNS may be unreachable from a bridge.
+build() { echo "==> $1"; docker build --network host -t "$1" "${@:2}"; }
 bridge() { build "$BRIDGE" "${mirror[@]}" "$ROOT/images/android-bridge"; }
 
 case "$what" in

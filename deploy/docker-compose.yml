@@ -6,6 +6,9 @@ services:
     build:
       context: ..
       dockerfile: images/hub/Dockerfile
+      # Builds use the host's network and DNS: a resolver only the host reaches (Tailscale MagicDNS, a VPN)
+      # otherwise leaves package downloads hanging inside the build.
+      network: host
     container_name: constella-hub
     restart: unless-stopped
     env_file: .env
@@ -32,6 +35,7 @@ services:
     build:
       context: ..
       dockerfile: images/agent/Dockerfile
+      network: host
     profiles: ["images"]
 
   # Only pulled during the one-click installation; the hub manages the actual container on demand.
@@ -43,6 +47,7 @@ services:
     image: constella-desktop:latest
     build:
       context: ../images/desktop
+      network: host
     profiles: ["images"]
 
   # Screen and control for Android instances; the Android system images themselves depend on the host and are built
@@ -51,6 +56,7 @@ services:
     image: constella-android-bridge:latest
     build:
       context: ../images/android-bridge
+      network: host
     profiles: ["images"]
 
   # Public entry through Cloudflare Tunnel (set up with scripts/enable-public.sh)

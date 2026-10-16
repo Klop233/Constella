@@ -6,17 +6,20 @@ import { API_LABEL, PROVIDER_PRESETS } from "../lib/providers";
 import { Button, Field, Segmented, cx, inputClass, toast } from "./ui";
 
 const BLANK = { name: "", baseUrl: "", apiKey: "", api: "chat" as ProviderApi };
+const initial = (p: Provider | null) => (p ? { name: p.name, baseUrl: p.baseUrl, apiKey: "", api: p.api } : BLANK);
 
 /** Add or edit a model service: pick a preset (or 自定义), fill in the address and key, choose the API format. */
 export function ProviderForm({ provider, onSaved, submitLabel }: { provider: Provider | null; onSaved: (p: Provider, created: boolean) => void; submitLabel?: string }) {
   const isNew = !provider;
   const [preset, setPreset] = useState<string>("custom");
-  const [form, setForm] = useState(BLANK);
+  // Filled from the provider on the first render, so nothing typed right away lands on an empty form.
+  const [form, setForm] = useState(() => initial(provider));
   const [busy, setBusy] = useState(false);
   useEffect(() => {
     setPreset("custom");
-    setForm(provider ? { name: provider.name, baseUrl: provider.baseUrl, apiKey: "", api: provider.api } : BLANK);
+    setForm(initial(provider));
   }, [provider]);
+  const set = (patch: Partial<typeof BLANK>) => setForm((f) => ({ ...f, ...patch }));
 
   const chosen = PROVIDER_PRESETS.find((p) => p.id === preset);
   const pick = (id: string) => {
@@ -59,7 +62,7 @@ export function ProviderForm({ provider, onSaved, submitLabel }: { provider: Pro
         </Field>
       )}
       <Field label="名称" hint="会出现在模型显示名里，比如 deepseek-chat (DeepSeek)">
-        <input className={inputClass} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} maxLength={40} placeholder="我的服务" />
+        <input className={inputClass} value={form.name} onChange={(e) => set({ name: e.target.value })} maxLength={40} placeholder="我的服务" />
       </Field>
       <Field
         label="地址"
@@ -69,7 +72,7 @@ export function ProviderForm({ provider, onSaved, submitLabel }: { provider: Pro
             : "OpenAI 兼容的 API 地址，一般以 /v1 结尾"
         }
       >
-        <input className={cx(inputClass, "font-mono")} value={form.baseUrl} onChange={(e) => setForm({ ...form, baseUrl: e.target.value })} placeholder="https://api.example.com/v1" autoComplete="off" />
+        <input className={cx(inputClass, "font-mono")} value={form.baseUrl} onChange={(e) => set({ baseUrl: e.target.value })} placeholder="https://api.example.com/v1" autoComplete="off" />
       </Field>
       <Field
         label="API Key"
@@ -84,12 +87,12 @@ export function ProviderForm({ provider, onSaved, submitLabel }: { provider: Pro
           </>
         }
       >
-        <input className={cx(inputClass, "font-mono")} type="password" value={form.apiKey} onChange={(e) => setForm({ ...form, apiKey: e.target.value })} autoComplete="off" />
+        <input className={cx(inputClass, "font-mono")} type="password" value={form.apiKey} onChange={(e) => set({ apiKey: e.target.value })} autoComplete="off" />
       </Field>
       <Field group label="接口格式" hint="大多数服务用 Chat Completions；OpenAI 官方和支持它的网关可以选 Responses，工具调用更原生。不确定就保持预设，测试不通过再换">
         <Segmented<ProviderApi>
           value={form.api}
-          onChange={(v) => setForm({ ...form, api: v })}
+          onChange={(v) => set({ api: v })}
           options={(["chat", "responses"] as const).map((v) => ({ value: v, label: API_LABEL[v] }))}
         />
       </Field>

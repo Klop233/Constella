@@ -161,7 +161,8 @@ function Sidebar() {
   const needle = q.trim().toLowerCase();
   const groups = (overview.data?.agents ?? []).map((a) => ({
     agent: a,
-    convs: (overview.data?.conversations ?? []).filter((c) => c.agent_id === a.id && (!needle || c.title.toLowerCase().includes(needle) || a.name.toLowerCase().includes(needle))),
+    // While searching, conversations come from the full-text results above; here only agents matching by name.
+    convs: (overview.data?.conversations ?? []).filter((c) => c.agent_id === a.id && (!needle || a.name.toLowerCase().includes(needle))),
   }));
   const folded = useAppearance().navFolded;
   const [more, setMore] = useState(false);
@@ -207,11 +208,11 @@ function Sidebar() {
       <div className="flex-1 overflow-y-auto px-2 pt-3 pb-2 space-y-3">
         {needle && (
           <div>
-            <div className="flex items-center h-7 pl-2.5 text-xs text-muted">对话内容</div>
+            <div className="flex items-center h-7 pl-2.5 text-xs text-muted">对话</div>
             <SearchResults q={q} dense />
           </div>
         )}
-        {needle && <div className="flex items-center h-7 pl-2.5 text-xs text-muted">标题和 agent</div>}
+        {needle && groups.some((g) => g.convs.length > 0) && <div className="flex items-center h-7 pl-2.5 text-xs text-muted">agent</div>}
         {groups.map(({ agent: a, convs }) =>
           needle && !convs.length ? null : (
             <div key={a.id}>
