@@ -155,7 +155,8 @@ export function registerRoutes(hub: Hub): void {
   }));
   app.post("/api/auth/setup", authLimit, async (req, reply) => {
     const b = z.object({ code: z.string().optional(), name: z.string().min(1).max(40), password: z.string() }).parse(req.body);
-    const user = auth.setup(b.code ?? "", b.name, b.password);
+    // A missing or non-string code counts as empty: without a configured setup code any value is accepted.
+    const user = auth.setup(typeof b.code === "string" ? b.code : "", b.name, b.password);
     rememberOrigin(db, req.headers.origin);
     auth.createSession(user.id, req, reply);
     return { ok: true };
