@@ -29,7 +29,8 @@ export default function Login({ setupNeeded, setupCodeRequired, onDone }: { setu
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
-    if (setupNeeded) void run(() => api.post("/api/auth/setup", { code, name, password }));
+    // When no setup code is configured the field isn't shown; don't send it at all so an empty value can never be mistaken for a wrong one.
+    if (setupNeeded) void run(() => api.post("/api/auth/setup", setupCodeRequired ? { code, name, password } : { name, password }));
     else void run(() => api.post("/api/auth/login", { password, totp: needTotp ? totp : undefined }));
   };
 
