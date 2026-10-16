@@ -13,12 +13,12 @@ export function isTrusted(req: FastifyRequest): boolean {
 }
 
 /** Accepts connections on `port` and hands them to the app's own server, marking the socket trusted. */
-export function listenTrusted(app: FastifyInstance, host: string, port: number): Promise<void> {
+export function listenTrusted(app: FastifyInstance, host: string, port: number): Promise<http.Server> {
   const server = http.createServer((req, res) => app.server.emit("request", req, res));
   server.on("connection", (s) => trustedSockets.add(s));
   server.on("upgrade", (req, socket, head) => app.server.emit("upgrade", req, socket, head));
   return new Promise((resolve, reject) => {
     server.once("error", reject);
-    server.listen(port, host, () => resolve());
+    server.listen(port, host, () => resolve(server));
   });
 }

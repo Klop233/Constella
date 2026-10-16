@@ -48,6 +48,8 @@ export default function Chat() {
   const scroller = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
   const fileInput = useRef<HTMLInputElement>(null);
+  const loadVersion = useRef(0);
+  const reloadTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   const agentId = data?.conversation.agent_id ?? newAgentId;
   const me = useQuery({ queryKey: ["me"], queryFn: () => api.get<{ name: string }>("/api/me"), staleTime: 300_000 });
@@ -55,15 +57,37 @@ export default function Chat() {
 
   const load = useCallback(async () => {
     if (!conversationId) return;
+    clearTimeout(reloadTimer.current);
+    reloadTimer.current = undefined;
+    const version = ++loadVersion.current;
     try {
-      setData(await api.get<ConvData>(`/api/conversations/${conversationId}`));
+      const next = await api.get<ConvData>(`/api/conversations/${conversationId}`);
+      if (version !== loadVersion.current) return;
+      setData(next);
     } catch (err) {
+      if (version !== loadVersion.current) return;
       if (err instanceof ApiError && err.status === 404) setMissing(true);
       else toast(err instanceof Error ? err.message : String(err), "danger");
     } finally {
-      setLoading(false);
+      if (version === loadVersion.current) setLoading(false);
     }
   }, [conversationId]);
+
+  const scheduleLoad = useCallback(() => {
+    if (reloadTimer.current) return;
+    reloadTimer.current = setTimeout(() => {
+      reloadTimer.current = undefined;
+      void load();
+    }, 100);
+  }, [load]);
+
+  useEffect(
+    () => () => {
+      clearTimeout(reloadTimer.current);
+      reloadTimer.current = undefined;
+    },
+    [conversationId],
+  );
 
   useEffect(() => {
     setModel(data?.conversation.model ?? null);
@@ -84,6 +108,7 @@ export default function Chat() {
   };
 
   useEffect(() => {
+    loadVersion.current++;
     setData(null);
     setMissing(false);
     setLoading(!!conversationId);
@@ -98,10 +123,7 @@ export default function Chat() {
       setData((cur) => {
         if (!cur) return cur;
         const idx = cur.runs.findIndex((r) => r.id === ev.runId);
-        if (idx < 0) {
-          void load();
-          return cur;
-        }
+        if (idx < 0) return cur;
         const run = cur.runs[idx]!;
         const lastSeq = run.events.at(-1)?.seq ?? -1;
         if (ev.seq <= lastSeq) return cur;
@@ -112,20 +134,23 @@ export default function Chat() {
         runs[idx] = next;
         return { ...cur, runs };
       });
+      // Keep the updater pure. The event may arrive before the first conversation load, or for a
+      // run created on another tab; either case needs a coalesced refresh outside setState.
+      if (!data?.runs.some((r) => r.id === ev.runId)) scheduleLoad();
       if (ev.type === "approval.requested" || ev.type === "approval.resolved" || (ev.type === "run.status" && ["done", "failed", "cancelled"].includes(ev.status))) {
-        void load();
+        scheduleLoad();
       }
     },
-    [conversationId, load],
+    [conversationId, data?.runs, scheduleLoad],
   );
   useAgentEvents(onEvent);
   // Diagnosis reports and supervisor questions for this conversation arrive as hub notifications.
   const onHub = useCallback(
     (type: string, payload: unknown) => {
       const conv = (payload as { conversationId?: string | null } | null)?.conversationId;
-      if (type === "incident" && conversationId && (conv === conversationId || conv === undefined)) void load();
+      if (type === "incident" && conversationId && (conv === conversationId || conv === undefined)) scheduleLoad();
     },
-    [conversationId, load],
+    [conversationId, scheduleLoad],
   );
   useHubEvents(onHub);
 
@@ -461,4 +486,3 @@ function greeting(now = new Date()): string {
   const h = now.getHours();
   return h < 5 ? "夜深了" : h < 11 ? "早上好" : h < 13 ? "中午好" : h < 18 ? "下午好" : "晚上好";
 }
-

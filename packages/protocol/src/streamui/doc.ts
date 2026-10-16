@@ -311,7 +311,9 @@ function pushChild(d: UIDoc, parent: string | null, child: UIChild): void {
     note(d, `嵌套超过 ${UI_LIMITS.depth} 层，已忽略`);
     return;
   }
-  if (list.some((c) => c === child || (typeof c === "object" && typeof child === "object" && c.text === child.text))) return;
+  // Node ids are identity-bearing and must not be attached twice. Literal text is not identity:
+  // two equal strings are still two legitimate children (for example two separator dots).
+  if (list.some((c) => c === child)) return;
   if (list.length >= UI_LIMITS.children) {
     note(d, `一个组件最多 ${UI_LIMITS.children} 个子组件，多余的已忽略`);
     return;
@@ -647,9 +649,9 @@ function applyOp(d: UIDoc, raw: unknown, revising = false): Apply {
  * Applies one op. A half-written op is expected to be missing things, so its complaints are collected
  * and dropped rather than shown as the block's problems.
  */
-function applyEntry(d: UIDoc, op: unknown, revising: boolean): Apply {
+function applyEntry(d: UIDoc, op: unknown, revising: boolean, updatePartial = true): Apply {
   const partial = isPartialOp(op);
-  d.partial = partial;
+  if (updatePartial) d.partial = partial;
   const kept = d.issues;
   if (partial) d.issues = [];
   const result = applyOp(d, op, revising);
@@ -688,7 +690,7 @@ function retryPending(d: UIDoc): boolean {
   const left: unknown[] = [];
   let applied = false;
   for (const op of d.retry) {
-    if (applyEntry(d, op, false) === "retry") left.push(op);
+    if (applyEntry(d, op, false, false) === "retry") left.push(op);
     else applied = true;
   }
   d.retry = left.slice(0, 64);

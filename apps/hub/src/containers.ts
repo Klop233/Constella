@@ -341,15 +341,21 @@ export class Containers {
       Labels: { [LABEL]: "host-exec" },
       HostConfig: { PidMode: "host", Privileged: true, AutoRemove: false, NetworkMode: "host" },
     });
+    let timer: NodeJS.Timeout | undefined;
     try {
       await container.start();
       const result = await Promise.race([
         container.wait(),
-        new Promise<never>((_, reject) => setTimeout(() => reject(new Error("命令超时")), timeoutMs)),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new Error("命令超时")), timeoutMs);
+          timer.unref?.();
+        }),
       ]);
+      clearTimeout(timer);
       const logs = (await container.logs({ stdout: true, stderr: true, follow: false })) as unknown as Buffer;
       return { exitCode: result.StatusCode, output: demux(logs).slice(-20000) };
     } finally {
+      clearTimeout(timer);
       await container.remove({ force: true }).catch(() => {});
     }
   }

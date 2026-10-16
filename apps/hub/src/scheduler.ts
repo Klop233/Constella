@@ -84,18 +84,22 @@ export class Scheduler {
 
   update(id: string, patch: Partial<ScheduleInput>, actor: string): ScheduleRow {
     const cur = this.get(id);
-    if (cur.kind === "system" && (patch.cron || patch.payload || patch.kind)) throw new Error("系统任务只能启用或停用");
+    const p = ScheduleInput.partial().parse(patch);
+    if (cur.kind === "system" && (p.cron || p.payload || p.kind)) throw new Error("系统任务只能启用或停用");
+    if (p.kind !== undefined && p.kind !== cur.kind) throw new Error("任务类型不能修改");
     const merged = {
-      name: patch.name ?? cur.name,
-      cron: patch.cron ?? cur.cron,
-      tz: patch.tz ?? cur.tz,
-      enabled: patch.enabled ?? !!cur.enabled,
-      payload: patch.payload ?? JSON.parse(cur.payload),
+      name: p.name ?? cur.name,
+      cron: p.cron ?? cur.cron,
+      tz: p.tz ?? cur.tz,
+      enabled: p.enabled ?? !!cur.enabled,
+      payload: p.payload ?? JSON.parse(cur.payload),
+      agentId: p.agentId !== undefined ? p.agentId : cur.agent_id,
     };
+    if (cur.kind === "agent_prompt" && !merged.agentId) throw new Error("agent 任务需要指定 agent");
     validateCron(merged.cron, merged.tz);
     this.#db
-      .prepare("UPDATE schedules SET name = ?, cron = ?, tz = ?, enabled = ?, payload = ? WHERE id = ?")
-      .run(merged.name, merged.cron, merged.tz, merged.enabled ? 1 : 0, JSON.stringify(merged.payload), id);
+      .prepare("UPDATE schedules SET name = ?, cron = ?, tz = ?, agent_id = ?, enabled = ?, payload = ? WHERE id = ?")
+      .run(merged.name, merged.cron, merged.tz, merged.agentId ?? null, merged.enabled ? 1 : 0, JSON.stringify(merged.payload), id);
     audit(this.#db, actor, "schedule.update", {
       id,
       name: merged.name,

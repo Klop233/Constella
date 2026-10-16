@@ -775,7 +775,9 @@ export class Desktops {
     const l = leaseOf(pick);
     if (l.holder === "human") await this.waitForHandback(pick.id);
     else if (l.holder === "agent" && l.runId !== runId) throw new DesktopError(`${this.describe(pick)}正被另一个任务使用，请稍后再试或用 instance_use 换一个`, "busy");
-    if (this.lease(pick.id).holder === "none") this.#setLease(pick.id, { holder: "agent", agentId, runId, since: nowIso() });
+    const afterWait = this.lease(pick.id);
+    if (afterWait.holder === "none") this.#setLease(pick.id, { holder: "agent", agentId, runId, since: nowIso() });
+    else if (afterWait.holder !== "agent" || afterWait.runId !== runId) throw new DesktopError(`${this.describe(pick)}正被其他任务或主人使用，请稍后再试或用 instance_use 换一个`, "busy");
     cur[family] = pick.id;
     this.#current.set(runId, cur);
     return this.#ready(pick.id);
@@ -1025,20 +1027,24 @@ export class Desktops {
   }
 
   startReaper(): void {
-    this.#timer = setInterval(() => void this.reap(), 60_000);
+    this.#timer = setInterval(() => void this.reap().catch((err) => console.error("desktop reaper failed", err)), 60_000);
     this.#timer.unref();
   }
 
   /** Pause or stop instances nobody holds, watches or has used for their idle time. */
   async reap(now = Date.now()): Promise<void> {
     for (const r of this.rows()) {
-      const { action, minutes } = this.idle(r);
-      if (action === "none" || minutes <= 0) continue;
-      if ((JSON.parse(r.lease) as DesktopLease).holder !== "none" || this.#viewers.get(r.id)) continue;
-      if (Date.parse(r.last_used_at) > now - minutes * 60_000) continue;
-      const state = await this.state(r.id);
-      if (action === "pause" && state === "running") await this.pause(r.id).catch((err) => console.error(`pause ${r.id}`, err));
-      if (action === "stop" && (state === "running" || state === "paused")) await this.stop(r.id).catch((err) => console.error(`stop ${r.id}`, err));
+      try {
+        const { action, minutes } = this.idle(r);
+        if (action === "none" || minutes <= 0) continue;
+        if ((JSON.parse(r.lease) as DesktopLease).holder !== "none" || this.#viewers.get(r.id)) continue;
+        if (Date.parse(r.last_used_at) > now - minutes * 60_000) continue;
+        const state = await this.state(r.id).catch(() => "missing");
+        if (action === "pause" && state === "running") await this.pause(r.id).catch((err) => console.error(`pause ${r.id}`, err));
+        if (action === "stop" && (state === "running" || state === "paused")) await this.stop(r.id).catch((err) => console.error(`stop ${r.id}`, err));
+      } catch (err) {
+        console.error(`reap ${r.id}`, err);
+      }
     }
   }
 

@@ -394,12 +394,40 @@ export function registerRoutes(hub: Hub): void {
     if (!conv) return { ok: true };
     const active = runs.activeRun(conv.id);
     if (active) await runs.interrupt(active.id, actor(req));
-    db.prepare("DELETE FROM events WHERE run_id IN (SELECT id FROM runs WHERE conversation_id = ?)").run(conv.id);
-    db.prepare("DELETE FROM approvals WHERE run_id IN (SELECT id FROM runs WHERE conversation_id = ?)").run(conv.id);
-    db.prepare("DELETE FROM runs WHERE conversation_id = ?").run(conv.id);
-    db.prepare("DELETE FROM widget_state WHERE conversation_id = ?").run(conv.id);
-    db.prepare("DELETE FROM widget_issues WHERE conversation_id = ?").run(conv.id);
-    db.prepare("DELETE FROM conversations WHERE id = ?").run(conv.id);
+    const runIds = (db.prepare("SELECT id FROM runs WHERE conversation_id = ?").all(conv.id) as { id: string }[]).map((r) => r.id);
+    db.exec("BEGIN");
+    try {
+      db.prepare("DELETE FROM events WHERE run_id IN (SELECT id FROM runs WHERE conversation_id = ?)").run(conv.id);
+      db.prepare("DELETE FROM approvals WHERE run_id IN (SELECT id FROM runs WHERE conversation_id = ?)").run(conv.id);
+      db.prepare("DELETE FROM ui_blocks WHERE run_id IN (SELECT id FROM runs WHERE conversation_id = ?)").run(conv.id);
+      db.prepare("DELETE FROM widget_issues WHERE conversation_id = ? OR run_id IN (SELECT id FROM runs WHERE conversation_id = ?)").run(conv.id, conv.id);
+      db.prepare("DELETE FROM resumes WHERE conversation_id = ? OR run_id IN (SELECT id FROM runs WHERE conversation_id = ?)").run(conv.id, conv.id);
+      db.prepare("DELETE FROM incidents WHERE conversation_id = ? OR run_id IN (SELECT id FROM runs WHERE conversation_id = ?)").run(conv.id, conv.id);
+      if (runIds.length) {
+        const requests = db.prepare("SELECT id, data FROM credential_requests").all() as { id: string; data: string }[];
+        const requestIds = requests
+          .filter((r) => {
+            try {
+              return runIds.includes((JSON.parse(r.data) as { runId?: unknown }).runId as string);
+            } catch {
+              return false;
+            }
+          })
+          .map((r) => r.id);
+        if (requestIds.length) {
+          const marks = requestIds.map(() => "?").join(",");
+          db.prepare(`DELETE FROM credential_access_log WHERE request_id IN (${marks})`).run(...requestIds);
+          db.prepare(`DELETE FROM credential_requests WHERE id IN (${marks})`).run(...requestIds);
+        }
+      }
+      db.prepare("DELETE FROM runs WHERE conversation_id = ?").run(conv.id);
+      db.prepare("DELETE FROM widget_state WHERE conversation_id = ?").run(conv.id);
+      db.prepare("DELETE FROM conversations WHERE id = ?").run(conv.id);
+      db.exec("COMMIT");
+    } catch (err) {
+      db.exec("ROLLBACK");
+      throw err;
+    }
     return { ok: true };
   });
   app.post("/api/conversations/:id/messages", async (req) => {

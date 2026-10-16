@@ -166,12 +166,21 @@ export class HostCapabilities {
       Labels: PROBE_LABEL,
       HostConfig: { NetworkMode: "none", AutoRemove: false, ...host },
     });
+    let timer: NodeJS.Timeout | undefined;
     try {
       await c.start();
-      await Promise.race([c.wait(), new Promise((_, reject) => setTimeout(() => reject(new Error("检测超时")), 30_000))]);
+      await Promise.race([
+        c.wait(),
+        new Promise((_, reject) => {
+          timer = setTimeout(() => reject(new Error("检测超时")), 30_000);
+          timer.unref?.();
+        }),
+      ]);
+      clearTimeout(timer);
       const logs = (await c.logs({ stdout: true, stderr: true, follow: false })) as unknown as Buffer;
       return logs.toString("latin1");
     } finally {
+      clearTimeout(timer);
       await c.remove({ force: true }).catch(() => {});
     }
   }

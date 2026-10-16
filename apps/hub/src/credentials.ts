@@ -164,17 +164,25 @@ export class Credentials {
     // Claim synchronously before any await: concurrent reads cannot both fetch a secret.
     const changed = this.#d.db.prepare("UPDATE credential_requests SET status = 'consumed' WHERE id = ? AND status = 'approved' AND expires_at > ?").run(id,nowIso());
     if (!changed.changes) throw new Error("凭据授权未批准、已使用或已过期");
+    let values: Record<string, string>;
     try {
-      const values = await this.#provider.read(this.#connection(r.connectionId),r.itemId,r.fields);
-      // Keep the released values in memory only: enough to scrub the tool result on its way into
-      // the event log, without leaving vault secrets decryptable in the database forever.
-      this.#remember(Object.values(values));
-      this.#active(agentId,runId);
-      if (Date.now() >= Date.parse(r.grantExpiresAt ?? r.expiresAt) || !this.#provider.unlocked(r.connectionId) || this.#get(id).status !== "consumed") throw new Error("凭据授权已失效");
-      this.#log("read",agentId,id,{ item: r.itemName, fields: r.fields }); return values;
-    } catch { this.#log("read.failed",agentId,id,{ item: r.itemName, fields: r.fields }); throw new Error("凭据读取失败；该次授权已使用，请重新申请"); }
+      values = await this.#provider.read(this.#connection(r.connectionId),r.itemId,r.fields);
+    } catch {
+      this.#log("read.failed",agentId,id,{ item: r.itemName, fields: r.fields });
+      throw new Error("凭据读取失败；该次授权已使用，请重新申请");
+    }
+    // Keep the released values in memory only: enough to scrub the tool result on its way into
+    // the event log, without leaving vault secrets decryptable in the database forever.
+    this.#remember(Object.values(values));
+    this.#active(agentId,runId);
+    if (Date.now() >= Date.parse(r.grantExpiresAt ?? r.expiresAt) || !this.#provider.unlocked(r.connectionId) || this.#get(id).status !== "consumed") {
+      this.#log("read.failed",agentId,id,{ item: r.itemName, fields: r.fields });
+      throw new Error("凭据授权已失效");
+    }
+    this.#log("read",agentId,id,{ item: r.itemName, fields: r.fields }); return values;
   }
   secretValues(): string[] { return [...this.#redaction]; }
+  revision(): number { return this.#redaction.length + this.#redactionVersion; }
   /** Values the owner typed in for an agent: not from the vault, but scrubbed from events and notes the same way. */
   remember(values: string[]): void { this.#remember(values); }
   /** Unlocked connections a typed login can be saved into. */
@@ -217,7 +225,8 @@ export class Credentials {
       await new Promise((resolve) => setTimeout(resolve, 1000));
     }
   }
-  #remember(values: string[]) { for (const v of values) if (v) { this.#redaction = this.#redaction.filter(x => x !== v); this.#redaction.push(v); } if (this.#redaction.length > REDACTION_MAX) this.#redaction.splice(0, this.#redaction.length - REDACTION_MAX); }
+  #redactionVersion = 0;
+  #remember(values: string[]) { for (const v of values) if (v) { this.#redaction = this.#redaction.filter(x => x !== v); this.#redaction.push(v); this.#redactionVersion++; } if (this.#redaction.length > REDACTION_MAX) this.#redaction.splice(0, this.#redaction.length - REDACTION_MAX); }
   #update(r: CredentialRequest, status: CredentialRequest["status"]) { this.#d.db.prepare("UPDATE credential_requests SET status = ? WHERE id = ?").run(status,r.id); }
   #expire() { this.#d.db.prepare("UPDATE credential_requests SET status = 'expired' WHERE status IN ('pending','approved') AND expires_at <= ?").run(nowIso()); }
   /** A run ended: its own grants die with it; a review task that ended undecided leaves the request to the owner. */

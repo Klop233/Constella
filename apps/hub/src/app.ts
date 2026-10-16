@@ -136,12 +136,27 @@ export class RunnerGateway {
   waitFor(agentId: string, timeoutMs: number): Promise<void> {
     if (this.connected(agentId)) return Promise.resolve();
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error("agent 容器启动超时")), timeoutMs);
-      const list = this.#waiters.get(agentId) ?? [];
-      list.push(() => {
+      let settled = false;
+      const waiter = () => {
+        if (settled) return;
+        settled = true;
         clearTimeout(timer);
         resolve();
-      });
+      };
+      const timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        const current = this.#waiters.get(agentId);
+        if (current) {
+          const remaining = current.filter((w) => w !== waiter);
+          if (remaining.length) this.#waiters.set(agentId, remaining);
+          else this.#waiters.delete(agentId);
+        }
+        reject(new Error("agent 容器启动超时"));
+      }, timeoutMs);
+      timer.unref?.();
+      const list = this.#waiters.get(agentId) ?? [];
+      list.push(waiter);
       this.#waiters.set(agentId, list);
     });
   }
@@ -405,7 +420,14 @@ export async function createHub(opts: { dbPath?: string; webDist?: string; logge
   const notifier = new Notifier(db, events, config.vapid, () => settings.telegram(), () => settings.isQuiet());
   let agents!: Agents;
   let credentials!: Credentials;
-  const allSecretValues = () => [config.newapi.apiKey, ...models.keys(), ...(credentials ? credentials.secretValues() : []), ...(agents ? agents.list(true).flatMap((a) => agents.secretValues(a.id)) : [])];
+  let secretCache: { revision: number; values: string[] } | undefined;
+  const allSecretValues = () => {
+    const revision = secrets.revision() + (credentials?.revision() ?? 0);
+    if (secretCache?.revision === revision) return secretCache.values;
+    const values = [config.newapi.apiKey, ...models.keys(), ...(credentials ? credentials.secretValues() : []), ...(agents ? agents.list(true).flatMap((a) => agents.secretValues(a.id)) : [])];
+    secretCache = { revision, values };
+    return values;
+  };
   events.secretValues = allSecretValues;
   const knowledge = new Knowledge(db, events, allSecretValues);
   knowledge.ensureShared();

@@ -22,19 +22,26 @@ function setStatus(s: typeof status) {
 export function startLive(qc: QueryClient): () => void {
   let es: EventSource | null = null;
   let retry: number | undefined;
+  let stopped = false;
 
   const connect = () => {
+    if (stopped || es) return;
     setStatus("connecting");
-    es = new EventSource("/api/stream");
-    es.addEventListener("open", () => setStatus("open"));
-    es.addEventListener("error", () => {
+    const current = new EventSource("/api/stream");
+    es = current;
+    current.addEventListener("open", () => {
+      if (!stopped && es === current) setStatus("open");
+    });
+    current.addEventListener("error", () => {
+      if (stopped || es !== current) return;
       setStatus("closed");
-      if (es?.readyState === EventSource.CLOSED) {
+      if (current.readyState === EventSource.CLOSED) {
         es = null;
         retry = window.setTimeout(connect, 3000);
       }
     });
-    es.addEventListener("agent", (e) => {
+    current.addEventListener("agent", (e) => {
+      if (stopped || es !== current) return;
       const { conversationId, event } = JSON.parse((e as MessageEvent).data) as { conversationId: string; event: AgentEvent };
       for (const l of agentListeners) l(conversationId, event);
       if (event.type === "run.status" || event.type === "approval.requested" || event.type === "approval.resolved") {
@@ -44,7 +51,8 @@ export function startLive(qc: QueryClient): () => void {
         void qc.invalidateQueries({ queryKey: ["approvals"] });
       }
     });
-    es.addEventListener("hub", (e) => {
+    current.addEventListener("hub", (e) => {
+      if (stopped || es !== current) return;
       const { type, data } = JSON.parse((e as MessageEvent).data) as { type: string; data: unknown };
       for (const l of hubListeners) l(type, data);
       const keys: Record<string, string[][]> = {
@@ -64,16 +72,18 @@ export function startLive(qc: QueryClient): () => void {
   };
   connect();
   const onVisible = () => {
-    if (document.visibilityState === "visible" && !es) {
+    if (!stopped && document.visibilityState === "visible" && !es) {
       window.clearTimeout(retry);
       connect();
     }
   };
   document.addEventListener("visibilitychange", onVisible);
   return () => {
+    stopped = true;
     document.removeEventListener("visibilitychange", onVisible);
     window.clearTimeout(retry);
     es?.close();
+    es = null;
   };
 }
 

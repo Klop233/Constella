@@ -15,6 +15,17 @@ import type { MessageUi } from "../lib/streamui/docs";
 export { WidgetHostProvider } from "./widgetHost";
 export type { WidgetHost, WidgetIssue } from "./widgetHost";
 
+function sameMessageUi(a: MessageUi | undefined, b: MessageUi | undefined): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  const docKeys = Object.keys(a.docs);
+  if (docKeys.length !== Object.keys(b.docs).length || docKeys.some((key) => a.docs[key] !== b.docs[key])) return false;
+  const statusKeys = Object.keys(a.status);
+  if (statusKeys.length !== Object.keys(b.status).length || statusKeys.some((key) => a.status[key] !== b.status[key])) return false;
+  const issueKeys = Object.keys(a.issues);
+  return issueKeys.length === Object.keys(b.issues).length && issueKeys.every((key) => a.issues[key] === b.issues[key]);
+}
+
 /** The resolved site theme, following changes to the attributes on <html>. */
 function useTheme(): WidgetTheme {
   const [theme, setTheme] = useState(themeSnapshot);
@@ -71,7 +82,7 @@ export const RichMessage = memo(function RichMessage({ text, streaming, keyBase,
       })}
     </div>
   );
-});
+}, (a, b) => a.text === b.text && a.streaming === b.streaming && a.keyBase === b.keyBase && a.runId === b.runId && a.className === b.className && a.noHeadingEmoji === b.noHeadingEmoji && sameMessageUi(a.ui, b.ui));
 
 const MAX_INLINE_HEIGHT = 900;
 const READY_TIMEOUT_MS = 8000;
@@ -296,7 +307,10 @@ export function Widget({ title, source, stateKey, runId, interrupted }: { title:
     setSaving(true);
     try {
       const chartInline = usesChart(source) ? await fetch(chartScriptUrl()).then((r) => r.text()) : undefined;
-      const html = buildSrcdoc({ source, theme: themeSnapshot(), state: host.states?.[stateKey] ?? {}, fill: true, chartInline }).replace(/<meta http-equiv="Content-Security-Policy"[^>]*>\n?/, "");
+      // Keep the same no-network CSP in the saved artifact as in the inline widget. The opaque
+      // sandbox protects the parent page, while CSP also prevents the artifact from exfiltrating
+      // the saved widget state through fetch/forms.
+      const html = buildSrcdoc({ source, theme: themeSnapshot(), state: host.states?.[stateKey] ?? {}, fill: true, chartInline });
       const a = await api.post<{ id: string; version: number }>("/api/artifacts", { conversationId: host.conversationId, runId, title: label, html });
       toast("已保存到成果");
       openArtifact(a.id, a.version);
@@ -333,5 +347,3 @@ export function Widget({ title, source, stateKey, runId, interrupted }: { title:
     </div>
   );
 }
-
-

@@ -160,6 +160,12 @@ function __genui(post, listen) {
     } finally {
       rendering = false;
     }
+    // A setter can run while the program is being rendered (for example from a component
+    // expansion). Keep that update for one follow-up render instead of leaving pending stuck.
+    if (pending) {
+      pending = false;
+      schedule();
+    }
     for (const run of effects.splice(0)) try { run(); } catch (e) { post({ type: "error", phase: "effect", message: (e && e.message) || String(e) }); }
   }
   function schedule() {

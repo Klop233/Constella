@@ -13,7 +13,7 @@ const { openDb } = await import("../src/db.ts");
 const { EventStore } = await import("../src/events.ts");
 const { Desktops, DesktopError, boundIds, clearStaleLocks } = await import("../src/desktops.ts");
 const { HostCapabilities } = await import("../src/hostcaps.ts");
-const { registerMcp } = await import("../src/mcp.ts");
+const { registerMcp, isHostReadonly } = await import("../src/mcp.ts");
 const { config } = await import("../src/config.ts");
 
 type Db = ReturnType<typeof openDb>;
@@ -414,6 +414,15 @@ describe("instance tools over MCP", () => {
       await client.close();
       await app.close();
     }
+  });
+});
+
+describe("host command approval classification", () => {
+  it("does not treat env or find as safe shells", () => {
+    expect(isHostReadonly("ls -la /srv/constella")).toBe(true);
+    expect(isHostReadonly("env x=1 rm -rf /srv/constella/shared")).toBe(false);
+    expect(isHostReadonly("find /srv/constella -delete")).toBe(false);
+    expect(isHostReadonly("find /workspace -exec rm -rf {} +")).toBe(false);
   });
 });
 

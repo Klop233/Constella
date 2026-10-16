@@ -168,6 +168,9 @@ export class RunManager {
   #d: RunDeps & { ui: UiStreams };
   #finishedHooks: FinishedHook[] = [];
   #hubApprovals = new Map<string, HubApproval>();
+  /** Steers received while a queued run is still waiting for its runner to come up. */
+  #queuedSteers = new Map<string, { text: string; images?: string[] }[]>();
+  #interruptTimers = new Map<string, NodeJS.Timeout>();
   /** Runs whose continuation finish() already arranged; the cut-off / failure paths leave them alone. */
   #continued = new Set<string>();
   #timer: NodeJS.Timeout | null = null;
@@ -254,6 +257,14 @@ export class RunManager {
       return { conversationId: conv.id, runId: active.id, steered: true };
     }
     if (active) {
+      if (active.status === "queued") {
+        const steer = { text: input.text, ...(input.images?.length ? { images: input.images } : {}) };
+        const pending = this.#queuedSteers.get(active.id) ?? [];
+        pending.push(steer);
+        this.#queuedSteers.set(active.id, pending);
+        this.#append(active, { type: "message.completed", runId: active.id, messageId: newId("um"), text: `［追加指示］${input.text}` });
+        return { conversationId: conv.id, runId: active.id, steered: true };
+      }
       // The agent is waiting on a question: what the owner types is their answer.
       const question = this.#waitedDecision(active.id);
       if (!question) throw new Error("该对话正在等待审批，请先处理审批");
@@ -312,6 +323,11 @@ export class RunManager {
         ...(target ? { model: target.model, provider: target.provider } : {}),
       });
       if (!ok) throw new Error("runner not connected");
+      const queued = this.#queuedSteers.get(run.id);
+      this.#queuedSteers.delete(run.id);
+      for (const steer of queued ?? []) {
+        this.#d.sendToRunner(input.agentId, { t: "steer", runId: run.id, ...steer });
+      }
     };
     void start().catch((err) => this.#startFailed(run, errMessage(err), start));
     return { conversationId: conv.id, runId: run.id, steered: false };
@@ -356,6 +372,12 @@ export class RunManager {
   /** End a run. Returns false when it had already ended. `notify: false` when the caller reports the failure itself. */
   finish(runId: string, status: "done" | "failed" | "cancelled", error?: string, opts: { notify?: boolean } = {}): boolean {
     if (!this.transition(runId, status, error)) return false;
+    this.#queuedSteers.delete(runId);
+    const interruptTimer = this.#interruptTimers.get(runId);
+    if (interruptTimer) {
+      clearTimeout(interruptTimer);
+      this.#interruptTimers.delete(runId);
+    }
     // A reply that was cut off mid-block still closes what it had built, so the block shows what it
     // managed to render instead of hanging on a spinner.
     this.#d.ui.finishRun(runId);
@@ -440,7 +462,7 @@ export class RunManager {
       ).run(ev.approvalId, run.id, agentId, ev.kind, ev.summary, ev.detail ?? null, nowIso());
       const { approve, why } = decideApproval(this.#d.permission?.(ev.kind) ?? "ask", ev.kind, ev.summary);
       if (approve) {
-        void this.resolveApproval(ev.approvalId, "approve", "policy", "policy");
+        void this.resolveApproval(ev.approvalId, "approve", "policy", "policy").catch((err) => console.error("policy approval failed", ev.approvalId, err));
         return;
       }
       this.transition(run.id, "waiting_approval");
@@ -809,7 +831,7 @@ export class RunManager {
     const decided = new Promise<boolean>((resolve) => this.#hubApprovals.set(approvalId, { resolve: (r) => resolve(r.approved), runId }));
     const { approve, why } = opts.ownerOnly ? { approve: false, why: null } : decideApproval(this.#d.permission?.(kind) ?? "ask", kind, summary);
     if (approve) {
-      void this.resolveApproval(approvalId, "approve", "policy", "policy");
+      void this.resolveApproval(approvalId, "approve", "policy", "policy").catch((err) => console.error("policy approval failed", approvalId, err));
       return decided;
     }
     this.transition(runId, "waiting_approval");
@@ -826,10 +848,13 @@ export class RunManager {
       return;
     }
     // If the engine doesn't confirm in time, cancel on our side.
-    setTimeout(() => {
+    const timer = setTimeout(() => {
+      this.#interruptTimers.delete(runId);
       const r = this.get(runId);
       if (r && !isTerminal(r.status)) this.finish(runId, "cancelled", "停止超时，已强制结束");
-    }, 20_000).unref();
+    }, 20_000);
+    timer.unref();
+    this.#interruptTimers.set(runId, timer);
   }
 
   setFeedback(runId: string, feedback: 1 | -1): RunRow | undefined {

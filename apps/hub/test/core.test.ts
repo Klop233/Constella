@@ -543,11 +543,12 @@ describe("trusted entry", () => {
     app.get("/t", async (req) => ({ trusted: isTrusted(req) }));
     await app.listen({ host: "127.0.0.1", port: 0 });
     const main = (app.server.address() as { port: number }).port;
-    const port = main + 1;
-    await listenTrusted(app, "127.0.0.1", port);
+    const trusted = await listenTrusted(app, "127.0.0.1", 0);
+    const port = (trusted.address() as { port: number }).port;
     const get = async (p: number) => ((await (await fetch(`http://127.0.0.1:${p}/t`)).json()) as { trusted: boolean }).trusted;
     expect(await get(main)).toBe(false);
     expect(await get(port)).toBe(true);
+    await new Promise<void>((resolve) => trusted.close(() => resolve()));
     await app.close();
   });
 });

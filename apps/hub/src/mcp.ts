@@ -17,6 +17,7 @@ import type { Knowledge } from "./knowledge.ts";
 import type { Notifier } from "./notify.ts";
 import { HTML_DEFAULT_LIMIT, readPageHtml } from "./pagehtml.ts";
 import type { Recovery } from "./recovery.ts";
+import { destructiveReason } from "./safety.ts";
 import { redact } from "./secrets.ts";
 import type { RunManager, RunRow } from "./runs.ts";
 import type { Scheduler } from "./scheduler.ts";
@@ -55,7 +56,13 @@ const ASK_WAIT_MS = 14 * 60_000;
 
 /** Read-only host commands that skip approval (single command, no shell operators). */
 const HOST_READONLY =
-  /^(ls|cat|head|tail|df|du|free|uptime|uname|whoami|hostname|ps|top -bn1|ss -[a-z]+|ip (a|addr|route)|docker (ps|images|logs|inspect|stats --no-stream)|systemctl (status|list-units|is-active)|journalctl|lsblk|date|env|which|stat|wc|grep|find)\b[^;&|`$<>]*$/;
+  /^(ls|cat|head|tail|df|du|free|uptime|uname|whoami|hostname|ps|top -bn1|ss -[a-z]+|ip (a|addr|route)|docker (ps|images|logs|inspect|stats --no-stream)|systemctl (status|list-units|is-active)|journalctl|lsblk|date|which|stat|wc|grep)\b[^;&|`$<>]*$/;
+
+/** Only commands with a fixed, read-only shape may skip the host approval gate. */
+export function isHostReadonly(command: string): boolean {
+  const trimmed = command.trim();
+  return HOST_READONLY.test(trimmed) && destructiveReason(trimmed, true) === null;
+}
 
 /** The run a tool call belongs to: the agent's most recent active run. */
 function currentRun(db: Db, agentId: string): RunRow | undefined {
@@ -977,7 +984,7 @@ function buildServer(agent: AgentRow, d: McpDeps): McpServer {
       },
       guard(async ({ command, reason }) => {
         const r = run();
-        const readonly = HOST_READONLY.test(command.trim());
+        const readonly = isHostReadonly(command);
         if (!readonly) {
           const ok = await d.runs.requestHubApproval(r.id, "host_access", `宿主机命令：${command.slice(0, 300)}`, reason);
           if (!ok) return fail("用户拒绝执行该命令");

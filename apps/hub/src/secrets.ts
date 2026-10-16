@@ -30,6 +30,7 @@ export class SecretBox {
 export class SecretStore {
   #db: Db;
   #box: SecretBox;
+  #revision = 0;
 
   constructor(db: Db, box: SecretBox) {
     this.#db = db;
@@ -47,10 +48,17 @@ export class SecretStore {
     this.#db
       .prepare("INSERT INTO secrets (scope, name, value) VALUES (?, ?, ?) ON CONFLICT(scope, name) DO UPDATE SET value = excluded.value")
       .run(scope, name, this.#box.seal(value));
+    this.#revision++;
   }
 
   delete(scope: string, name: string): void {
     this.#db.prepare("DELETE FROM secrets WHERE scope = ? AND name = ?").run(scope, name);
+    this.#revision++;
+  }
+
+  /** Changes whenever a stored secret is added, replaced, or removed. */
+  revision(): number {
+    return this.#revision;
   }
 
   names(scope: string): string[] {

@@ -1,6 +1,6 @@
 import { emptyDoc, safeUrl, type UIDoc, type UIStatus } from "@constella/protocol";
 import { CircleX } from "lucide-react";
-import { memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { memo, useCallback, useContext, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { buildDocFromSource } from "../../lib/streamui/docs";
 import { UiBlockRuntime } from "../../lib/streamui/runtime";
 import type { Ctx } from "../genui/components";
@@ -44,8 +44,11 @@ function StreamUiBlockInner({ title, source, mode, stateKey, runId, doc: docFrom
   noteRef.current = (message) => setNotes((prev) => (prev.includes(message) ? prev : [...prev, message].slice(-5)));
 
   // No ops for this block: read the reply itself, which is the durable copy of what the model wrote.
-  const fromSource = useMemo(() => (docFromEvents ? null : buildDocFromSource(source)), [docFromEvents, source, reload]);
-  const current = docFromEvents ?? fromSource ?? emptyDoc();
+  const deferredSource = useDeferredValue(source);
+  const rebuildFromSource = reload > 0 || !docFromEvents;
+  const sourceForBuild = streaming ? deferredSource : source;
+  const fromSource = useMemo(() => (rebuildFromSource ? buildDocFromSource(sourceForBuild) : null), [rebuildFromSource, sourceForBuild]);
+  const current = rebuildFromSource ? fromSource ?? emptyDoc() : docFromEvents ?? emptyDoc();
 
   const runtimeRef = useRef<UiBlockRuntime | null>(null);
   runtimeRef.current ??= new UiBlockRuntime({

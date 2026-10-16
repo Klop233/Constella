@@ -383,6 +383,22 @@ describe("reduceOps: stream boundaries", () => {
     inSteps.push({ op: "update", id: "t", props: { text: "B" } });
     expect(inSteps.doc.nodes["t"]!.props.text).toBe("B");
   });
+
+  it("keeps the partial marker while retrying an older op, so its final revision is applied", () => {
+    let doc = emptyDoc();
+    // This append cannot land yet and is retried whenever a later op arrives.
+    doc = reduceOps(doc, [{ seq: 1, op: { op: "append", parent: "later", child: { id: "child", type: "Text" } } }]);
+    doc = reduceOps(doc, [{ seq: 2, op: { op: "node", id: "root", type: "Text", text: "半截", partial: true } }]);
+    expect(doc.partial).toBe(true);
+    doc = reduceOps(doc, [{ seq: 2, op: { op: "node", id: "root", type: "Text", text: "完整" } }]);
+    expect(doc.partial).toBe(false);
+    expect(doc.nodes["root"]!.props.text).toBe("完整");
+  });
+
+  it("keeps equal literal text children as separate children", () => {
+    const doc = feeder().push({ op: "node", id: "root", type: "Col", children: [{ type: "Text", text: "·" }, { type: "Text", text: "·" }] });
+    expect(doc.nodes["root"]!.children).toEqual(["root.0", "root.1"]);
+  });
   it("refuses to put a component inside its own descendant", () => {
     const f = feeder();
     f.push({ op: "node", id: "a", type: "Col" });

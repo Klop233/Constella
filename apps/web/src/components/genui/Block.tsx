@@ -47,6 +47,7 @@ const WATCHDOG_MS = 3000;
 const STREAM_COMPILE_MS = 250;
 const SNAPSHOT_MAX = 48 * 1024;
 let srcdoc: string | null = null;
+const EMPTY_SLOTS: unknown[] = [];
 
 export function GenUIBlock({ source, mode, host, onState, reloadKey, eager }: { source: string; mode: BlockMode; host: BlockHost; onState?: (s: BlockState) => void; reloadKey?: number; eager?: boolean }) {
   const streaming = mode === "streaming";
@@ -66,7 +67,7 @@ export function GenUIBlock({ source, mode, host, onState, reloadKey, eager }: { 
   const streamingRef = useRef(streaming);
   streamingRef.current = streaming;
   srcdoc ??= frameSrcdoc();
-  const slots = host.saved === undefined ? undefined : (host.saved?.slots ?? []);
+  const slots = host.saved === undefined ? undefined : (host.saved?.slots ?? EMPTY_SLOTS);
 
   // Start the runtime when the block comes near the viewport (streaming blocks start right away).
   useEffect(() => {
