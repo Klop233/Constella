@@ -26,6 +26,7 @@ import { contextBreakdown } from "./context.ts";
 import { intelligentUiNote } from "./widgets.ts";
 import { loadUiBlocks } from "./streamui.ts";
 import { ScheduleInput } from "./scheduler.ts";
+import { searchConversations } from "./search.ts";
 import { IMPORT_TEXT_MAX } from "./learning.ts";
 import { PROVIDER_APIS } from "./models.ts";
 
@@ -405,6 +406,7 @@ export function registerRoutes(hub: Hub): void {
   });
 
   // ── conversations & runs ─────────────────────────────────
+  app.get("/api/search", async (req) => searchConversations(db, z.object({ q: z.string().max(200).default("") }).parse(req.query).q));
   app.get("/api/agents/:id/conversations", async (req) => {
     const archived = (req.query as { archived?: string }).archived === "1";
     return db

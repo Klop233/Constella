@@ -11,6 +11,8 @@ import { Button, Empty, Header, IconButton, Loading, cx, toast } from "../compon
 import { WidgetHostProvider, type WidgetHost } from "../components/Widget";
 import { api, ApiError, fileToBase64 } from "../lib/api";
 import { useAppearance } from "../lib/appearance";
+import { draftKey, readDraft, writeDraft } from "../lib/drafts";
+import { takeFiles } from "../lib/share";
 import { useAgentEvents, useHubEvents } from "../lib/live";
 import { openInstanceWindow, useInstanceWindow } from "../lib/instanceWindow";
 import type { Agent, AgentEvent, Approval, Conversation, Desktop, Effort, Incident, Run } from "../lib/types";
@@ -52,6 +54,13 @@ export default function Chat() {
   const reloadTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   const agentId = data?.conversation.agent_id ?? newAgentId;
+  // What was typed but not sent survives leaving the page (and the phone killing the app).
+  const draft = draftKey(conversationId, newAgentId);
+  useEffect(() => setText(readDraft(draft)), [draft]);
+  const edit = (value: string) => {
+    setText(value);
+    writeDraft(draft, value);
+  };
   const me = useQuery({ queryKey: ["me"], queryFn: () => api.get<{ name: string }>("/api/me"), staleTime: 300_000 });
   const agent = useQuery({ queryKey: ["agent", agentId], queryFn: () => api.get<Agent>(`/api/agents/${agentId}`), enabled: !!agentId });
 
@@ -182,6 +191,7 @@ export default function Chat() {
         { text: full, images, ...(conversationId ? {} : { model, effort, runTimeoutMinutes: runTimeout }) },
       );
       setText("");
+      writeDraft(draft, "");
       clearFiles();
       stick.current = true;
       if (!conversationId) nav(`/c/${res.conversationId}`, { replace: true });
@@ -279,6 +289,13 @@ export default function Chat() {
     }
   };
 
+  // Files shared from another app (the /share page) land in the composer of the new conversation.
+  useEffect(() => {
+    const shared = takeFiles(newAgentId);
+    if (shared.length) upload(shared);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [newAgentId]);
+
   const a = agent.data;
   const isNew = !conversationId && !loading;
   const toggleArchive = async () => {
@@ -322,7 +339,7 @@ export default function Chat() {
         <div className="flex items-end gap-1 p-1.5 pl-2">
         <textarea
           value={text}
-          onChange={(e) => setText(e.target.value)}
+          onChange={(e) => edit(e.target.value)}
           onPaste={(e) => {
             const pasted = Array.from(e.clipboardData.files);
             if (!pasted.length) return;
@@ -339,7 +356,7 @@ export default function Chat() {
               e.preventDefault();
               const el = e.currentTarget;
               el.setRangeText("\n", el.selectionStart, el.selectionEnd, "end");
-              setText(el.value);
+              edit(el.value);
             } else if (!e.shiftKey && !coarsePointer) {
               e.preventDefault();
               void send();

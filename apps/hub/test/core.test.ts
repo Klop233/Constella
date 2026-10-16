@@ -856,3 +856,33 @@ describe("emoji settings", () => {
     expect(s.emojiNote()).toBe("");
   });
 });
+
+describe("conversation search", () => {
+  it("finds titles, what you wrote and agent replies, one hit per conversation, with % and _ taken literally", async () => {
+    const { searchConversations, snippetOf } = await import("../src/search.ts");
+    const db = openDb(":memory:");
+    db.prepare(
+      `INSERT INTO agents (id, name, emoji, template, persona, model, approval_policy, desktop_policy, token_hash, created_at, updated_at)
+       VALUES ('ag1', '助理', '🤖', 'assistant', 'p', 'm', 'auto', '{"desktopIds":[]}', 'h', 't', 't')`,
+    ).run();
+    const conv = db.prepare("INSERT INTO conversations (id, agent_id, title, created_at, updated_at) VALUES (?, 'ag1', ?, ?, ?)");
+    conv.run("c1", "查机票", "2026-10-01", "2026-10-01");
+    conv.run("c2", "写周报", "2026-10-02", "2026-10-03");
+    conv.run("c3", "折扣 100% 吗", "2026-10-02", "2026-10-02");
+    const run = db.prepare("INSERT INTO runs (id, conversation_id, agent_id, prompt, status, model, created_at) VALUES (?, ?, 'ag1', ?, 'done', 'm', ?)");
+    run.run("r1", "c1", "帮我查下周去 Tokyo 的机票", "2026-10-01");
+    run.run("r2", "c2", "把这周的工作整理一下", "2026-10-03");
+    db.prepare("INSERT INTO events (run_id, seq, id, agent_id, type, ts, data) VALUES ('r2', 0, 'e1', 'ag1', 'message.completed', '2026-10-03', ?)").run(
+      JSON.stringify({ text: "周报写好了，重点是 tokyo 项目上线" }),
+    );
+    expect(searchConversations(db, "  ")).toEqual([]);
+    expect(searchConversations(db, "tokyo").map((h) => [h.conversationId, h.where])).toEqual([
+      ["c2", "agent"],
+      ["c1", "you"],
+    ]);
+    expect(searchConversations(db, "周报")[0]).toMatchObject({ conversationId: "c2", where: "title", agentName: "助理" });
+    expect(searchConversations(db, "100%").map((h) => h.conversationId)).toEqual(["c3"]);
+    expect(searchConversations(db, "%")).toHaveLength(1);
+    expect(snippetOf("a".repeat(200) + "目标" + "b".repeat(200), "目标", 20)).toMatch(/^…a+目标b+…$/);
+  });
+});

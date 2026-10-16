@@ -723,6 +723,8 @@ export async function createHub(opts: { dbPath?: string; webDist?: string; logge
       if (req.method === "GET" && !req.url.startsWith("/api/") && !req.url.startsWith("/mcp") && !req.url.startsWith("/office-ds/")) {
         return reply.header("Cache-Control", "no-cache").sendFile("index.html");
       }
+      // A share that reached the server (the service worker wasn't running yet): open the page, which explains.
+      if (req.method === "POST" && req.url.split("?")[0] === "/share") return reply.redirect("/share", 303);
       return reply.code(404).send({ error: "not found" });
     });
   }

@@ -14,6 +14,7 @@ import { ApprovalCard } from "./components/ApprovalCard";
 import { InstanceWindow } from "./components/InstanceWindow";
 import Home from "./pages/Home";
 import Login from "./pages/Login";
+import { SearchResults } from "./components/ConversationSearch";
 import Onboarding from "./pages/Onboarding";
 
 const AgentDetail = lazy(() => import("./pages/AgentDetail"));
@@ -30,6 +31,7 @@ const Performance = lazy(() => import("./pages/Performance"));
 const Audit = lazy(() => import("./pages/Audit"));
 const Artifacts = lazy(() => import("./pages/Artifacts"));
 const Credentials = lazy(() => import("./pages/Credentials"));
+const Share = lazy(() => import("./pages/Share"));
 const ArtifactViewer = lazy(() => import("./components/ArtifactViewer"));
 
 const qc = new QueryClient({
@@ -203,6 +205,13 @@ function Sidebar() {
         )}
       </nav>
       <div className="flex-1 overflow-y-auto px-2 pt-3 pb-2 space-y-3">
+        {needle && (
+          <div>
+            <div className="flex items-center h-7 pl-2.5 text-xs text-muted">对话内容</div>
+            <SearchResults q={q} dense />
+          </div>
+        )}
+        {needle && <div className="flex items-center h-7 pl-2.5 text-xs text-muted">标题和 agent</div>}
         {groups.map(({ agent: a, convs }) =>
           needle && !convs.length ? null : (
             <div key={a.id}>
@@ -411,6 +420,7 @@ function App() {
                 <Route path="/audit" element={<Audit />} />
                 <Route path="/artifacts" element={<Artifacts />} />
                 <Route path="/credentials" element={<Credentials />} />
+                <Route path="/share" element={<Share />} />
                 <Route path="*" element={<Home />} />
               </Routes>
             </Suspense>

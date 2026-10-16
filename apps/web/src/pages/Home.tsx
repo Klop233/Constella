@@ -1,8 +1,9 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bell, Plus } from "lucide-react";
+import { Bell, Plus, Search } from "lucide-react";
 import { useState } from "react";
 import { useNavigate } from "react-router";
 import { ApprovalCard } from "../components/ApprovalCard";
+import { SearchSheet } from "../components/ConversationSearch";
 import { IncidentCard } from "../components/IncidentCard";
 import { InstanceThumb } from "../components/InstanceThumb";
 import { SetupChecklist } from "../components/SetupChecklist";
@@ -21,6 +22,7 @@ export default function Home() {
   const qc = useQueryClient();
   const live = useLiveStatus();
   const [inbox, setInbox] = useState(false);
+  const [search, setSearch] = useState(false);
   const { data, isLoading } = useQuery({ queryKey: ["overview"], queryFn: () => api.get<Overview>("/api/overview"), refetchInterval: 30_000 });
   const notes = useQuery({
     queryKey: ["notifications"],
@@ -38,17 +40,25 @@ export default function Home() {
           </span>
         }
         right={
-          <IconButton
-            label="通知"
-            onClick={() => {
-              setInbox(true);
-              void api.post("/api/notifications/read").then(() => qc.invalidateQueries({ queryKey: ["overview"] }));
-            }}
-            className="relative"
-          >
-            <Bell className="size-4" />
-            {!!data?.unread && <span className="absolute top-2 right-2 size-2 rounded-full bg-[var(--danger)]" />}
-          </IconButton>
+          <>
+            {/* The desktop sidebar has its own search field. */}
+            <span className="lg:hidden flex">
+              <IconButton label="搜索对话" onClick={() => setSearch(true)}>
+                <Search className="size-4" />
+              </IconButton>
+            </span>
+            <IconButton
+              label="通知"
+              onClick={() => {
+                setInbox(true);
+                void api.post("/api/notifications/read").then(() => qc.invalidateQueries({ queryKey: ["overview"] }));
+              }}
+              className="relative"
+            >
+              <Bell className="size-4" />
+              {!!data?.unread && <span className="absolute top-2 right-2 size-2 rounded-full bg-[var(--danger)]" />}
+            </IconButton>
+          </>
         }
       />
       {isLoading || !data ? (
@@ -154,6 +164,7 @@ export default function Home() {
           </Section>
         </div>
       )}
+      <SearchSheet open={search} onClose={() => setSearch(false)} />
       <Sheet open={inbox} onClose={() => setInbox(false)} title="通知">
         {notes.isLoading ? (
           <Loading />

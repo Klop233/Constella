@@ -9,6 +9,30 @@ cleanupOutdatedCaches();
 // App shell for navigations, but never for API calls.
 registerRoute(new NavigationRoute(createHandlerBoundToURL("/index.html"), { denylist: [/^\/api\//, /^\/mcp/] }));
 
+// Shared from another app (manifest share_target): keep the text and files for the /share page, then open it.
+const SHARE_CACHE = "constella-share";
+self.addEventListener("fetch", (event) => {
+  const url = new URL(event.request.url);
+  if (event.request.method !== "POST" || url.pathname !== "/share") return;
+  event.respondWith(
+    (async () => {
+      const cache = await caches.open(SHARE_CACHE);
+      for (const key of await cache.keys()) await cache.delete(key);
+      try {
+        const form = await event.request.formData();
+        const files = form.getAll("files").filter((f): f is File => f instanceof File && f.size > 0);
+        const field = (name: string) => String(form.get(name) ?? "");
+        const meta = { title: field("title"), text: field("text"), url: field("url"), files: files.map((f, i) => ({ name: f.name, type: f.type, path: `/share-file/${i}` })) };
+        await Promise.all(files.map((f, i) => cache.put(`/share-file/${i}`, new Response(f, { headers: { "Content-Type": f.type || "application/octet-stream" } }))));
+        await cache.put("/share-meta", new Response(JSON.stringify(meta), { headers: { "Content-Type": "application/json" } }));
+      } catch {
+        // nothing usable was shared; the page says so
+      }
+      return Response.redirect("/share", 303);
+    })(),
+  );
+});
+
 self.addEventListener("install", () => void self.skipWaiting());
 self.addEventListener("activate", (e) => e.waitUntil(self.clients.claim()));
 

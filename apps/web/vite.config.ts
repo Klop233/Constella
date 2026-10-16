@@ -24,6 +24,13 @@ export default defineConfig({
         display: "standalone",
         orientation: "any",
         background_color: "#1c1a23",
+        // Constella shows up in the system share sheet: links, text and files go to an agent's new conversation.
+        share_target: {
+          action: "/share",
+          method: "POST",
+          enctype: "multipart/form-data",
+          params: { title: "title", text: "text", url: "url", files: [{ name: "files", accept: ["*/*"] }] },
+        },
         theme_color: "#1c1a23",
         icons: [
           { src: "/icon-192.png?v=2", sizes: "192x192", type: "image/png" },
