@@ -553,6 +553,23 @@ describe("helpers", () => {
     expect(gated.needsSetup()).toBe(false);
   });
 
+  it("resets a forgotten password from the server, signing every device out", () => {
+    const db = openDb(":memory:");
+    const auth = new Auth(db);
+    expect(() => auth.resetPassword("a-long-password-2")).toThrow("还没有创建账号");
+    auth.setup("", "主人", "a-long-password-1");
+    db.prepare("UPDATE users SET totp_secret = 'JBSWY3DPEHPK3PXP'").run();
+    db.prepare("INSERT INTO sessions (id, user_id, device, ip, created_at, last_seen_at, expires_at) VALUES ('s1', ?, 'd', 'ip', 'now', 'now', '2999-01-01')").run(auth.user()!.id);
+    expect(() => auth.resetPassword("short")).toThrow("至少 10 位");
+    auth.resetPassword("a-long-password-2");
+    expect(db.prepare("SELECT COUNT(*) AS n FROM sessions").get()).toEqual({ n: 0 });
+    expect(() => auth.loginPassword("a-long-password-1", undefined)).toThrow("密码错误");
+    expect(() => auth.loginPassword("a-long-password-2", undefined)).toThrow("需要验证码");
+    auth.resetPassword("a-long-password-3", { disableTotp: true });
+    expect(auth.loginPassword("a-long-password-3", undefined).totp_secret).toBeNull();
+    expect(db.prepare("SELECT action FROM audit WHERE action = 'auth.password.reset'").all()).toHaveLength(2);
+  });
+
   it("parses fenced JSON and summarizes transcripts", () => {
     expect(parseJsonLoose('```json\n{"a":1}\n```')).toEqual({ a: 1 });
     const t = transcriptFor({ prompt: "查天气", status: "done", error: null }, [
@@ -713,10 +730,38 @@ describe("model registry", () => {
        VALUES ('ag1', '助理', '✨', 'assistant', 'p', 'a@p-other', 'auto', '{"mode":"none"}', 'h', 'now', 'now')`,
     ).run();
     expect(reg.usersOf(p.id, ["b@p-other"])).toEqual(["agent「助理」", "默认模型设置"]);
-    expect(() => reg.removeProvider("newapi")).toThrow();
     reg.removeProvider(p.id);
     expect(reg.list()).toEqual([]);
     expect(() => reg.resolve("a@p-other")).toThrow("已被删除");
+  });
+
+  it("only shows the built-in new-api when it is configured, and lets the owner remove it", () => {
+    const db = openDb(":memory:");
+    const secrets = new SecretStore(db, box);
+    const bare = new ModelRegistry({ db, secrets, newapiBaseUrl: "http://newapi:3000", newapiKey: () => "" });
+    expect(bare.providers()).toEqual([]);
+    expect(bare.seedError()).toBeNull();
+    const { reg } = make();
+    expect(reg.providers().map((p) => p.id)).toEqual(["newapi"]);
+    reg.add("newapi", ["mimo"]);
+    reg.removeProvider("newapi");
+    expect(reg.providers()).toEqual([]);
+    expect(reg.list()).toEqual([]);
+    expect(() => reg.resolve("mimo")).toThrow("已被删除");
+  });
+
+  it("sends agents to the hub's bridge for a Chat Completions provider, without its key", () => {
+    const { reg } = make();
+    const p = reg.addProvider({ name: "DeepSeek", baseUrl: "https://api.deepseek.com/v1", apiKey: "sk-ds", api: "chat" });
+    expect(p.api).toBe("chat");
+    expect(reg.resolve("deepseek-chat@p-deepseek").provider).toEqual({
+      id: "p-deepseek",
+      name: "DeepSeek",
+      baseUrl: "http://constella-hub:8780/api/llm/p-deepseek/v1",
+      envKey: "CONSTELLA_AGENT_TOKEN",
+    });
+    reg.updateProvider(p.id, { api: "responses" });
+    expect(reg.resolve("deepseek-chat@p-deepseek").provider).toMatchObject({ baseUrl: "https://api.deepseek.com/v1", apiKey: "sk-ds" });
   });
 });
 
@@ -731,11 +776,23 @@ describe("settings", () => {
   it("falls back to env defaults and normalizes model refs", () => {
     const { db, settings } = make();
     expect(settings.limits()).toMatchObject({ maxAutoResumes: 3 });
-    expect(settings.defaultModel()).not.toContain("@");
+    expect(settings.defaultModel()).toBe("");
     kvSet(db, "settings.runWatchdogMinutes", "0");
     kvSet(db, "settings.autoReflect", "false");
     expect(settings.limits().runWatchdogMinutes).toBe(0);
     expect(settings.reflection()).toEqual({ enabled: false, minToolCalls: 3 });
+  });
+
+  it("without a chosen default, uses the first model whose test passed and lets reflection follow it", () => {
+    const { db, settings } = make();
+    db.prepare("INSERT INTO providers (id, name, base_url, api, created_at) VALUES ('p-a', 'A', 'http://a/v1', 'chat', 'now')").run();
+    db.prepare("INSERT INTO models (model, provider, created_at) VALUES ('m1', 'p-a', 'now'), ('m2', 'p-a', 'now')").run();
+    expect(settings.defaultModel()).toBe("m1@p-a");
+    db.prepare("UPDATE models SET test_ok = 1, tested_at = 'now' WHERE model = 'm2'").run();
+    expect(settings.defaultModel()).toBe("m2@p-a");
+    expect(settings.reflectModel()).toBe("m2@p-a");
+    kvSet(db, "settings.reflectModel", "m1@p-a");
+    expect(settings.reflectModel()).toBe("m1@p-a");
   });
 
   it("knows quiet hours, including ranges past midnight", () => {

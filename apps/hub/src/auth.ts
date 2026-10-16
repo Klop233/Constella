@@ -84,6 +84,20 @@ export class Auth {
     audit(this.#db, user.id, "auth.password.change");
   }
 
+  /**
+   * Recovery from the server (scripts/install.sh reset-password): sets a new password without the old one, signs
+   * every device out, and optionally turns two-step verification off for a lost authenticator.
+   */
+  resetPassword(next: string, opts: { disableTotp?: boolean } = {}): void {
+    const user = this.user();
+    if (!user) throw new Error("还没有创建账号，直接打开网页创建");
+    if (next.length < 10) throw new Error("密码至少 10 位");
+    this.#db.prepare("UPDATE users SET password_hash = ? WHERE id = ?").run(hashPassword(next), user.id);
+    if (opts.disableTotp) this.#db.prepare("UPDATE users SET totp_secret = NULL WHERE id = ?").run(user.id);
+    this.#db.prepare("DELETE FROM sessions").run();
+    audit(this.#db, "server", "auth.password.reset", { disableTotp: !!opts.disableTotp });
+  }
+
   // ── TOTP ────────────────────────────────────────────────
   totpBegin(): { secret: string; uri: string } {
     const user = this.user()!;

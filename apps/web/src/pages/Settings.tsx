@@ -6,12 +6,14 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
 import { ModelSelect } from "./AgentEdit";
 import { AuditDetailSheet } from "../components/AuditDetail";
+import { ProviderForm } from "../components/ProviderForm";
 import { Badge, Button, Checkbox, confirmDialog, Field, Header, Loading, navItemClass, Segmented, Select, SettingGroup, SettingRow, Sheet, StatTile, StatusText, Tabs, Toggle, cx, inputClass, toast } from "../components/ui";
 import { api, logout } from "../lib/api";
 import { setAppearance, useAppearance, type Appearance } from "../lib/appearance";
 import { auditAction, auditActor, auditSummary } from "../lib/audit";
 import { fmtMinutes, RUN_TIMEOUTS, runTimeoutLabel, timeAgo, tokens } from "../lib/format";
 import { useModels, useProviders, type ModelEntry, type Provider } from "../lib/models";
+import { API_LABEL } from "../lib/providers";
 import { currentSubscription, disablePush, enablePush, pushSupported } from "../lib/push";
 import { KIND_INFO, KINDS } from "../lib/instances";
 import type { Agent, AuditEntry, Effort, HostCaps, IdleAction, Schedule } from "../lib/types";
@@ -47,6 +49,8 @@ interface SettingsView {
   backupKeep: number;
   modelNameFormat: "paren" | "dash";
   newapiBaseUrl: string;
+  newapiEnabled: boolean;
+  modelSeedError: string | null;
   newapiAdminConfigured: boolean;
   newapiAdminUserId: string;
   telegramConfigured: boolean;
@@ -363,7 +367,10 @@ function ModelsSection({ s, save }: { s: SettingsView; save: Save }) {
     toast(r.ok ? `${p.name} 连接正常` : `${p.name}：${r.error}`, r.ok ? "ok" : "danger");
   };
   const removeProvider = async (p: Provider) => {
-    if (!(await confirmDialog({ title: `删除 provider「${p.name}」？`, body: `它下面的 ${p.models} 个模型会一起移除。`, ok: "删除", danger: true }))) return;
+    const body = p.builtin
+      ? `它在 deploy/.env 里配置，移除后不再出现在这里，它下面的 ${p.models} 个模型一起移除。之后可以把它当普通服务商重新添加。`
+      : `它下面的 ${p.models} 个模型会一起移除。`;
+    if (!(await confirmDialog({ title: `${p.builtin ? "移除" : "删除"}「${p.name}」？`, body, ok: p.builtin ? "移除" : "删除", danger: true }))) return;
     try {
       await api.del(`/api/providers/${p.id}`);
       toast("已删除");
@@ -435,7 +442,7 @@ function ModelsSection({ s, save }: { s: SettingsView; save: Save }) {
         </SettingRow>
       </SettingGroup>
 
-      <SettingGroup title="Provider">
+      <SettingGroup title="服务商">
         {providers.data?.map((p) => {
           const c = checks[p.id];
           return (
@@ -451,8 +458,8 @@ function ModelsSection({ s, save }: { s: SettingsView; save: Save }) {
               }
               desc={
                 <>
-                  <span className="font-mono break-all">{p.baseUrl}</span> · {p.models} 个模型 · {p.keyHint ? `Key ${p.keyHint}` : "未设置 Key"}
-                  {p.builtin && ` · 管理令牌${s.newapiAdminConfigured ? "已配置" : "未配置"}`}
+                  <span className="font-mono break-all">{p.baseUrl}</span> · {API_LABEL[p.api]} · {p.models} 个模型 · {p.keyHint ? `Key ${p.keyHint}` : "未设置 Key"}
+                  {p.builtin && ` · 在 deploy/.env 里配置 · 管理令牌${s.newapiAdminConfigured ? "已配置" : "未配置"}`}
                   {c && c !== "busy" && <span className={cx("block", c.ok ? "text-ok" : "text-danger")}>{c.text}</span>}
                 </>
               }
@@ -465,19 +472,18 @@ function ModelsSection({ s, save }: { s: SettingsView; save: Save }) {
                   管理令牌
                 </Button>
               ) : (
-                <>
-                  <Button size="sm" variant="secondary" onClick={() => setEditing(p)}>
-                    编辑
-                  </Button>
-                  <Button size="sm" variant="ghost" className="text-danger" onClick={() => void removeProvider(p)}>
-                    删除
-                  </Button>
-                </>
+                <Button size="sm" variant="secondary" onClick={() => setEditing(p)}>
+                  编辑
+                </Button>
               )}
+              <Button size="sm" variant="ghost" className="text-danger" onClick={() => void removeProvider(p)}>
+                {p.builtin ? "移除" : "删除"}
+              </Button>
             </SettingRow>
           );
         })}
-        <SettingRow wide title="添加 provider" desc="任何支持 OpenAI Responses API 的地址：另一个 new-api、CLIProxyAPI、OpenRouter 等。Codex 只走 Responses 接口，只支持 Chat Completions 的服务用不了。">
+        {!providers.data?.length && <div className="py-3 text-[13px] text-muted">还没有服务商。添加一个，填上 API Key 就能用。</div>}
+        <SettingRow wide title="添加服务商" desc="OpenAI、DeepSeek、Kimi、通义、智谱、OpenRouter，或任何 OpenAI 兼容的地址（Chat Completions 或 Responses 接口）。">
           <Button size="sm" variant="secondary" onClick={() => setEditing("new")}>
             添加
           </Button>
@@ -496,12 +502,12 @@ function ModelsSection({ s, save }: { s: SettingsView; save: Save }) {
           <Button size="sm" variant="secondary" disabled={!list.length || testing.size > 0} onClick={() => void testModels(list.map((m) => m.ref))}>
             {testing.size > 1 ? `测试中 · 剩 ${testing.size}` : "全部测试"}
           </Button>
-          <Button size="sm" variant="secondary" onClick={() => setAdding(only || providers.data?.[0]?.id || "newapi")}>
+          <Button size="sm" variant="secondary" disabled={!providers.data?.length} onClick={() => setAdding(only || providers.data?.[0]?.id || "")}>
             添加模型
           </Button>
         </div>
         {models.isLoading && <Loading />}
-        {models.data && !models.data.length && <div className="py-4 text-center text-[13px] text-muted">还没有模型，点「添加模型」从 provider 里挑选</div>}
+        {models.data && !models.data.length && <div className="py-4 text-center text-[13px] text-muted">还没有模型，点「添加模型」从服务商里挑选</div>}
         {shown.map((m) => (
           <SettingRow
             wide
@@ -558,42 +564,15 @@ function ModelsSection({ s, save }: { s: SettingsView; save: Save }) {
 }
 
 function ProviderSheet({ provider, onClose, onSaved }: { provider: Provider | "new" | null; onClose: () => void; onSaved: (p: Provider, created: boolean) => void }) {
-  const [form, setForm] = useState({ name: "", baseUrl: "", apiKey: "" });
-  const [busy, setBusy] = useState(false);
-  const isNew = provider === "new";
-  useEffect(() => {
-    if (provider) setForm(provider === "new" ? { name: "", baseUrl: "", apiKey: "" } : { name: provider.name, baseUrl: provider.baseUrl, apiKey: "" });
-  }, [provider]);
-  const submit = async () => {
-    setBusy(true);
-    try {
-      const body = isNew ? form : { name: form.name, baseUrl: form.baseUrl, ...(form.apiKey ? { apiKey: form.apiKey } : {}) };
-      const p = isNew ? await api.post<Provider>("/api/providers", body) : await api.patch<Provider>(`/api/providers/${(provider as Provider).id}`, body);
-      toast(isNew ? "已添加，接着挑选要用的模型" : "已保存");
-      onSaved(p, isNew);
-    } catch (err) {
-      toast(err instanceof Error ? err.message : String(err), "danger");
-    } finally {
-      setBusy(false);
-    }
-  };
   return (
-    <Sheet open={!!provider} onClose={onClose} title={isNew ? "添加 provider" : "编辑 provider"}>
-      <div className="space-y-3">
-        <Field label="名称" hint="会出现在模型显示名里，比如 gpt-5 (CLIProxy)">
-          <input className={inputClass} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} maxLength={40} placeholder="CLIProxy" />
-        </Field>
-        <Field label="地址" hint="OpenAI 兼容的 API 地址，一般以 /v1 结尾；agent 容器里的 localhost 不是宿主机，宿主机用 host.docker.internal">
-          <input className={cx(inputClass, "font-mono")} value={form.baseUrl} onChange={(e) => setForm({ ...form, baseUrl: e.target.value })} placeholder="http://host.docker.internal:8317/v1" autoComplete="off" />
-        </Field>
-        <Field label="API Key" hint={isNew ? "没有可以留空" : `留空不修改${(provider as Provider | null)?.keyHint ? `（当前 ${(provider as Provider).keyHint}）` : ""}`}>
-          <input className={cx(inputClass, "font-mono")} type="password" value={form.apiKey} onChange={(e) => setForm({ ...form, apiKey: e.target.value })} autoComplete="off" />
-        </Field>
-        <div className="text-xs text-muted">保存后对之后开始的任务生效，正在进行的任务不受影响。</div>
-        <Button variant="primary" className="w-full" loading={busy} disabled={!form.name.trim() || !form.baseUrl.trim()} onClick={() => void submit()}>
-          {isNew ? "添加" : "保存"}
-        </Button>
-      </div>
+    <Sheet open={!!provider} onClose={onClose} title={provider === "new" ? "添加服务商" : "编辑服务商"}>
+      <ProviderForm
+        provider={provider === "new" ? null : provider}
+        onSaved={(p, created) => {
+          toast(created ? "已添加，接着挑选要用的模型" : "已保存，对之后开始的任务生效");
+          onSaved(p, created);
+        }}
+      />
     </Sheet>
   );
 }
@@ -635,7 +614,7 @@ function AddModelsSheet({ provider, providers, models, onClose, onAdded }: { pro
   return (
     <Sheet open={!!provider} onClose={onClose} title="添加模型">
       <div className="space-y-3">
-        <Field label="Provider">
+        <Field label="服务商">
           <Select
             className="w-full"
             value={pid}
@@ -1539,7 +1518,7 @@ function SystemSection({ s, save }: { s: SettingsView; save: Save }) {
         dbSizeMb: number;
         containers: { name: string; state: string; status: string; role: string }[];
         backups: { name: string; size: number }[];
-        newapi: { ok: boolean; models?: number; error?: string };
+        newapi: { ok: boolean; models?: number; error?: string } | null;
         version: string;
       }>("/api/system"),
   });
@@ -1550,9 +1529,11 @@ function SystemSection({ s, save }: { s: SettingsView; save: Save }) {
   return (
     <>
       <SettingGroup title={`系统 · v${d.version}`}>
-        <SettingRow title="new-api" desc={d.newapi.ok ? `${d.newapi.models} 个模型可用` : d.newapi.error}>
-          <StatusText tone={d.newapi.ok ? "ok" : "danger"}>{d.newapi.ok ? "正常" : "异常"}</StatusText>
-        </SettingRow>
+        {d.newapi && (
+          <SettingRow title="new-api" desc={d.newapi.ok ? `${d.newapi.models} 个模型可用` : d.newapi.error}>
+            <StatusText tone={d.newapi.ok ? "ok" : "danger"}>{d.newapi.ok ? "正常" : "异常"}</StatusText>
+          </SettingRow>
+        )}
         <SettingRow title="磁盘与数据库" desc={`剩余 ${d.disk.freeGb} / ${d.disk.totalGb} GB · 数据库 ${d.dbSizeMb} MB`} />
       </SettingGroup>
       <SettingGroup title="备份">

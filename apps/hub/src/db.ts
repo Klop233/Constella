@@ -179,6 +179,9 @@ export function openDb(file: string): Db {
   // Reports about an instance (it broke, the hub repaired it) point at it.
   const incidentCols = db.prepare("PRAGMA table_info(incidents)").all() as { name: string }[];
   if (!incidentCols.some((c) => c.name === "desktop_id")) db.exec("ALTER TABLE incidents ADD COLUMN desktop_id TEXT");
+  // Which API a provider speaks: "responses" (Codex talks to it directly) or "chat" (bridged by the hub).
+  const providerCols = db.prepare("PRAGMA table_info(providers)").all() as { name: string }[];
+  if (!providerCols.some((c) => c.name === "api")) db.exec("ALTER TABLE providers ADD COLUMN api TEXT NOT NULL DEFAULT 'responses'");
   ensureInstanceKinds(db);
   return db;
 }

@@ -21,7 +21,7 @@ import { Desktops } from "./desktops.ts";
 import { EventStore } from "./events.ts";
 import { HostCapabilities, type AndroidBackendSetting } from "./hostcaps.ts";
 import { Knowledge } from "./knowledge.ts";
-import { Learning, defaultReflectModel } from "./learning.ts";
+import { Learning } from "./learning.ts";
 import { registerMcp } from "./mcp.ts";
 import { ModelRegistry } from "./models.ts";
 import { NewApi } from "./newapi.ts";
@@ -192,13 +192,21 @@ export class Settings {
     return v === undefined ? fallback : v === "true";
   }
 
-  /** Model refs: "model@provider", or a bare name for the built-in new-api (like the env defaults). */
+  /**
+   * Model refs: "model@provider", or a bare name for the built-in new-api (like the env defaults). Nothing chosen
+   * falls back to the first model whose test passed, then the first model at all.
+   */
   defaultModel(): string {
-    return this.#models.normalize(kvGet(this.#db, "settings.defaultModel") || config.defaultModel);
+    const chosen = kvGet(this.#db, "settings.defaultModel") || config.defaultModel;
+    if (chosen) return this.#models.normalize(chosen);
+    const list = this.#models.list();
+    return (list.find((m) => m.test?.ok) ?? list[0])?.ref ?? "";
   }
 
+  /** Reflection, diagnosis and supervision follow the default model unless one is chosen for them. */
   reflectModel(): string {
-    return this.#models.normalize(defaultReflectModel(this.#db));
+    const chosen = kvGet(this.#db, "settings.reflectModel") || config.reflectModel;
+    return chosen ? this.#models.normalize(chosen) : this.defaultModel();
   }
 
   /** Reasoning effort preselected for new agents (null = the model's default). */
@@ -394,6 +402,8 @@ export class Settings {
       backupKeep: this.backupKeep(),
       modelNameFormat: this.#models.nameFormat(),
       newapiBaseUrl: config.newapi.baseUrl,
+      newapiEnabled: this.#models.builtinEnabled(),
+      modelSeedError: this.#models.seedError(),
       newapiAdminConfigured: !!admin,
       newapiAdminUserId: admin?.userId ?? config.newapi.adminUserId,
       telegramConfigured: !!this.telegram(),

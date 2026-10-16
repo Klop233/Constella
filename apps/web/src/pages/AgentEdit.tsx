@@ -47,7 +47,7 @@ export default function AgentEdit() {
   const qc = useQueryClient();
   const editing = !!id;
   const templates = useQuery({ queryKey: ["templates"], queryFn: () => api.get<Template[]>("/api/templates") });
-  const settings = useQuery({ queryKey: ["settings"], queryFn: () => api.get<{ defaultModel: string; defaultEffort: string | null }>("/api/settings") });
+  const settings = useQuery({ queryKey: ["settings"], queryFn: () => api.get<{ defaultModel: string; defaultEffort: string | null; newapiEnabled: boolean }>("/api/settings") });
   const desktops = useQuery({ queryKey: ["desktops"], queryFn: () => api.get<Desktop[]>("/api/desktops") });
   const existing = useQuery({ queryKey: ["agent", id], queryFn: () => api.get<Agent>(`/api/agents/${id}`), enabled: editing });
   const models = useModels();
@@ -154,7 +154,22 @@ export default function AgentEdit() {
             </Field>
           </div>
         </div>
-        <Field label="模型" hint="✓ 表示在「设置 → 模型」里测试通过">
+        <Field
+          label="模型"
+          hint={
+            models.data && !models.data.length ? (
+              <>
+                还没有可用的模型，先到
+                <button type="button" className="text-accent hover:underline mx-0.5" onClick={() => nav("/settings?s=models")}>
+                  设置 → 模型
+                </button>
+                添加服务商。
+              </>
+            ) : (
+              "绿点表示在「设置 → 模型」里测试通过"
+            )
+          }
+        >
           <ModelSelect value={model} onChange={setModel} />
         </Field>
         <Field group label="实例" hint="按选择的顺序优先使用；agent 需要时也可以自己新建">
@@ -214,9 +229,11 @@ export default function AgentEdit() {
                 />
               </Field>
             )}
-            <Field label="每日预算（美元）" hint="需要在设置里配置 new-api 管理令牌，并为该 agent 生成专属令牌后才生效">
-              <input className={inputClass} inputMode="decimal" value={budget} onChange={(e) => setBudget(e.target.value)} placeholder="不限" />
-            </Field>
+            {settings.data?.newapiEnabled && (
+              <Field label="每日预算（美元）" hint="需要在设置里配置 new-api 管理令牌，并为该 agent 生成专属令牌后才生效">
+                <input className={inputClass} inputMode="decimal" value={budget} onChange={(e) => setBudget(e.target.value)} placeholder="不限" />
+              </Field>
+            )}
           </div>
         )}
       </div>

@@ -4,13 +4,13 @@
 
 名字取自 constellation（星座）：每个 agent 是一颗星。
 
-> **English summary**: Constella is a self-hosted platform for running several agents from your phone. Each agent runs [Codex](https://github.com/openai/codex) in its own Docker container; browsers, Linux desktops and Android devices are lent out on demand and you can take over when a step needs a human; what agents learn is kept as git-versioned memory and skills. Models go through [new-api](https://github.com/QuantumNous/new-api) or any OpenAI Responses-compatible provider. The app and docs are Chinese-only for now. Licensed under AGPL-3.0.
+> **English summary**: Constella is a self-hosted platform for running several agents from your phone. Each agent runs [Codex](https://github.com/openai/codex) in its own Docker container; browsers, Linux desktops and Android devices are lent out on demand and you can take over when a step needs a human; what agents learn is kept as git-versioned memory and skills. Models come from any OpenAI-compatible service you add in the app (OpenAI, DeepSeek, Kimi, Qwen, OpenRouter, Ollama…), over Chat Completions or the Responses API. The app and docs are Chinese-only for now. Licensed under AGPL-3.0.
 
 ## 为什么做这个
 
 手机上管 agent，常见做法是靠聊天机器人，桌面画面只能在电脑客户端看，配置项又多，出了问题得自己翻日志。
 
-Constella 的思路是：**干活的部分不自己写**，直接用 OpenAI 开源的 Codex 作为 agent 内核；自己只做外面那层，也就是多 agent 管理、实例、记忆和手机端。模型默认走 [new-api](https://github.com/QuantumNous/new-api)，也可以在设置里再加别的 provider（任何支持 OpenAI Responses API 的地址），不绑定任何一家。
+Constella 的思路是：**干活的部分不自己写**，直接用 OpenAI 开源的 Codex 作为 agent 内核；自己只做外面那层，也就是多 agent 管理、实例、记忆和手机端。模型和普通 AI 客户端一样在 App 里配：选服务商、填 API Key、挑模型，OpenAI、DeepSeek、Kimi、通义、智谱、OpenRouter、Ollama 或任何 OpenAI 兼容的地址都行，不绑定任何一家。
 
 ## 能做什么
 
@@ -47,8 +47,8 @@ Constella 的思路是：**干活的部分不自己写**，直接用 OpenAI 开�
 - 定时任务：定时推送提醒，或者定时让 agent 去做某件事。也可以直接对 agent 说「每天早上 8 点提醒我……」
 - 推送走浏览器原生的 Web Push，可以再配 Telegram 当备用
 - 每个 agent 跑在独立容器里，搞坏了重建就行；需要操作宿主机的（比如运维用的 agent）要单独开权限，非只读命令按「设置 → 权限」里的策略审批（默认自动批准，建议改成「危险时问我」）
-- 「设置 → 模型」：添加多个 provider，每个模型绑定一个 provider，显示成 `model (provider)`；同名模型可以挑一个省略 provider；每个模型一键测试连通；用量按模型、provider、agent 拆开看
-- 可以给每个 agent 在 new-api 里单独开令牌，分开统计花费、设每日预算
+- 「设置 → 模型」：添加多个服务商（常见服务带预设），接口格式选 Chat Completions 或 Responses；只支持 Chat Completions 的服务由 hub 转换给 Codex，API Key 只留在服务器上、不进 agent 容器；每个模型一键测试连通；用量按模型、服务商、agent 拆开看
+- 用 [new-api](https://github.com/QuantumNous/new-api) 的话，可以给每个 agent 单独开令牌，分开统计花费、设每日预算
 - 「性能」页看这台服务器：CPU、内存、交换、负载、运行时间、磁盘和实时网速，带最近 1 小时 / 24 小时的曲线；下面按实例、agent 和 hub 服务列出各自占用的 CPU、内存、网络和进程数，点开是每个容器的明细；打开某个实例时也能看到它自己的性能曲线
 - 「凭据与隐私」：连接 Bitwarden（美国 / 欧洲 / 第三方与自托管，如 Vaultwarden，支持自签名证书）之后，agent 需要密码、用户名或验证码时向你在设置里指定的审批 agent 申请，批准后 10 分钟内只能读取一次；主密码只在解锁时用，审批记录和访问历史里只有条目名和字段名。见 [docs/credentials.md](docs/credentials.md)
 - 每天自动备份，默认保留最近 7 份；自动继续、单轮时长、卡住处理、闲置休眠、推送事项、免打扰等都能在设置里调
@@ -62,7 +62,7 @@ Constella 的思路是：**干活的部分不自己写**，直接用 OpenAI 开�
 
 ## 快速开始
 
-已经有一台装好 Docker 的 Linux 服务器、一个能用的 [new-api](https://github.com/QuantumNous/new-api) 的话，十分钟左右能跑起来：
+有一台装好 Docker 的 Linux 服务器，再有任意一个模型服务的 API Key（OpenAI、DeepSeek、Kimi、通义、OpenRouter……，或者本机的 Ollama），十分钟左右能跑起来：
 
 ```bash
 git clone https://github.com/Klop233/Constella.git constella
@@ -70,17 +70,19 @@ cd constella
 bash scripts/install.sh install
 ```
 
-脚本会自动生成加密主密钥，构建 hub、agent、浏览器/桌面、安卓桥接镜像；启动后在浏览器打开 `http://localhost:8780`，按页面上的首次部署向导选择需要的组件。勾选 Office 后才会下载它的大镜像。初始化码默认关闭，第一次打开网页直接创建账号；想多一道门槛就在 `deploy/.env` 设 `CONSTELLA_SETUP_CODE`。远程访问或手机推送仍需配置 HTTPS 入口，见下面的「部署」。
+脚本会自动生成加密主密钥，构建 hub、agent、浏览器/桌面、安卓桥接镜像；启动后在浏览器打开 `http://localhost:8780`，创建账号后跟着首次部署向导走两步：先连接模型（选服务商、填 Key、挑一个模型，当场测试），再选需要的实例和 Office。勾选 Office 后才会下载它的大镜像。之后首页的「开始使用」清单会提示还差什么（建第一个 agent、开推送、加通行密钥）。初始化码默认关闭，第一次打开网页直接创建账号；想多一道门槛就在 `deploy/.env` 设 `CONSTELLA_SETUP_CODE`。远程访问或手机推送仍需配置 HTTPS 入口，见下面的「部署」。
 
 日常管理统一使用同一个脚本：
 
 ```bash
 bash scripts/install.sh status
 bash scripts/install.sh logs
-bash scripts/install.sh office       # 可选：提前下载 Office 镜像
+bash scripts/install.sh office            # 可选：提前下载 Office 镜像
 bash scripts/install.sh restart
-bash scripts/install.sh update
+bash scripts/install.sh update            # git pull，重新构建并重启
 bash scripts/install.sh backup
+bash scripts/install.sh restore <备份文件>
+bash scripts/install.sh reset-password    # 忘了密码
 ```
 
 ## 大致结构
@@ -97,10 +99,10 @@ constella-hub ─────────────── 管理服务：登�
     ├── constella-desktop-xxx ─ 实例：浏览器 / Linux 桌面（安卓实例在这里跑画面和控制）
     ├── constella-android-xxx ─ 安卓实例的系统本身（Redroid 或模拟器）
     │
-    └── new-api ────────────── 所有模型请求都走这里
+    └── 模型服务 ───────────── OpenAI 兼容的任意服务；只支持 Chat Completions 的经 hub 转换
 ```
 
-数据都放在 `/srv/constella`：数据库、每个 agent 的工作目录和记忆、成果文件（`artifacts/`，不挂进 agent 容器）、桌面的用户目录（浏览器登录状态在这里）、备份。
+数据默认放在 `/srv/constella`（`deploy/.env` 的 `CONSTELLA_DATA_DIR`）：数据库、每个 agent 的工作目录和记忆、成果文件（`artifacts/`，不挂进 agent 容器）、桌面的用户目录（浏览器登录状态在这里）、备份。
 
 ## 部署
 
@@ -112,10 +114,10 @@ constella-hub ─────────────── 管理服务：登�
 | Docker | Docker Engine 带 `docker compose` 插件；hub 要挂载 `/var/run/docker.sock`，由它按需启动 agent 和实例容器 |
 | 内存 | hub 和每个闲着的 agent 各一两百 MB；实例另算，见「实例类型与宿主要求」。只用浏览器实例的话 4 GB 够用 |
 | 磁盘 | 基础镜像（hub、agent、桌面、安卓桥接）一共约 4.5 GB；安卓模拟器镜像再加 7–8 GB |
-| 模型 | 一个 [new-api](https://github.com/QuantumNous/new-api)，通道要支持 Responses API（`/v1/responses`）。别的 provider 可以之后在 App 里加 |
+| 模型 | 任意 OpenAI 兼容的模型服务的 API Key（Chat Completions 或 Responses 接口），装好后在 App 里添加 |
 | HTTPS 入口 | 手机推送和指纹登录要求 HTTPS：一个托管在 Cloudflare 的域名，或者 Tailscale |
 
-数据目录固定在宿主的 `/srv/constella`，第一次启动时自动创建。
+数据目录默认是宿主的 `/srv/constella`（`.env` 里的 `CONSTELLA_DATA_DIR`），第一次启动时自动创建。
 
 **1. 拉代码，写配置**
 
@@ -135,11 +137,8 @@ chmod 600 .env
 | `CONSTELLA_MASTER_KEY` | 加密数据库里各种密钥用的主密钥，用 `openssl rand -base64 32` 生成 |
 | `CONSTELLA_SETUP_CODE` | 可选：设置后第一次创建账号要输入它；留空（默认）则直接创建。远程部署建议设置 |
 | `CONSTELLA_ORIGINS` | 你会用哪些地址访问，逗号分隔，例如 `https://constella.example.com` |
-| `NEWAPI_BASE_URL` | new-api 地址。new-api 在同一台机器上的话写 `http://host.docker.internal:端口` |
-| `NEWAPI_API_KEY` | 在 new-api 后台给 Constella 建的令牌 |
-| `CONSTELLA_DEFAULT_MODEL` | 新建 agent 时默认用的模型 |
 
-其他项都可以留空，比如推送密钥第一次启动会自动生成。
+模型不用在这里配，装好后在 App 里添加。其他项都可以留空，比如推送密钥第一次启动会自动生成。已经有 [new-api](https://github.com/QuantumNous/new-api) 的话，也可以填 `NEWAPI_BASE_URL` / `NEWAPI_API_KEY`，它会作为内置服务商出现，并能按 agent 开令牌、统计花费。
 
 **2. 构建并启动**
 
@@ -189,9 +188,9 @@ scripts/build-android-images.sh emulator --accept-android-sdk-license --playstor
 **4. 第一次使用**
 
 1. 打开你配好的地址，设置名字和密码（启用了初始化码的话先输入初始化码）
-2. 进「设置」，添加通行密钥（以后用指纹登录），打开推送，点「发送测试」看能不能收到
-3. 手机上用 Chrome 打开，菜单里选「添加到主屏幕」
-4. 回首页点「新建」，选个模板建第一个 agent
+2. 向导里连接模型、选择需要的实例
+3. 照首页「开始使用」清单：建第一个 agent，开推送，添加通行密钥（以后用指纹登录）
+4. 手机上用 Chrome 打开，菜单里选「添加到主屏幕」
 
 > 手机推送依赖浏览器自带的推送服务。Android 上要用 Chrome，并且手机得有谷歌服务；Via 这类轻量浏览器不支持。
 
@@ -207,15 +206,13 @@ scripts/build-android-images.sh emulator --accept-android-sdk-license --playstor
 
 ## 模型
 
-所有模型都通过 new-api 调用，Codex 使用的是 Responses API（`/v1/responses`），所以 new-api 那边对应的通道要支持这个接口。
+和普通 AI 客户端一样，在「设置 → 模型」（或首次部署向导）里添加服务商：
 
-哪些模型能稳定干活，可以用脚本测：
+- **服务商**：OpenAI、OpenRouter、DeepSeek、Kimi、智谱、通义千问、火山方舟、硅基流动带预设，本机的 new-api、CLIProxyAPI、Ollama 也有；其他服务选「自定义」，填 OpenAI 兼容的地址（一般以 `/v1` 结尾）。和 Constella 在同一台服务器上的服务，地址里用 `host.docker.internal` 代替 `localhost`。
+- **接口格式**：大多数服务是 Chat Completions。Codex 自己只会说 Responses API，所以 Chat Completions 的服务由 hub 转换：agent 把请求发给 hub，hub 用服务商的 Key 去调用、再把结果转回来，Key 只在服务器上，不进 agent 容器。OpenAI 官方和支持 `/v1/responses` 的网关可以选 Responses，工具调用更原生。
+- **测试**：每个模型都能一键测试，走的是 agent 实际会用的那条路；测试通过的模型在选择器里带绿点。
 
-```bash
-scripts/spikes/model-compat.sh gpt-6-astra kimi-k3 glm-5.3
-```
-
-它会让每个模型做同一个多步小任务（写脚本、运行、保存结果、检查），然后统计哪些模型完成了。实测能用的模型，在 App 里选模型时会带 ✓。目前只支持走 API，不单独适配各家的 CLI 或订阅。
+模型的工具调用能力差别很大：agent 要连续调用工具、读结果、再决定下一步，能力弱的模型容易半途停下或乱调用。目前只支持走 API，不单独适配各家的 CLI 或订阅。
 
 ## 实例类型与宿主要求
 
@@ -249,34 +246,29 @@ hub 启动时会用临时容器检测这台机器能跑什么，结果在「设�
 **升级**
 
 ```bash
-cd constella && git pull
-cd deploy
-docker compose --profile images build
-docker compose up -d hub
+bash scripts/install.sh update
 ```
 
-agent 和实例容器不用手动处理：hub 发现镜像变了，会在下次启动它们时用新镜像重建，数据都在挂载目录里，不会丢。重启 hub 会打断正在跑的任务，开了「中断后自动继续」的会自己接上。
+它会 `git pull`、重新构建镜像、重启 hub。agent 和实例容器不用手动处理：hub 发现镜像变了，会在下次启动它们时用新镜像重建，数据都在挂载目录里，不会丢。重启 hub 会打断正在跑的任务，开了「中断后自动继续」的会自己接上。
 
-**备份**：每天 3:30 自动备份到 `/srv/constella/backups/constella-<时间>.tar.gz`，里面有数据库、所有记忆和技能、成果文件；保留份数在「设置」里改。实例里的浏览器登录状态、agent 工作目录里的文件不在备份里，需要的话自己再备份整个 `/srv/constella`。
+**备份**：每天 3:30 自动备份到数据目录的 `backups/constella-<时间>.tar.gz`，里面有数据库、所有记忆和技能、成果文件；保留份数在「设置」里改。`bash scripts/install.sh backup` 随时手动备份一份（`manual-constella-<时间>.tar.gz`，连 agent 工作目录一起，不会被每日轮换删掉）。实例里的浏览器登录状态不在备份里，需要的话自己再备份整个数据目录。
 
 **恢复**：数据库里的密钥是用 `CONSTELLA_MASTER_KEY` 加密的，恢复时 `.env` 里必须是原来那个主密钥。
 
 ```bash
-cd constella/deploy && docker compose stop hub
-mkdir /tmp/restore && tar -xzf /srv/constella/backups/constella-<时间>.tar.gz -C /tmp/restore
-cp /tmp/restore/backups/db-*.sqlite /srv/constella/db/constella.db && rm -f /srv/constella/db/constella.db-wal /srv/constella/db/constella.db-shm
-cp -a /tmp/restore/shared /tmp/restore/agents /tmp/restore/artifacts /srv/constella/ 2>/dev/null
-docker compose up -d hub
+bash scripts/install.sh restore constella-<时间>.tar.gz
 ```
+
+两种备份都认。恢复前会停 hub，被替换下来的数据库、记忆和成果先挪到 `backups/before-restore-<时间>/`，恢复完自动启动。
 
 ## 常见问题
 
 - **操作报 `origin not allowed` / 「不允许的来源」**：浏览器地址栏里的地址（协议 + 域名 + 端口）要写进 `CONSTELLA_ORIGINS`，改完重启 hub。创建账号那次用的地址会自动记住，之后换新地址访问才需要手动加。
 - **收不到推送**：必须通过 HTTPS 地址打开；Android 用 Chrome 且手机有谷歌服务；iPhone 要先「添加到主屏幕」，再从主屏幕图标打开后开启推送。
-- **agent 一直不回复或报模型错误**：在「设置 → 模型」里点该模型的「测试」；多半是 new-api 那边的通道不支持 `/v1/responses`，或者令牌没有这个模型的权限。容器里的日志：`docker logs constella-agent-<id>`。
+- **agent 一直不回复或报模型错误**：在「设置 → 模型」里点该模型的「测试」。提示 404 / 不支持时，把服务商的接口格式换成 Chat Completions；401 / 403 是 Key 不对或没有这个模型的权限；连不上时检查地址（同一台服务器上的服务用 `host.docker.internal`）。容器里的日志：`docker logs constella-agent-<id>`。
 - **某种实例建不了**：「设置 → 实例」里会写明缺什么，补上后点「检测」。
 - **hub 起不来**：`docker logs constella-hub`。最常见的是 `.env` 没填 `CONSTELLA_MASTER_KEY`。
-- **忘了密码**：目前没有找回功能，建议登录后马上加一个通行密钥，多一种登录方式。
+- **忘了密码**：在服务器上运行 `bash scripts/install.sh reset-password`，所有设备会退出登录；验证器也丢了的话加 `--disable-totp`。
 
 ## 已知问题和没做的
 

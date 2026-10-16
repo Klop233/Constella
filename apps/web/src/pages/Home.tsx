@@ -5,6 +5,7 @@ import { useNavigate } from "react-router";
 import { ApprovalCard } from "../components/ApprovalCard";
 import { IncidentCard } from "../components/IncidentCard";
 import { InstanceThumb } from "../components/InstanceThumb";
+import { SetupChecklist } from "../components/SetupChecklist";
 import { AgentAvatar, AgentStatus, RunStatus } from "../components/AgentBits";
 import { Button, Card, Empty, Header, IconButton, Loading, Section, SectionLink, Sheet, cx } from "../components/ui";
 import { api } from "../lib/api";
@@ -54,6 +55,8 @@ export default function Home() {
         <Loading />
       ) : (
         <div className="px-4 space-y-8 pb-6">
+          <SetupChecklist agents={data.agents.length} />
+
           {data.approvals.length > 0 && (
             <Section title={`${approvalsTitle(data.approvals.map((a) => a.kind))} · ${data.approvals.length}`}>
               <div className="space-y-3">

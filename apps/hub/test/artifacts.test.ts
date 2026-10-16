@@ -243,7 +243,7 @@ describe("artifacts through the hub (MCP tools + HTTP)", () => {
     const addr = hub.app.server.address() as { port: number };
     base = `http://127.0.0.1:${addr.port}`;
     await json("POST", "/api/auth/setup", { code: "setup-code", name: "主人", password: "a-long-password-1" });
-    const agent = hub.agents.create({ name: "写手", template: "assistant" }, "test");
+    const agent = hub.agents.create({ name: "写手", template: "assistant", model: `test-model@${hub.models.addProvider({ name: "Test", baseUrl: "http://127.0.0.1:9/v1", apiKey: "" }).id}` }, "test");
     agentId = agent.id;
     token = hub.agents.token(agentId);
     const now = new Date().toISOString();

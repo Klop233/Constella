@@ -17,10 +17,14 @@ export interface ModelEntry {
   defaultEffort: Effort | null;
 }
 
+/** "responses": Codex calls it directly; "chat": Chat Completions, bridged by the hub. */
+export type ProviderApi = "responses" | "chat";
+
 export interface Provider {
   id: string;
   name: string;
   baseUrl: string;
+  api: ProviderApi;
   builtin: boolean;
   keyHint: string | null;
   models: number;

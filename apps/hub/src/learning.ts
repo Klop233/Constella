@@ -1,7 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { z } from "zod";
 import { stripWidgets, type AgentEvent } from "@constella/protocol";
-import { config } from "./config.ts";
 import type { Db } from "./db.ts";
 import type { EventStore } from "./events.ts";
 import { KnowledgeOps, MEMORY_LIMIT, type ImportPlanItem, type Knowledge, type LearningEvent } from "./knowledge.ts";
@@ -264,9 +263,4 @@ export function transcriptFor(run: Pick<RunRow, "prompt" | "status" | "error">, 
   if (run.error) lines.push(`错误：${run.error.slice(0, 500)}`);
   const text = lines.join("\n");
   return text.length > 12000 ? `${text.slice(0, 6000)}\n…（中间省略）…\n${text.slice(-6000)}` : text;
-}
-
-export function defaultReflectModel(db: Db): string {
-  const row = db.prepare("SELECT value FROM kv WHERE key = 'settings.reflectModel'").get() as { value: string } | undefined;
-  return row?.value || config.reflectModel;
 }

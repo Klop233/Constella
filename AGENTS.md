@@ -41,12 +41,12 @@
 | `credentials.ts` / `credential-provider.ts` / `credential-routes.ts` | 凭据与隐私：密码库连接与解锁会话、agent 的访问申请、指定审批 agent 的审核与限时单次授权、`/api/credentials`；provider 接口的 Bitwarden 实现在 `credential-provider.ts`，官方区和第三方 / 自托管（Vaultwarden 等，可带自签名证书）共用（见 [docs/credentials.md](docs/credentials.md)）；登录输入框是 `approvals` 里 `kind = 'secret'` 的一类（`runs.ts` 的 `requestSecret` / `provideSecret`，值只在内存里交给等待中的 `credentials_fill`，前端 `ApprovalCard.tsx` 的 `SecretForm`）；输入的登录可勾选存进密码库（`Credentials.save` → provider 的 `create`，只新增条目，经 CLI 标准输入传入） |
 | `artifacts.ts` | 成果：agent 交付到对话里的文件和文档，带版本，可预览、可原地编辑 |
 | `knowledge.ts` / `learning.ts` / `reflect.ts` | 记忆与技能（git，可撤销；含从别的助手导入记忆）/ 复盘与每周整理 / 回顾统计 |
-| `models.ts` / `newapi.ts` / `catalog.ts` | 模型提供方与 `model@provider` 引用 / new-api 管理接口 / 各模型支持的推理强度 |
+| `models.ts` / `chatbridge.ts` / `newapi.ts` / `catalog.ts` | 模型服务商（每个带接口格式 `responses` / `chat`）与 `model@provider` 引用；内置 new-api 只在 `.env` 配了 Key 时出现 / Chat Completions 服务商的转换层：agent 用自己的 token 调 `/api/llm/:provider/v1/responses`，hub 转成 Chat Completions、用服务商的 Key 调用、再转回 Responses 事件流（Key 不进容器） / new-api 管理接口（可选） / 各模型支持的推理强度 |
 | `auth.ts` / `secrets.ts` / `safety.ts` / `trusted.ts` | 登录与 ticket / 加密存储与脱敏 / 审批策略 / 开发用免登录入口 |
 | `scheduler.ts` / `notify.ts` / `usage.ts` | 定时任务 / Web Push + Telegram / 用量统计 |
 | `perf.ts` | 性能采样：宿主机（`CONSTELLA_HOST_ROOT` 下的 /proc 与 cgroup）和每个容器的 CPU、内存、网络，内存里保留一天历史 |
 | `audit.ts` / `request-source.ts` | 审计详情：把记录里的 ID 解析成对象、算改动的前后值 / 当前请求的设备和 IP（`audit()` 自动附进 `via`） |
-| `db.ts` / `config.ts` | 迁移与 `kv` / 环境变量与目录布局 |
+| `db.ts` / `config.ts` / `cli.ts` | 迁移与 `kv` / 环境变量与目录布局 / 服务器上的维护命令（`reset-password`，由 `scripts/install.sh` 调用） |
 | `widgets.ts` | 智能界面（回复里的 `ui` / `ui-json` 块）：给 agent 的说明，按设置分关闭 / 适度 / 丰富；块的拆分在 `packages/protocol/src/widgets.ts` |
 | `streamui.ts` | 流式界面（回复里的 `ui-json` 块）：回复还在写时就读出里面的指令，校验、限流、按条转成 `ui.op` 事件（`ui.state` 报进度），结束后把文档存进 `ui_blocks`。DSL、状态树与 reducer 在 `packages/protocol/src/streamui/`，前后端共用同一份 |
 
@@ -71,6 +71,9 @@
 | 给 agent 加工具 | `apps/hub/src/mcp.ts`；如需提示词说明，在 `app.ts` 的 `startPayload` 或 `agents.ts` 的 `instructions` |
 | 加一个 API | `routes.ts`（对应分段）→ web `lib/api.ts` 的调用处和 `lib/types.ts` |
 | 加一项设置 | `app.ts` 的 `Settings` → `routes.ts` 的 `/api/settings` → `pages/Settings.tsx` |
+| 模型服务商（预设、接口格式、连接流程） | 预设 `apps/web/src/lib/providers.ts`；表单 `components/ProviderForm.tsx`；向导和首页清单共用的连接流程 `components/ModelConnect.tsx`；hub 侧 `models.ts`（`engineProvider` 决定直连还是走 `chatbridge.ts`） |
+| 首次使用 | 向导 `pages/Onboarding.tsx`（连接模型 → 选实例）；首页「开始使用」清单 `components/SetupChecklist.tsx` |
+| 安装与运维命令 | `scripts/install.sh`（install / update / backup / restore / reset-password …） |
 | agent 往对话里交付文件或文档 | `artifacts.ts`（存储与版本）、`mcp.ts` 的 `send_file` / `artifact_*`、protocol 的 `artifact` 事件、web 的 `Artifact*` 组件 |
 | 新增会写审计的操作 | 调用处 `audit(db, actor, action, detail)`：`detail` 里记对象的名字，改动类再加 `changes: changesOf(前, 后, 字段)`（不记密钥明文）；中文名登记到 web `lib/audit.ts`；新的对象类型在 `audit.ts` 的 `auditRefs` 里加解析 |
 | 加表或列 | `db.ts`，见下面的「数据库迁移」 |

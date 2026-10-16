@@ -153,6 +153,8 @@ export class Agents {
 
   create(input: AgentInput, actor: string): AgentRow {
     const tpl = TEMPLATES.find((t) => t.id === input.template) ?? TEMPLATES[0]!;
+    const model = input.model || this.#defaultModel();
+    if (!model) throw new Error("还没有可用的模型：先在「设置 → 模型」里添加服务商和模型");
     const id = newId("ag").toLowerCase().replace(/_/g, "-");
     const token = randomBytes(24).toString("base64url");
     const now = nowIso();
@@ -168,7 +170,7 @@ export class Agents {
         input.emoji || tpl.emoji,
         tpl.id,
         input.persona ?? tpl.persona,
-        input.model || this.#defaultModel(),
+        model,
         input.effort === undefined ? (this.#defaultEffort() ?? null) : input.effort,
         input.approvalPolicy ?? tpl.approvalPolicy,
         JSON.stringify(input.desktopPolicy ?? tpl.desktopPolicy),

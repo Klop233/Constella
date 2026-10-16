@@ -6,6 +6,7 @@ export const AUDIT_ACTION: Record<string, string> = {
   "onboarding.complete": "完成首次部署",
   "auth.login": "登录",
   "auth.password.change": "修改密码",
+  "auth.password.reset": "在服务器上重置密码",
   "auth.totp.enable": "开启两步验证",
   "auth.totp.disable": "关闭两步验证",
   "auth.passkey.add": "添加通行密钥",
@@ -40,9 +41,9 @@ export const AUDIT_ACTION: Record<string, string> = {
   "schedule.update": "修改定时任务",
   "schedule.delete": "删除定时任务",
   "settings.update": "修改设置",
-  "provider.create": "添加 provider",
-  "provider.update": "修改 provider",
-  "provider.delete": "删除 provider",
+  "provider.create": "添加服务商",
+  "provider.update": "修改服务商",
+  "provider.delete": "删除服务商",
   "models.add": "添加模型",
   "models.remove": "移除模型",
   "runner.start_failed": "任务启动失败",
@@ -256,7 +257,7 @@ export const APPROVAL_STATUS: Record<string, string> = { pending: "待处理", a
 /** Credential access requests: the same statuses the 凭据与隐私 page shows. */
 export const CREDENTIAL_REQUEST_STATUS: Record<string, string> = { pending: "待审批", approved: "已批准", denied: "已拒绝", expired: "已过期", consumed: "已读取", revoked: "已撤销" };
 
-const ACTOR: Record<string, string> = { system: "系统", supervisor: "监督员", helper: "维修员", watchdog: "超时保护", policy: "自动审批" };
+const ACTOR: Record<string, string> = { system: "系统", server: "服务器命令行", supervisor: "监督员", helper: "维修员", watchdog: "超时保护", policy: "自动审批" };
 
 export interface AuditChange {
   from?: unknown;

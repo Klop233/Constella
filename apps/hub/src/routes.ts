@@ -7,6 +7,7 @@ import { DesktopKind, DesktopOptions, IdleAction, IMAGE_EXT, UPLOAD_DIR, uploadN
 import { z } from "zod";
 import { AgentInput, TEMPLATES } from "./agents.ts";
 import { isArchiveName, listArchive } from "./archive.ts";
+import { registerChatBridge } from "./chatbridge.ts";
 import { OFFICE_CONTAINER, OFFICE_PREFIX, officeDocType } from "./office.ts";
 import { MAX_ARTIFACT_TEXT, type ArtifactVersionRow } from "./artifacts.ts";
 import type { Hub } from "./app.ts";
@@ -26,6 +27,7 @@ import { intelligentUiNote } from "./widgets.ts";
 import { loadUiBlocks } from "./streamui.ts";
 import { ScheduleInput } from "./scheduler.ts";
 import { IMPORT_TEXT_MAX } from "./learning.ts";
+import { PROVIDER_APIS } from "./models.ts";
 
 declare module "fastify" {
   interface FastifyRequest {
@@ -40,7 +42,7 @@ const OFFICE_MIME: Record<string, string> = {
   pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
 };
 
-const PUBLIC = [/^\/api\/office\/(file|callback)\//, /^\/api\/health$/, /^\/api\/auth\/(status|setup|login|passkey\/login\/(options|verify))$/, /^\/api\/runner/, /^\/api\/desktops\/[^/]+\/vnc$/];
+const PUBLIC = [/^\/api\/office\/(file|callback)\//, /^\/api\/health$/, /^\/api\/auth\/(status|setup|login|passkey\/login\/(options|verify))$/, /^\/api\/runner/, /^\/api\/desktops\/[^/]+\/vnc$/, /^\/api\/llm\//];
 
 const DESKTOP_STATUS: Record<string, number> = { not_found: 404, busy: 409, limit: 409, unavailable: 409, confirm: 409 };
 
@@ -79,7 +81,7 @@ export function registerRoutes(hub: Hub): void {
   app.addHook("onRequest", async (req, reply) => {
     const url = req.url.split("?")[0]!;
     if (!url.startsWith("/api/")) return;
-    if (!["GET", "HEAD", "OPTIONS"].includes(req.method) && !url.startsWith("/api/runner") && !url.startsWith("/api/office/callback/")) {
+    if (!["GET", "HEAD", "OPTIONS"].includes(req.method) && !url.startsWith("/api/runner") && !url.startsWith("/api/office/callback/") && !url.startsWith("/api/llm/")) {
       if (req.headers["x-constella"] !== "1") return reply.code(403).send({ error: "missing X-Constella header" });
       const origin = req.headers.origin;
       // The first account is created from whatever address the owner opens the app at; that origin is
@@ -95,6 +97,8 @@ export function registerRoutes(hub: Hub): void {
   });
 
   registerCredentialRoutes(hub);
+  // Agents reach Chat Completions providers through the hub, authenticated with their own token.
+  registerChatBridge(app, { models, agentByToken: (token) => agents.byToken(token) });
   const actor = (req: FastifyRequest) => req.userId ?? "anonymous";
   const authLimit = { config: { rateLimit: { max: 10, timeWindow: "1 minute" } } };
 
@@ -340,7 +344,8 @@ export function registerRoutes(hub: Hub): void {
   app.post("/api/agents/import", { bodyLimit: 8 * 1024 * 1024 }, async (req) => {
     const a = agents.importAgent(req.body, actor(req));
     // Exported from another instance: its provider may not exist here.
-    if (!models.provider(models.parse(a.model).provider)) agents.update(a.id, { model: settings.defaultModel() }, actor(req));
+    const fallback = settings.defaultModel();
+    if (fallback && !models.provider(models.parse(a.model).provider)) agents.update(a.id, { model: fallback }, actor(req));
     events.publish("agent", { id: a.id });
     return agentView(hub, a.id);
   });
@@ -1130,7 +1135,12 @@ export function registerRoutes(hub: Hub): void {
       const key = models.apiKey(p.id);
       return { ...p, keyHint: key ? `…${key.slice(-4)}` : null, models: models.list().filter((m) => m.provider === p.id).length };
     });
-  const ProviderBody = z.object({ name: z.string().trim().min(1).max(40), baseUrl: z.string().trim().min(1).max(300), apiKey: z.string().trim().max(500).default("") });
+  const ProviderBody = z.object({
+    name: z.string().trim().min(1).max(40),
+    baseUrl: z.string().trim().min(1).max(300),
+    apiKey: z.string().trim().max(500).default(""),
+    api: z.enum(PROVIDER_APIS).default("responses"),
+  });
   app.get("/api/providers", async () => providerView());
   app.post("/api/providers", async (req) => {
     const p = models.addProvider(ProviderBody.parse(req.body));
@@ -1138,7 +1148,10 @@ export function registerRoutes(hub: Hub): void {
     return p;
   });
   app.patch("/api/providers/:id", async (req) => {
-    const p = models.updateProvider(id(req), ProviderBody.partial().parse(req.body));
+    const b = ProviderBody.partial().parse(req.body);
+    // partial() keeps the defaults; only what was sent is a change.
+    const sent = (req.body ?? {}) as Record<string, unknown>;
+    const p = models.updateProvider(id(req), { ...b, apiKey: sent.apiKey === undefined ? undefined : b.apiKey, api: sent.api === undefined ? undefined : b.api });
     audit(db, actor(req), "provider.update", { id: p.id });
     return p;
   });
@@ -1347,13 +1360,17 @@ export function registerRoutes(hub: Hub): void {
   // ── system ───────────────────────────────────────────────
   app.get("/api/system", async () => {
     const stat = fs.statfsSync(config.dataDir);
+    // Daily backups (constella-…) and the ones made with scripts/install.sh backup (manual-constella-…), newest first.
     const backups = fs.existsSync(config.backupsDir)
       ? fs
           .readdirSync(config.backupsDir)
-          .filter((f) => f.startsWith("constella-"))
-          .sort()
-          .reverse()
-          .map((f) => ({ name: f, size: fs.statSync(path.join(config.backupsDir, f)).size }))
+          .filter((f) => /^(manual-)?constella-.*\.tar\.gz$/.test(f))
+          .map((f) => {
+            const st = fs.statSync(path.join(config.backupsDir, f));
+            return { name: f, size: st.size, mtime: st.mtimeMs };
+          })
+          .sort((a, b) => b.mtime - a.mtime)
+          .map(({ name, size }) => ({ name, size }))
       : [];
     const containerList = await containers.docker.listContainers({ all: true, filters: { label: ["dev.constella.role"] } }).catch(() => []);
     return {
@@ -1361,10 +1378,12 @@ export function registerRoutes(hub: Hub): void {
       dbSizeMb: +(fs.statSync(config.dbPath).size / 1e6).toFixed(1),
       containers: containerList.map((c) => ({ name: c.Names[0]?.slice(1), state: c.State, status: c.Status, role: c.Labels["dev.constella.role"] })),
       backups,
-      newapi: await models
-        .remoteModels("newapi")
-        .then((m) => ({ ok: true, models: m.length }))
-        .catch((e) => ({ ok: false, error: e.message })),
+      newapi: models.builtinEnabled()
+        ? await models
+            .remoteModels("newapi")
+            .then((m) => ({ ok: true, models: m.length }))
+            .catch((e) => ({ ok: false, error: e.message }))
+        : null,
       version: "0.1.0",
     };
   });
