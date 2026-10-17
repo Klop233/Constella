@@ -187,6 +187,7 @@ export function openDb(file: string): Db {
   for (const dead of ["newapi_token_id", "budget_daily_usd"]) {
     if (agentCols.some((c) => c.name === dead)) db.exec(`ALTER TABLE agents DROP COLUMN ${dead}`);
   }
+  if (!agentCols.some((c) => c.name === "manage_constella")) db.exec("ALTER TABLE agents ADD COLUMN manage_constella INTEGER NOT NULL DEFAULT 0");
   ensureInstanceKinds(db);
   return db;
 }

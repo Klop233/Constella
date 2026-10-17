@@ -59,6 +59,7 @@ export default function AgentEdit() {
   const [persona, setPersona] = useState("");
   const [desktopPolicy, setDesktopPolicy] = useState<DesktopPolicy>({ desktopIds: [] });
   const [hostAccess, setHostAccess] = useState(false);
+  const [manageConstella, setManageConstella] = useState(false);
   const [effort, setEffort] = useState<string>("");
   const { efforts } = modelEfforts(models.data, model);
   const [advanced, setAdvanced] = useState(false);
@@ -81,6 +82,7 @@ export default function AgentEdit() {
     setPersona(a.persona);
     setDesktopPolicy(a.desktop_policy);
     setHostAccess(a.host_access);
+    setManageConstella(a.manage_constella);
     setEffort(a.effort ?? "");
   }, [existing.data]);
 
@@ -90,6 +92,7 @@ export default function AgentEdit() {
     setPersona(t.persona);
     // Instance bindings are the owner's pick, not part of a template.
     setHostAccess(t.hostAccess);
+    setManageConstella(t.manageConstella);
     if (!name || templates.data?.some((x) => x.name === name)) setName(t.name);
   };
 
@@ -110,6 +113,7 @@ export default function AgentEdit() {
         effort: effort || null,
         desktopPolicy,
         hostAccess,
+        manageConstella,
       };
       const a = editing ? await api.patch<Agent>(`/api/agents/${id}`, body) : await api.post<Agent>("/api/agents", body);
       void qc.invalidateQueries();
@@ -208,6 +212,13 @@ export default function AgentEdit() {
             <div className="text-xs text-muted mt-1">开启后可用 host_exec 在这台服务器上执行命令。只读命令直接执行，其余按「设置 → 权限」审批。</div>
           </div>
           <Toggle checked={hostAccess} onChange={setHostAccess} label="允许操作宿主服务器" />
+        </Card>
+        <Card className="p-3 flex items-start gap-3">
+          <div className="flex-1">
+            <div className="font-medium">允许管理 Constella</div>
+            <div className="text-xs text-muted mt-1">开启后可查看和编排其他 agent，也可以创建、修改、归档和重启 agent；平台配置和生命周期变更都会先请主人确认。</div>
+          </div>
+          <Toggle checked={manageConstella} onChange={setManageConstella} label="允许管理 Constella" />
         </Card>
         <button className="flex items-center gap-1 text-sm text-muted" onClick={() => setAdvanced(!advanced)}>
           高级设置 <ChevronDown className={cx("size-4 transition", advanced && "rotate-180")} />

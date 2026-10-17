@@ -5,12 +5,12 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { DesktopKind, TextArtifactKind } from "@constella/protocol";
-import type { AgentRow, Agents } from "./agents.ts";
+import { DesktopKind, DesktopPolicy, TextArtifactKind } from "@constella/protocol";
+import { AgentInput, type AgentRow, type Agents } from "./agents.ts";
 import { isTextKind, MAX_ARTIFACT_TEXT, type ArtifactRow, type Artifacts } from "./artifacts.ts";
 import type { Containers } from "./containers.ts";
 import { config } from "./config.ts";
-import type { Db } from "./db.ts";
+import { audit, type Db } from "./db.ts";
 import { KIND_LABEL, type DesktopRow, type Desktops, type ToolFamily } from "./desktops.ts";
 import type { HostCapabilities } from "./hostcaps.ts";
 import type { Knowledge } from "./knowledge.ts";
@@ -41,6 +41,10 @@ export interface McpDeps {
   browserHtml: () => boolean;
   /** Whether creating / changing an instance needs the owner's approval (repairing one never does). */
   instanceApproval: () => { create: boolean; update: boolean };
+  /** Hub notifications used to refresh the PWA after an agent changes another agent. */
+  events?: { publish(type: string, data: unknown): void };
+  /** Resolve a model ref before saving it, so an agent cannot create an unusable configuration. */
+  validateModel?: (ref: string) => void;
 }
 
 type ToolResult = { content: ({ type: "text"; text: string } | { type: "image"; data: string; mimeType: string })[]; isError?: boolean };
@@ -152,6 +156,192 @@ function buildServer(agent: AgentRow, d: McpDeps): McpServer {
       return text(`## 你的记忆\n${m.agent}\n\n## 关于用户\n${m.user}`);
     }),
   );
+
+  // ── Constella administration ──────────────────────────────
+  // This is an explicit per-agent capability. Reads are safe; every configuration or lifecycle change
+  // goes through an owner-only approval so a prompt injection cannot silently alter the platform.
+  if (agent.manage_constella) {
+    const agentState = async (a: AgentRow): Promise<string> =>
+      d.containers.state(d.containers.agentName(a.id)).catch(() => "error");
+    const activeRuns = (agentId: string) =>
+      d.db
+        .prepare(
+          "SELECT id, status, conversation_id, created_at FROM runs WHERE agent_id = ? AND status NOT IN ('done','failed','cancelled') ORDER BY created_at DESC",
+        )
+        .all(agentId) as { id: string; status: string; conversation_id: string; created_at: string }[];
+    const adminView = async (a: AgentRow) => ({
+      id: a.id,
+      name: a.name,
+      emoji: a.emoji,
+      template: a.template,
+      persona: a.persona,
+      model: a.model,
+      effort: a.effort,
+      approvalPolicy: a.approval_policy,
+      desktopPolicy: JSON.parse(a.desktop_policy),
+      hostAccess: !!a.host_access,
+      manageConstella: !!a.manage_constella,
+      archived: !!a.archived,
+      container: await agentState(a),
+      activeRuns: activeRuns(a.id),
+    });
+    const adminSummary = async (a: AgentRow) => {
+      const { persona: _persona, ...summary } = await adminView(a);
+      return summary;
+    };
+    const requireAdminApproval = async (summary: string, detail: string): Promise<RunRow> => {
+      const r = run();
+      if (!(await d.runs.requestHubApproval(r.id, "other", summary, detail, { ownerOnly: true }))) throw new Error("主人没有同意");
+      return r;
+    };
+    const activeTarget = (id: string): AgentRow => {
+      const target = d.agents.get(id);
+      if (target.archived) throw new Error("这个 agent 已归档，不能进行该操作");
+      return target;
+    };
+
+    server.registerTool(
+      "agent_list",
+      {
+        description: "查看 Constella 中的 agent（不包含 token 或密码）。可看到模型、容器状态和未结束任务；默认不显示已归档的 agent。",
+        inputSchema: { query: z.string().max(100).optional(), includeArchived: z.boolean().default(false) },
+      },
+      guard(async ({ query, includeArchived }) => {
+        const q = query?.trim().toLocaleLowerCase();
+        const list = d.agents
+          .list(includeArchived)
+          .filter((a) => !q || a.id.toLocaleLowerCase().includes(q) || a.name.toLocaleLowerCase().includes(q));
+        const views = await Promise.all(list.map(adminSummary));
+        return text(JSON.stringify(views, null, 2));
+      }),
+    );
+    server.registerTool(
+      "agent_get",
+      { description: "查看一个 Constella agent 的配置和运行状态；不会返回 token、环境变量或密码。", inputSchema: { id: z.string().min(1).max(100) } },
+      guard(async ({ id }) => text(JSON.stringify(await adminView(d.agents.get(id)), null, 2))),
+    );
+
+    const agentCreateShape = {
+      name: AgentInput.shape.name,
+      emoji: AgentInput.shape.emoji,
+      template: AgentInput.shape.template,
+      persona: AgentInput.shape.persona,
+      model: AgentInput.shape.model,
+      effort: AgentInput.shape.effort,
+      approvalPolicy: AgentInput.shape.approvalPolicy,
+      desktopPolicy: DesktopPolicy.optional(),
+      hostAccess: AgentInput.shape.hostAccess,
+      manageConstella: AgentInput.shape.manageConstella,
+      reason: z.string().min(3).max(500).describe("为什么需要创建这个 agent"),
+    };
+    server.registerTool(
+      "agent_create",
+      {
+        description:
+          "创建一个新的 Constella agent。model 不填时使用平台默认模型；可以指定人设、实例绑定和权限。创建前一定会请求主人确认，不会返回新 agent 的 token。",
+        inputSchema: agentCreateShape,
+      },
+      guard(async ({ reason, ...raw }) => {
+        const input = AgentInput.parse(raw);
+        if (input.model) d.validateModel?.(input.model);
+        const detail = `原因：${reason}\n模型：${input.model ?? "平台默认"}\n模板：${input.template}\n实例绑定：${input.desktopPolicy?.desktopIds.join("、") || "无"}\n允许操作宿主机：${input.hostAccess ? "是" : "否"}\n允许管理 Constella：${input.manageConstella ? "是" : "否"}`;
+        await requireAdminApproval(`创建 agent「${input.name}」`, detail);
+        const created = d.agents.create(input, `agent:${agent.id}`);
+        d.events?.publish("agent", { id: created.id });
+        return text(`已创建 agent「${created.name}」（id ${created.id}）。平台会在它第一次收到任务时启动容器。`);
+      }),
+    );
+
+    server.registerTool(
+      "agent_update",
+      {
+        description: "修改 Constella 中已有 agent 的配置。至少提供一个要修改的字段；修改前会请求主人确认。",
+        inputSchema: {
+          id: z.string().min(1).max(100),
+          name: AgentInput.shape.name.optional(),
+          emoji: AgentInput.shape.emoji,
+          persona: AgentInput.shape.persona,
+          model: AgentInput.shape.model,
+          effort: AgentInput.shape.effort,
+          approvalPolicy: AgentInput.shape.approvalPolicy,
+          desktopPolicy: DesktopPolicy.optional(),
+          hostAccess: AgentInput.shape.hostAccess,
+          manageConstella: AgentInput.shape.manageConstella,
+          reason: z.string().min(3).max(500).describe("为什么需要修改这个 agent"),
+        },
+      },
+      guard(async ({ id, reason, ...raw }) => {
+        const target = activeTarget(id);
+        const patch: Partial<AgentInput> = {};
+        for (const key of ["name", "emoji", "persona", "model", "effort", "approvalPolicy", "desktopPolicy", "hostAccess", "manageConstella"] as const) {
+          const value = raw[key];
+          if (value !== undefined) (patch as Record<string, unknown>)[key] = value;
+        }
+        if (!Object.keys(patch).length) return fail("没有要修改的字段");
+        if (patch.model) d.validateModel?.(patch.model);
+        const changeText = Object.entries(patch)
+          .map(([key, value]) => {
+            if (key === "persona") return "人设（文本已变更）";
+            if (key === "desktopPolicy") return `实例绑定=${(value as { desktopIds: string[] }).desktopIds.join("、") || "无"}`;
+            if (key === "hostAccess" || key === "manageConstella") return `${key}=${value ? "是" : "否"}`;
+            return `${key}=${String(value)}`;
+          })
+          .join("，");
+        await requireAdminApproval(`修改 agent「${target.name}」`, `原因：${reason}\n改动：${changeText}`);
+        const next = d.agents.update(target.id, patch, `agent:${agent.id}`);
+        d.events?.publish("agent", { id: next.id });
+        return text(`已修改 agent「${next.name}」（id ${next.id}）。如果改了宿主机权限，重启它的容器后才会生效。`);
+      }),
+    );
+
+    server.registerTool(
+      "agent_delete",
+      {
+        description: "归档一个 Constella agent（保留历史对话、成果和记忆，不是立即物理删除）。不能归档当前正在调用工具的 agent；操作前会请求主人确认。",
+        inputSchema: { id: z.string().min(1).max(100), reason: z.string().min(3).max(500) },
+      },
+      guard(async ({ id, reason }) => {
+        if (id === agent.id) return fail("不能归档当前正在工作的 agent");
+        const target = activeTarget(id);
+        await requireAdminApproval(`归档 agent「${target.name}」`, `原因：${reason}\n这会停止它的容器，但会保留历史数据。`);
+        d.agents.archive(target.id, `agent:${agent.id}`);
+        await d.containers.remove(d.containers.agentName(target.id));
+        d.events?.publish("agent", { id: target.id, removed: true });
+        return text(`已归档 agent「${target.name}」（id ${target.id}），历史数据仍然保留。`);
+      }),
+    );
+
+    server.registerTool(
+      "agent_restart",
+      {
+        description: "重启另一个 Constella agent 的容器，让模型或环境配置重新加载。会中断它当前的任务，操作前会请求主人确认。",
+        inputSchema: { id: z.string().min(1).max(100), reason: z.string().min(3).max(500) },
+      },
+      guard(async ({ id, reason }) => {
+        if (id === agent.id) return fail("不能从当前任务里重启自己");
+        const target = activeTarget(id);
+        await requireAdminApproval(`重启 agent「${target.name}」`, `原因：${reason}\n它当前未结束的任务可能会自动继续，也可能需要重新派发。`);
+        await d.containers.remove(d.containers.agentName(target.id));
+        audit(d.db, `agent:${agent.id}`, "agent.restart", { id: target.id, name: target.name });
+        d.events?.publish("agent", { id: target.id, connected: false });
+        return text(`已重启 agent「${target.name}」（id ${target.id}）。`);
+      }),
+    );
+
+    server.registerTool(
+      "agent_message",
+      {
+        description: "向另一个 Constella agent 派发任务或补充指令。可以提供 conversationId 继续已有对话；这是编排操作，不会读取对方的凭据或返回对方的私有上下文。",
+        inputSchema: { id: z.string().min(1).max(100), text: z.string().min(1).max(20_000), conversationId: z.string().max(100).optional() },
+      },
+      guard(async ({ id, text: message, conversationId }) => {
+        const target = activeTarget(id);
+        const result = await d.runs.send({ agentId: target.id, conversationId, text: message, source: `agent:${agent.id}` });
+        audit(d.db, `agent:${agent.id}`, "agent.message", { id: target.id, runId: result.runId, conversationId: result.conversationId });
+        return text(`已向 agent「${target.name}」发送任务（run ${result.runId}，conversation ${result.conversationId}）。${result.steered ? "这是对现有任务的追加指令。" : "已开始新的任务。"}`);
+      }),
+    );
+  }
 
   // ── asking the owner ─────────────────────────────────────
   server.registerTool(

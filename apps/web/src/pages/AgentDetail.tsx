@@ -41,6 +41,7 @@ export default function AgentDetail() {
             <div className="text-xs text-muted mt-1 truncate">
               {modelLabel(a.model)} · {a.desktop_policy.desktopIds.length ? `实例 ${a.desktop_policy.desktopIds.length} 个` : "没有实例"}
               {a.host_access && " · 可操作宿主机"}
+              {a.manage_constella && " · 可管理 Constella"}
             </div>
           </div>
           <Button variant="primary" className="shrink-0" onClick={() => nav(`/agents/${a.id}/chat`)}>

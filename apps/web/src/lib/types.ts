@@ -17,6 +17,7 @@ export interface Agent {
   approval_policy: "auto" | "ask";
   desktop_policy: DesktopPolicy;
   host_access: boolean;
+  manage_constella: boolean;
   container: "running" | "stopped" | "missing" | "starting" | "error";
   connected: boolean;
   activeRuns: { id: string; status: RunStatus; conversation_id: string }[];
@@ -33,6 +34,7 @@ export interface Template {
   desktopPolicy: DesktopPolicy;
   approvalPolicy: "auto" | "ask";
   hostAccess: boolean;
+  manageConstella: boolean;
 }
 
 export interface Conversation {

@@ -443,7 +443,7 @@ export async function createHub(opts: { dbPath?: string; webDist?: string; logge
    */
   const reviveIfStranded = (agentId: string, delayMs: number) =>
     setTimeout(() => {
-      if (!settings.autoResume() || runners.connected(agentId) || recovery.repairing(agentId)) return;
+      if (agents.get(agentId).archived || !settings.autoResume() || runners.connected(agentId) || recovery.repairing(agentId)) return;
       const stranded = db.prepare("SELECT 1 FROM runs WHERE agent_id = ? AND status IN ('running','waiting_approval','paused_by_user') LIMIT 1").get(agentId);
       if (!stranded) return;
       void ensureRunner(agentId).catch(async (err) => {
@@ -689,6 +689,8 @@ export async function createHub(opts: { dbPath?: string; webDist?: string; logge
     recovery,
     browserHtml: () => settings.browserHtml(),
     instanceApproval: () => settings.instanceApproval(),
+    events,
+    validateModel: (ref) => models.resolve(ref),
   });
   registerRoutes(hub);
   registerOfficeProxy(hub);

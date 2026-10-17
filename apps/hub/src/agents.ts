@@ -21,6 +21,7 @@ export interface AgentRow {
   approval_policy: "auto" | "ask";
   desktop_policy: string;
   host_access: number;
+  manage_constella: number;
   token_hash: string;
   created_at: string;
   updated_at: string;
@@ -38,6 +39,7 @@ function auditView(r: AgentRow): Record<string, unknown> {
     approvalPolicy: r.approval_policy,
     desktopPolicy: JSON.parse(r.desktop_policy),
     hostAccess: !!r.host_access,
+    manageConstella: !!r.manage_constella,
   };
 }
 
@@ -50,6 +52,7 @@ export interface Template {
   desktopPolicy: DesktopPolicy;
   approvalPolicy: "auto" | "ask";
   hostAccess: boolean;
+  manageConstella: boolean;
 }
 
 export const TEMPLATES: Template[] = [
@@ -62,6 +65,7 @@ export const TEMPLATES: Template[] = [
     desktopPolicy: { desktopIds: [] },
     approvalPolicy: "auto",
     hostAccess: false,
+    manageConstella: false,
   },
   {
     id: "web",
@@ -73,6 +77,7 @@ export const TEMPLATES: Template[] = [
     desktopPolicy: { desktopIds: [] },
     approvalPolicy: "auto",
     hostAccess: false,
+    manageConstella: false,
   },
   {
     id: "ops",
@@ -84,6 +89,7 @@ export const TEMPLATES: Template[] = [
     desktopPolicy: { desktopIds: [] },
     approvalPolicy: "auto",
     hostAccess: true,
+    manageConstella: false,
   },
   {
     id: "research",
@@ -94,6 +100,7 @@ export const TEMPLATES: Template[] = [
     desktopPolicy: { desktopIds: [] },
     approvalPolicy: "auto",
     hostAccess: false,
+    manageConstella: false,
   },
 ];
 
@@ -108,6 +115,7 @@ export const AgentInput = z.object({
   /** Instance bindings; old-style policies (e.g. in agent exports) come in unbound. */
   desktopPolicy: z.union([DesktopPolicy, LegacyDesktopPolicy.transform(() => ({ desktopIds: [] }))]).optional(),
   hostAccess: z.boolean().optional(),
+  manageConstella: z.boolean().optional(),
 });
 export type AgentInput = z.infer<typeof AgentInput>;
 
@@ -156,9 +164,9 @@ export class Agents {
     const now = nowIso();
     this.#db
       .prepare(
-        `INSERT INTO agents (id, name, emoji, template, persona, model, effort, approval_policy, desktop_policy, host_access,
-          token_hash, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO agents (id, name, emoji, template, persona, model, effort, approval_policy, desktop_policy, host_access, manage_constella,
+           token_hash, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         id,
@@ -171,6 +179,7 @@ export class Agents {
         input.approvalPolicy ?? tpl.approvalPolicy,
         JSON.stringify(input.desktopPolicy ?? tpl.desktopPolicy),
         (input.hostAccess ?? tpl.hostAccess) ? 1 : 0,
+        (input.manageConstella ?? tpl.manageConstella) ? 1 : 0,
         hashToken(token),
         now,
         now,
@@ -187,7 +196,7 @@ export class Agents {
     this.#db
       .prepare(
         `UPDATE agents SET name = ?, emoji = ?, persona = ?, model = ?, effort = ?, approval_policy = ?, desktop_policy = ?,
-          host_access = ?, updated_at = ? WHERE id = ?`,
+           host_access = ?, manage_constella = ?, updated_at = ? WHERE id = ?`,
       )
       .run(
         p.name ?? cur.name,
@@ -198,6 +207,7 @@ export class Agents {
         p.approvalPolicy ?? cur.approval_policy,
         p.desktopPolicy ? JSON.stringify(p.desktopPolicy) : cur.desktop_policy,
         p.hostAccess === undefined ? cur.host_access : p.hostAccess ? 1 : 0,
+        p.manageConstella === undefined ? cur.manage_constella : p.manageConstella ? 1 : 0,
         nowIso(),
         id,
       );
@@ -294,7 +304,7 @@ persistence = "save-all"
   - send_file：把做好的文件（报告、表格、图片、PDF、压缩包等）发到聊天里交给主人。主人看不到你的容器，产出了主人要拿走的文件就发到聊天里，不要只在回复里写路径。
   - artifact_save / artifact_edit / artifact_read / artifact_list：成果。篇幅较长、主人会反复看或修改的内容（报告、方案、文章、单页网页、脚本、数据表）用 artifact_save 生成成果，主人能直接预览、编辑和下载；之后修改用 artifact_edit（局部）或带 artifact_id 的 artifact_save（整体），每次都会留下新版本。简短的回答直接写在回复里。
   - ${extras.desktopNote}
-${extras.credentialNote ? `  - ${extras.credentialNote}\n` : ""}${agent.host_access ? "  - host_exec：在宿主服务器上执行命令。只读命令直接执行，其余按主人的权限设置，可能需要审批。\n" : ""}- 技能（skills）是以前总结的可复用流程，遇到相关任务先查看再执行。
+${extras.credentialNote ? `  - ${extras.credentialNote}\n` : ""}${agent.host_access ? "  - host_exec：在宿主服务器上执行命令。只读命令直接执行，其余按主人的权限设置，可能需要审批。\n" : ""}${agent.manage_constella ? "  - agent_list / agent_get / agent_create / agent_update / agent_delete / agent_restart / agent_message：管理 Constella 里的 agent。查看是只读的；创建、修改、归档、重启会先请求主人确认；不要把凭据或 token 写入 agent 配置。\n" : ""}- 技能（skills）是以前总结的可复用流程，遇到相关任务先查看再执行。
 ${secrets.length ? `- 可用的环境变量密钥（只用于调用，不要输出其值）：${secrets.join("、")}\n` : ""}- 自主推进：用户交给你的是目标，你负责探索、执行和验证。能自己查、自己试、自己解决的就直接做；一条路走不通就分析原因换一条，不要停下来问"要不要继续"或把能自己完成的步骤交给用户。
 - 一轮只能在任务做完时结束。结束前自查：主人要的结果是否已经做到、交付并验证过。没做完就继续做；需要主人本人做的步骤（扫码、验证码图片、付款；登录要的账号密码用 credentials_fill）用 desktop_request_help、需要主人拍板的用 ask_user，在这一轮里等，等的时候先做不依赖主人的部分。不要用提问、"要不要继续"、"建议稍后重试"、"下次再…"来结束一轮。平台监督员会复核每一轮的结束，没做完就结束会被发回来接着做。
 - 环境出故障（实例没响应、工具一直超时、下载或安装失败、容器异常）不是结束任务的理由。按顺序自救：等一会儿重试 → instance_restart 修实例 → get_help 找维修员 → 换路线（换一台或新建实例、换工具、换做法）。不要以「暂时没成」「建议稍后重试」结束任务；结束前确认主人要的已经做完，或者剩下的确实只有主人本人能做。
@@ -332,6 +342,7 @@ ${secrets.length ? `- 可用的环境变量密钥（只用于调用，不要输�
         // Instances are local to this hub, so bindings don't travel.
         desktopPolicy: { desktopIds: [] },
         hostAccess: !!a.host_access,
+        manageConstella: !!a.manage_constella,
       },
       memory: memory.agent,
       skills,

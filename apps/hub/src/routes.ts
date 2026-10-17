@@ -1426,6 +1426,7 @@ async function agentView(hub: Hub, agentId: string) {
     ...rest,
     desktop_policy: JSON.parse(a.desktop_policy),
     host_access: !!a.host_access,
+    manage_constella: !!a.manage_constella,
     container: state,
     connected: hub.runners.connected(a.id),
     activeRuns: active,
